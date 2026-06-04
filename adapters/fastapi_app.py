@@ -75,6 +75,13 @@ class AnalyzeResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/")
+async def root():
+    """Redirect to interactive demo page."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/demo")
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
