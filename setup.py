@@ -26,7 +26,16 @@ extras_require = {
         'perin-parser>=0.0.12',
     ],
     'fasttext': [FASTTEXT],
-    'tf': [FASTTEXT, 'tensorflow>=2.6.0,<2.14']
+    'tf': [FASTTEXT, 'tensorflow>=2.6.0,<2.14'],
+    # NarrativeOS protocol adapters
+    'narrative': [
+        'pydantic>=2.0',
+        'fastapi>=0.100',
+        'uvicorn[standard]>=0.23',
+        'grpcio>=1.50',
+        'grpcio-tools>=1.50',
+        'mcp>=1.0',
+    ],
 }
 extras_require['full'] = list(set(sum(extras_require.values(), [])))
 
@@ -55,13 +64,13 @@ setup(
         "Topic :: Text Processing :: Linguistic"
     ],
     keywords='corpus,machine-learning,NLU,NLP',
-    packages=find_packages(exclude=['docs', 'tests*']),
+    packages=find_packages(exclude=['docs', 'tests*', 'plugins*']),
     include_package_data=True,
     install_requires=[
         'termcolor',
         'pynvml',
         'toposort==1.5',
-        'transformers>=4.1.1',
+        'transformers>=4.30,<5.0',  # HanLP 2.1.x compat: encode_plus removed in 5.x
         'sentencepiece>=0.1.91',  # Essential for tokenization_bert_japanese
         'torch>=1.6.0',
         'hanlp-common>=0.0.22',

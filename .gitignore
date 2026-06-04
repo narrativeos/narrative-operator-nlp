@@ -78,6 +78,13 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Narrative Operator NLP — generated files
+schemas/*_pb2.py
+schemas/*_pb2_grpc.py
+*.sock
+# Narrative Operator NLP — runtime artifacts
+*.sock
+
 # IPython
 profile_default/
 ipython_config.py

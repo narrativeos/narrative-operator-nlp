@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://narrativeos.github.io/schemas/nsp-v1.json",
+  "title": "Narrative Schema Protocol (NSP) v1.0",
+  "description": "Canonical JSON Schema for NarrativeOS NLP operator output.",
+  "type": "object",
+  "required": ["meta", "content"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["source", "version", "timestamp", "text_length"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "NLP engine identifier, e.g. hanlp_v2"
+        },
+        "version": {
+          "type": "string",
+          "description": "NSP schema version"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 analysis timestamp"
+        },
+        "text_length": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Original text character count"
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "required": ["tokens", "entities", "relations"],
+      "properties": {
+        "tokens": {
+          "type": "array",
+          "description": "Normalized token list",
+          "items": { "$ref": "#/$defs/Token" }
+        },
+        "entities": {
+          "type": "array",
+          "description": "Unified entity list",
+          "items": { "$ref": "#/$defs/Entity" }
+        },
+        "relations": {
+          "type": "array",
+          "description": "Extracted relation triples",
+          "items": { "$ref": "#/$defs/Relation" }
+        },
+        "structural": {
+          "type": "object",
+          "description": "Raw NLP engine output (debug only)"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Token": {
+      "type": "object",
+      "required": ["id", "text", "pos", "span"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string", "minLength": 1 },
+        "pos": { "type": "string", "minLength": 1 },
+        "span": { "$ref": "#/$defs/Span" }
+      }
+    },
+    "Entity": {
+      "type": "object",
+      "required": ["id", "text", "category", "span"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^ent_\\d+$" },
+        "text": { "type": "string", "minLength": 1 },
+        "category": {
+          "type": "string",
+          "enum": [
+            "PERSON", "ORGANIZATION", "LOCATION", "FACILITY",
+            "PRODUCT", "DATE", "NUMBER", "MATERIAL",
+            "STANDARD", "PARAMETER", "UNKNOWN"
+          ]
+        },
+        "span": { "$ref": "#/$defs/Span" },
+        "normalized": { "type": "string" },
+        "source": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "Relation": {
+      "type": "object",
+      "required": ["id", "subject", "predicate", "object", "evidence", "evidence_span"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^rel_\\d+$" },
+        "subject": { "type": "string", "minLength": 1 },
+        "subject_ent_id": { "type": "string" },
+        "predicate": {
+          "type": "string",
+          "enum": [
+            "IS_A", "PART_OF", "PROPERTY_OF", "HAS_PROPERTY",
+            "LOCATED_AT", "TEMPORAL_AT", "CAUSES", "DEPENDS_ON",
+            "EQUIVALENT_TO", "REFERENCE_OF", "CONSTRAINT_OF"
+          ]
+        },
+        "object": { "type": "string", "minLength": 1 },
+        "object_ent_id": { "type": "string" },
+        "evidence": { "type": "string", "minLength": 1 },
+        "evidence_span": { "$ref": "#/$defs/Span" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string" }
+      }
+    },
+    "Span": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "integer", "minimum": 0 },
+      "description": "Character offset [start, end) in original text"
+    }
+  }
+}

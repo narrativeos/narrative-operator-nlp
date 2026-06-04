@@ -1,0 +1,98 @@
+// Narrative Schema Protocol (NSP) — Protobuf Contract
+//
+// Defines the gRPC service and message types for narrative-operator-nlp.
+// This contract MUST stay semantically aligned with core/schema.py and
+// schemas/narrative.schema.json.
+
+syntax = "proto3";
+
+package narrative.nlp.v1;
+
+option go_package = "github.com/narrativeos/narrative-operator-nlp/schemas/nlp/v1;nlpv1";
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service NarrativeService {
+  // Analyze text and return NSP-standardized narrative atoms.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message AnalyzeRequest {
+  // Raw text to analyze.
+  string text = 1;
+  // Optional: NLP engine identifier (default: "hanlp_v2").
+  string source = 2;
+}
+
+message AnalyzeResponse {
+  NarrativeMeta meta = 1;
+  NarrativeContent content = 2;
+}
+
+message NarrativeMeta {
+  string source = 1;       // e.g. "hanlp_v2"
+  string version = 2;      // NSP schema version
+  string timestamp = 3;    // ISO 8601
+  int32 text_length = 4;   // Original text character count
+}
+
+message NarrativeContent {
+  repeated Token tokens = 1;
+  repeated Entity entities = 2;
+  repeated Relation relations = 3;
+  // Raw NLP engine output (JSON string, for debugging).
+  string structural_json = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Token
+// ---------------------------------------------------------------------------
+
+message Token {
+  int32 id = 1;            // Sequential index from 0
+  string text = 2;         // Token text
+  string pos = 3;          // Universal POS tag
+  Span span = 4;           // Character offset
+}
+
+message Span {
+  int32 start = 1;         // Inclusive start
+  int32 end = 2;           // Exclusive end
+}
+
+// ---------------------------------------------------------------------------
+// Entity
+// ---------------------------------------------------------------------------
+
+message Entity {
+  string id = 1;           // e.g. "ent_001"
+  string text = 2;         // Surface text
+  string category = 3;     // NSP entity category
+  Span span = 4;           // Character offset
+  string normalized = 5;   // Canonical form
+  string source = 6;       // Source NER model
+  float confidence = 7;    // [0, 1]
+}
+
+// ---------------------------------------------------------------------------
+// Relation
+// ---------------------------------------------------------------------------
+
+message Relation {
+  string id = 1;              // e.g. "rel_001"
+  string subject = 2;         // Subject text
+  string subject_ent_id = 3;  // Linked entity (optional)
+  string predicate = 4;       // NSP relation type
+  string object = 5;          // Object text
+  string object_ent_id = 6;   // Linked entity (optional)
+  string evidence = 7;        // Original text fragment
+  Span evidence_span = 8;     // Evidence offset
+  float confidence = 9;       // [0, 1]
+  string source = 10;         // Extraction source
+}
