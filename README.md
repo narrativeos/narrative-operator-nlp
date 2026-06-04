@@ -54,11 +54,42 @@ narrative-operator-nlp/
 
 ## Quick Start
 
-### Install
+### Prerequisites
+
+- Python 3.10 (required by HanLP)
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+
+### 1. Create Virtual Environment
 
 ```bash
-pip install -e .
+uv venv --python 3.10
+source .venv/bin/activate
 ```
+
+### 2. Install
+
+```bash
+uv pip install -e ".[narrative]"
+```
+
+### 3. Download Pre-trained Models
+
+```bash
+# Download all models (MTL + Classical Chinese + Pipeline)
+python scripts/setup_models.py
+
+# Check what's already downloaded
+python scripts/setup_models.py --check
+
+# Download specific model sets
+python scripts/setup_models.py --model MTL      # Modern Chinese only
+python scripts/setup_models.py --model LZH      # Classical Chinese only
+python scripts/setup_models.py --model PIPELINE  # Single-task models
+```
+
+Models are cached in `~/.hanlp/` by default.
+
+### 4. Verify & Analyze Text
 
 ### Analyze Text
 
