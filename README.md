@@ -117,27 +117,30 @@ python adapters/grpc_server.py
 
 ```bash
 cp .env.example .env
-docker compose up -d
+docker compose up -d --build
 ```
 
+Single container runs both FastAPI (HTTP) and gRPC (Unix Domain Socket).
 First run auto-downloads models (~500 MB) into a persistent volume.
-
-### Service Modes
-
-```bash
-docker compose up -d nlp-http        # FastAPI only (default)
-docker compose up -d nlp-grpc        # gRPC only
-```
 
 ### Configuration (.env)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HTTP_PORT` | `8000` | FastAPI host port |
-| `GRPC_PORT` | `50051` | gRPC host port |
 | `HANLP_MODEL_SET` | `MTL` | Models: MTL / LZH / PIPELINE / ALL |
 
 ### Verify
+
+```bash
+curl http://localhost:8000/health
+```
+
+Open `http://localhost:8000` — redirects to interactive demo page.
+
+> **MCP (Model Context Protocol)** uses stdio transport and is designed for local
+> subprocess invocation by LLM frameworks (Claude Desktop, Dify, LangGraph).
+> In Docker, use the HTTP API (`POST /analyze`) instead.
 
 ```bash
 curl http://localhost:8000/health

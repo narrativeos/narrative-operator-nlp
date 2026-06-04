@@ -16,6 +16,10 @@ narrative-operator-nlp 提供三种协议接口。本文档涵盖 MCP 和 gRPC �
 
 ## 1. MCP (Model Context Protocol)
 
+> **注意**: MCP 使用 stdio 传输，设计用于本地进程间通信。
+> Docker 部署请使用 HTTP API (`POST /analyze`) 或 gRPC 替代。
+> 本地开发中 MCP 是 LLM/Agent 集成的首选方式。
+
 ### 1.1 启动 MCP Server
 
 ```bash

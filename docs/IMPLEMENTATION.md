@@ -109,10 +109,13 @@
 
 ## 部署
 
-- **本地开发**: Python 3.10 + uv venv
-- **Docker**: `docker compose up -d` — 自动检查下载模型
-- **端口**: HTTP_PORT / GRPC_PORT 通过 `.env` 配置
-- **模型持久化**: Docker Volume `hanlp-models:/root/.hanlp`
+| 方式 | 命令 | 协议 |
+|------|------|------|
+| 本地开发 | `uv venv --python 3.10 && uv pip install -e ".[narrative]"` | MCP + gRPC + FastAPI |
+| Docker 单容器 | `docker compose up -d --build` | FastAPI (HTTP) + gRPC (UDS) |
+| 模型持久化 | Docker Volume `hanlp-models:/root/.hanlp` | — |
+
+> MCP 使用 stdio 传输，不适合 Docker 网络暴露。Docker 部署时 LLM/Agent 应使用 `POST /analyze` HTTP API。
 
 ## 测试
 
