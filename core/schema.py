@@ -68,6 +68,7 @@ class Token(BaseModel):
     text: str = Field(..., min_length=1, description="Token text")
     pos: str = Field(..., min_length=1, description="Part-of-speech (Universal POS standard)")
     span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+    source: str = Field(default="", description="NLP model source (e.g., hanlp_v2, hanlp_lzh)")
 
     @field_validator("span")
     @classmethod
