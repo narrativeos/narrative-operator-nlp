@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# HanLP model cache (mounted as volume at runtime)
+.hanlp/
+
+# Dev files
+.git/
+.github/
+.mypy_cache/
+.python-version
+
+# IDE
+.vscode/
+.idea/
+
+# Demo notebooks (large)
+plugins/hanlp_demo/**/*.ipynb
+
+# Tests in production image
+tests/

@@ -1,0 +1,52 @@
+version: "3.8"
+
+# ───────────────────────────────────────────────────────────────
+# Narrative Operator NLP — Docker Compose
+# ───────────────────────────────────────────────────────────────
+# Usage:
+#   docker compose up -d nlp-http        # FastAPI only
+#   docker compose up -d                 # All services
+#   docker compose run --rm nlp-http python scripts/setup_models.py --model ALL
+# ───────────────────────────────────────────────────────────────
+
+volumes:
+  hanlp-models:
+    name: narrative-operator-nlp-models
+  grpc-socket:
+
+services:
+  # ── FastAPI HTTP Server ────────────────────────────────────
+  nlp-http:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: narrative-operator-nlp:latest
+    container_name: narrative-nlp-http
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - hanlp-models:/root/.hanlp
+    command: ["fastapi"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── gRPC Server (sidecar for Worker Runtime) ───────────────
+  nlp-grpc:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: narrative-operator-nlp:latest
+    container_name: narrative-nlp-grpc
+    restart: unless-stopped
+    volumes:
+      - hanlp-models:/root/.hanlp
+      - grpc-socket:/tmp
+    command: ["grpc"]
+    # No port exposed — communicates via Unix Domain Socket
+    # When Worker Runtime is in same compose network, use:
+    #   GRPC_SOCKET=/tmp/narrative-operator-nlp.sock
