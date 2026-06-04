@@ -6,6 +6,11 @@
 # Usage:
 #   docker compose up -d              # Start (FastAPI + gRPC in one container)
 #   docker compose up -d --build      # Rebuild and start
+#
+# MCP (Model Context Protocol) uses stdio transport and is designed
+# for local subprocess invocation, not Docker networking.
+# For LLM/Agent integration in Docker, use the HTTP API instead:
+#   curl -X POST http://localhost:8000/analyze -d '{"text":"..."}'
 # ───────────────────────────────────────────────────────────────
 
 volumes:
