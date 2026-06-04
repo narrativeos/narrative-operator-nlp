@@ -114,8 +114,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
 async def analyze_dep(request: AnalyzeRequest):
     """Return token list + dependency edges for frontend SVG rendering."""
     try:
-        from core.analyzer import _get_pipeline
-        pipeline = _get_pipeline()
+        from core.analyzer import _get_modern_pipeline
+        pipeline = _get_modern_pipeline()
         raw = pipeline(request.text)
         tokens = [{"id": i, "text": t, "pos": raw.get("pos/ctb", [""] * len(raw["tok/fine"]))[i] if i < len(raw.get("pos/ctb", [])) else "X"}
                   for i, t in enumerate(raw.get("tok/fine", []))]
@@ -132,8 +132,8 @@ async def analyze_dep(request: AnalyzeRequest):
 async def analyze_pretty(request: AnalyzeRequest):
     """Return raw HanLP Document pretty-print (same as demo notebooks)."""
     try:
-        from core.analyzer import _get_pipeline
-        pipeline = _get_pipeline()
+        from core.analyzer import _get_modern_pipeline
+        pipeline = _get_modern_pipeline()
         raw = pipeline(request.text)
         from hanlp_common.document import Document
         doc = Document(raw)
