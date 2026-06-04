@@ -252,6 +252,7 @@ async function analyze(){
 }
 
 function renderNSP(data){
+    if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
     const c=data.content;
     const tokens=c.tokens.map(t=>`<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span}">${t.text}</span>`).join('');
 
@@ -272,10 +273,12 @@ function renderNSP(data){
 }
 
 function renderPretty(data){
+    if(!data||!data.pretty){ document.getElementById('pretty').innerHTML='<div class="error">分析失败</div>'; return; }
     document.getElementById('pretty').innerHTML=`<div class="card"><pre class="pretty">${escapeHtml(data.pretty)}</pre></div>`;
 }
 
 function renderDepSVG(data){
+    if(!data||!data.tokens){ document.getElementById('depsvg').innerHTML='<div class="card">分析失败</div>'; return; }
     const tokens=data.tokens, deps=data.deps;
     if(!tokens.length){ document.getElementById('depsvg').innerHTML='<div class="card">无数据</div>'; return; }
 
