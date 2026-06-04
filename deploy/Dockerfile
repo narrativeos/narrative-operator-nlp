@@ -14,9 +14,10 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # ── Apt: Aliyun mirror ──────────────────────────────────────
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
+RUN echo "deb http://mirrors.aliyun.com/debian bookworm main" > /etc/apt/sources.list \
+    && echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main" >> /etc/apt/sources.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libgomp1 \
+    && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Pip: Tsinghua mirror ────────────────────────────────────
