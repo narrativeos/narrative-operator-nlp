@@ -3,6 +3,8 @@ version: "3.8"
 # ───────────────────────────────────────────────────────────────
 # Narrative Operator NLP — Docker Compose
 # ───────────────────────────────────────────────────────────────
+# Configuration: copy .env.example → .env and customize.
+#
 # Usage:
 #   docker compose up -d nlp-http        # FastAPI only
 #   docker compose up -d                 # All services
@@ -24,7 +26,7 @@ services:
     container_name: narrative-nlp-http
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${HTTP_PORT:-8000}:8000"
     volumes:
       - hanlp-models:/root/.hanlp
     command: ["fastapi"]
@@ -43,10 +45,15 @@ services:
     image: narrative-operator-nlp:latest
     container_name: narrative-nlp-grpc
     restart: unless-stopped
+    ports:
+      - "${GRPC_PORT:-50051}:50051"
     volumes:
       - hanlp-models:/root/.hanlp
       - grpc-socket:/tmp
     command: ["grpc"]
-    # No port exposed — communicates via Unix Domain Socket
+    environment:
+      - GRPC_SOCKET=/tmp/narrative-operator-nlp.sock
+    # For remote Worker Runtime, set GRPC_PORT=50051 and connect via TCP.
+    # Default uses Unix Domain Socket for local-only zero-overhead IPC.
     # When Worker Runtime is in same compose network, use:
     #   GRPC_SOCKET=/tmp/narrative-operator-nlp.sock
