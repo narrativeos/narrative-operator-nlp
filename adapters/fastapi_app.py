@@ -96,7 +96,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
     This is the primary endpoint for manual testing and Studio prototyping.
     """
     try:
-        doc = analyze(request.text, source=request.source)
+        doc = analyze(request.text)
         return AnalyzeResponse.from_doc(doc)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
