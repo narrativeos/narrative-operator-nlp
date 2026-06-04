@@ -4,53 +4,34 @@
 # Configuration: copy .env.example → .env and customize.
 #
 # Usage:
-#   docker compose up -d nlp-http        # FastAPI only
-#   docker compose up -d                 # All services
-#   docker compose run --rm nlp-http python scripts/setup_models.py --model ALL
+#   docker compose up -d              # Start (FastAPI + gRPC in one container)
+#   docker compose up -d --build      # Rebuild and start
 # ───────────────────────────────────────────────────────────────
 
 volumes:
   hanlp-models:
     name: narrative-operator-nlp-models
-  grpc-socket:
 
 services:
-  # ── FastAPI HTTP Server ────────────────────────────────────
-  nlp-http:
+  # ── Single container: FastAPI (HTTP) + gRPC ────────────────
+  narrative-nlp:
     build:
       context: .
       dockerfile: deploy/Dockerfile
     image: narrative-operator-nlp:latest
-    container_name: narrative-nlp-http
+    container_name: narrative-nlp
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-8000}:8000"
+      - "${HTTP_PORT:-8000}:8000"       # FastAPI + Demo
     volumes:
       - hanlp-models:/root/.hanlp
-    command: ["fastapi"]
+    command: ["both"]                    # FastAPI foreground + gRPC background
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # ── gRPC Server (sidecar for Worker Runtime) ───────────────
-  nlp-grpc:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-    image: narrative-operator-nlp:latest
-    container_name: narrative-nlp-grpc
-    restart: unless-stopped
-    ports:
-      - "${GRPC_PORT:-50051}:50051"
-    volumes:
-      - hanlp-models:/root/.hanlp
-      - grpc-socket:/tmp
-    command: ["grpc"]
-    environment:
-      - GRPC_SOCKET=/tmp/narrative-operator-nlp.sock
     # For remote Worker Runtime, set GRPC_PORT=50051 and connect via TCP.
     # Default uses Unix Domain Socket for local-only zero-overhead IPC.
     # When Worker Runtime is in same compose network, use:
