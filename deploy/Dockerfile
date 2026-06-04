@@ -1,6 +1,8 @@
 # ───────────────────────────────────────────────────────────────
 # Narrative Operator NLP — Docker Image
 # ───────────────────────────────────────────────────────────────
+# Mirrors: apt (Aliyun), pip (Tsinghua), PyTorch (Tsinghua)
+#
 # Build:
 #   docker build -t narrative-operator-nlp -f deploy/Dockerfile .
 # Run:
@@ -11,10 +13,15 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# System deps (build-essential for torch, libgomp1 for runtime)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libgomp1 \
+# ── Apt: Aliyun mirror ──────────────────────────────────────
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libgomp1 \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Pip: Tsinghua mirror ────────────────────────────────────
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 # Layer 1: install heavy deps first for cache
 COPY setup.py hanlp/version.py ./
@@ -25,7 +32,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 RUN pip install --no-cache-dir -e ".[narrative]"
 
-# Environment
+# ── Environment ──────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1
 ENV HANLP_HOME=/root/.hanlp
 ENV TOKENIZERS_PARALLELISM=false
