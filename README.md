@@ -89,9 +89,7 @@ python scripts/setup_models.py --model PIPELINE  # Single-task models
 
 Models are cached in `~/.hanlp/` by default.
 
-### 4. Verify & Analyze Text
-
-### Analyze Text
+### 4. Verify & Analyze
 
 ```python
 from core.analyzer import analyze
@@ -103,15 +101,49 @@ print(doc.model_dump_json(indent=2))
 ### Start Services
 
 ```bash
-# FastAPI dev server
+# FastAPI dev server (with Swagger UI at /docs)
 python adapters/fastapi_app.py
 
-# MCP server
+# MCP server (for LLM/Agent integration)
 python adapters/mcp_server.py
 
-# gRPC server
+# gRPC server (for Worker Runtime IPC)
 python adapters/grpc_server.py
 ```
+
+## Docker Deployment
+
+### Quick Start
+
+```bash
+cp .env.example .env
+docker compose up -d
+```
+
+First run auto-downloads models (~500 MB) into a persistent volume.
+
+### Service Modes
+
+```bash
+docker compose up -d nlp-http        # FastAPI only (default)
+docker compose up -d nlp-grpc        # gRPC only
+```
+
+### Configuration (.env)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HTTP_PORT` | `8000` | FastAPI host port |
+| `GRPC_PORT` | `50051` | gRPC host port |
+| `HANLP_MODEL_SET` | `MTL` | Models: MTL / LZH / PIPELINE / ALL |
+
+### Verify
+
+```bash
+curl http://localhost:8000/health
+```
+
+Open `http://localhost:8000/demo` for interactive visualization.
 
 ## Protocol Selection
 
@@ -126,7 +158,10 @@ python adapters/grpc_server.py
 
 ## Related Documentation
 
+- [Implementation Summary](docs/IMPLEMENTATION.md) — Full architecture & module reference
+- [API Usage Guide](docs/API-USAGE.md) — MCP, gRPC, FastAPI call examples
 - [Narrative Schema Protocol (NSP)](docs/PROTOCOL.md) — Data structure standard
+- [Gap Analysis vs HanLP Demo](docs/GAP-ANALYSIS.md) — Feature comparison
 - [Architecture: NLP Operator](https://github.com/narrativeos/narrative-docs/blob/main/architecture/operator-nlp/README.md) — Design rationale
 - [HanLP Documentation](https://hanlp.hankcs.com/docs/) — Underlying NLP engine
 
