@@ -44,7 +44,7 @@ case "$MODE" in
         # gRPC in background, FastAPI in foreground
         python adapters/grpc_server.py --socket "$GRPC_SOCKET" &
         sleep 2
-        exec python adapters/fastapi_app.py
+        python adapters/fastapi_app.py
         ;;
     *)
         echo "Unknown mode: $MODE"
