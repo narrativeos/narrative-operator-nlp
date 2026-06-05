@@ -235,19 +235,20 @@ async function analyze(){
     btn.disabled=true; btn.textContent='分析中...';
     ['nsp','pretty','depsvg','json'].forEach(id=>document.getElementById(id).innerHTML='<div class="loading">⏳ 分析中...</div>');
 
-    try{
-        const [r1,r2,r3]=await Promise.all([
-            fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}).then(r=>r.json()),
-            fetch('/analyze/pretty',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}).then(r=>r.json()),
-            fetch('/analyze/dep',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}).then(r=>r.json())
-        ]);
-        renderNSP(r1);
-        renderPretty(r2);
-        renderDepSVG(r3);
-        renderJSON(r1);
-    }catch(e){
-        ['nsp','pretty','depsvg','json'].forEach(id=>document.getElementById(id).innerHTML='<div class="error">'+e.message+'</div>');
-    }
+    // Independent fetches — one failure doesn't block others
+    const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
+    const [r1,r2,r3]=await Promise.all([
+        post('/analyze',{text}),
+        post('/analyze/pretty',{text}),
+        post('/analyze/dep',{text})
+    ]);
+    if(r1._error) document.getElementById('nsp').innerHTML='<div class="error">分析失败: '+r1._error+'</div>';
+    else renderNSP(r1);
+    if(r2._error) document.getElementById('pretty').innerHTML='<div class="error">分析失败: '+r2._error+'</div>';
+    else renderPretty(r2);
+    if(r3._error) document.getElementById('depsvg').innerHTML='<div class="error">分析失败: '+r3._error+'</div>';
+    else renderDepSVG(r3);
+    if(!r1._error) renderJSON(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
