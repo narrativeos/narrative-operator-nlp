@@ -1,89 +1,188 @@
 """
-Relation Extraction — Dependency & SRL to NSP Triples.
+Relation Extraction — SRL-first with DEP supplementary.
 
-HanLP MTL output:
-    dep: list[(head_1based, deprel)]
-    srl: list[list[(text, role, tok_start, tok_end)]]
+Strategy (redesigned):
+1. SRL (semantic role labeling) is the primary source — it gives clean
+   (ARG0, PRED, ARG1) triples that directly map to NSP predicates.
+2. DEP (dependency parsing) is used only for supplementary relations
+   that SRL doesn't capture: adjective→noun properties, etc.
+3. Entity-aware: relations must involve at least one entity.
+4. Function words (是, 的, 和, 一, ...) are excluded as endpoints.
+5. Compound-internal dependencies (nn, assmod, assm) are skipped —
+   they're entity merging hints, not cross-entity relations.
 """
 
 from __future__ import annotations
-from typing import Optional
-from .schema import Relation, RelationPredicate, Token
+from typing import Optional, TYPE_CHECKING
 
-_DEP_MAP = {
-    "top":("IS_A",0.80),"attr":("IS_A",0.85),
-    "nn":("PART_OF",0.75),"assmod":("PART_OF",0.75),"assm":("PART_OF",0.75),
-    "amod":("HAS_PROPERTY",0.85),"rcmod":("HAS_PROPERTY",0.75),"advmod":("HAS_PROPERTY",0.70),
-    "lobj":("LOCATED_AT",0.90),"plmod":("LOCATED_AT",0.85),
-    "tmod":("TEMPORAL_AT",0.90),
-    "advcl":("CAUSES",0.70),
-    "pobj":("DEPENDS_ON",0.75),"prep":("DEPENDS_ON",0.70),
-    "appos":("EQUIVALENT_TO",0.90),
-    "nsubj":("PROPERTY_OF",0.80),"nsubjpass":("PROPERTY_OF",0.80),"dobj":("PROPERTY_OF",0.75),
-    "nmod":("PART_OF",0.65),"conj":("PART_OF",0.60),"cc":("PART_OF",0.55),
-    "nummod":("HAS_PROPERTY",0.60),"clf":("HAS_PROPERTY",0.55),"det":("HAS_PROPERTY",0.50),
-    "pass":("DEPENDS_ON",0.70),"etmp":("TEMPORAL_AT",0.80),
-    "punct":(None,0),"root":(None,0),
+if TYPE_CHECKING:
+    from .schema import Token
+
+from .schema import Relation
+
+# ── Function words to never use as relation endpoints ──
+_FUNCTION_WORDS = {
+    "是", "的", "了", "和", "与", "或", "不", "也", "都", "就", "一", "二", "三",
+    "四", "五", "六", "七", "八", "九", "十", "个", "种", "次", "回", "这", "那",
+    "哪", "每", "着", "过", "得", "地", "之", "把", "被", "让", "给", "对", "从",
+    "到", "向", "由", "以", "为", "所", "而", "且", "但", "却", "只", "还", "又",
+    "再", "才", "将", "能", "会", "可", "要", "用", "做", "来", "去", "出", "进",
+    "开", "关", "有", "没", "说", "想", "看", "听", "吃", "喝", "走", "跑",
+    "吗", "呢", "吧", "啊", "嘛", "呀", "第", "如", "等",
+}
+
+# ── Compound-internal dep rels (entity merging, not cross-entity) ──
+_COMPOUND_INTERNAL = {"nn", "assmod", "assm", "nummod", "clf", "det", "punct", "cc", "conj", "root", "top", "attr", "pass", "etmp", "prep", "pobj", "appos", "nmod", "lobj", "plmod", "tmod", "advcl", "rcmod", "nsubjpass"}
+
+# ── SRL predicate → NSP predicate mapping ──
+_SRL_PRED_MAP = {
+    "是": ("IS_A", 0.95),
+    "为": ("IS_A", 0.95),
+    "属于": ("IS_A", 0.92),
+    "具有": ("HAS_PROPERTY", 0.90),
+    "拥有": ("HAS_PROPERTY", 0.90),
+    "具备": ("HAS_PROPERTY", 0.90),
+    "位于": ("LOCATED_AT", 0.95),
+    "座落": ("LOCATED_AT", 0.90),
+    "坐落": ("LOCATED_AT", 0.90),
+    "地处": ("LOCATED_AT", 0.90),
+    "产于": ("LOCATED_AT", 0.85),
+    "成立于": ("TEMPORAL_AT", 0.85),
+    "建于": ("TEMPORAL_AT", 0.80),
+    "含有": ("HAS_PROPERTY", 0.85),
+}
+
+# ── DEP predicate → NSP predicate (only meaningful cross-entity edges) ──
+_DEP_PRED_MAP = {
+    "amod": ("HAS_PROPERTY", 0.80),
 }
 
 
+def _is_content(token) -> bool:
+    """Check if a token is meaningful content (not a function word)."""
+    text = token.text if hasattr(token, 'text') else str(token)
+    return text not in _FUNCTION_WORDS and len(text) >= 1
+
+
+def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
+    """Extract text covering two spans."""
+    start = min(sp1[0], sp2[0])
+    end = max(sp1[1], sp2[1])
+    if start < 0 or end > len(text):
+        return ""
+    return text[start:end]
+
+
 class RelationExtractionRules:
+    """SRL-first, DEP-supplementary relation extractor."""
+
     def __init__(self):
         self._counter = 0
 
-    def extract_from_dep(self, child_idx: int, deprel: str, head_idx: int,
-                         tokens: list[Token], text: str = "") -> Optional[Relation]:
-        deprel = str(deprel).strip().lower()
-        mapping = _DEP_MAP.get(deprel)
-        if not mapping or mapping[1] <= 0:
-            return None
-        pred, conf = mapping
-        if pred is None:
-            return None
-        head_0 = head_idx - 1
-        if not (0 <= child_idx < len(tokens) and 0 <= head_0 < len(tokens)):
-            return None
-        ct, ht = tokens[child_idx], tokens[head_0]
-        es, ee = min(ct.span[0], ht.span[0]), max(ct.span[1], ht.span[1])
-        evidence = text[es:ee] if text else f"{ht.text}...{ct.text}"
-        self._counter += 1
-        return Relation(id=f"rel_{self._counter:03d}", subject=ht.text, predicate=pred,
-                        object=ct.text, evidence=evidence, evidence_span=(es, ee),
-                        confidence=conf, source=f"dep/{deprel}")
+    # ── SRL Extraction (primary) ──
 
-    def extract_from_srl(self, frame: list, tokens: list[Token], text: str = "") -> Optional[Relation]:
-        a0_t, a1_t = "", ""
-        a0_s, a1_s = (0,0), (0,0)
+    def extract_from_srl(self, frame: list, tokens: list,
+                         text: str = "") -> Optional[Relation]:
+        """Extract relation from SRL frame (ARG0, PRED, ARG1)."""
+        a0_text, a1_text = "", ""
+        a0_span, a1_span = (0, 0), (0, 0)
+        pred_text = ""
+
         for item in frame:
             if len(item) < 4:
                 continue
             role = str(item[1]).upper()
             itxt = str(item[0])
             ts, te = int(item[2]), int(item[3])
-            cs, ce = (tokens[ts].span[0], tokens[te-1].span[1]) if 0<=ts<len(tokens) and 0<te<=len(tokens) else (0,0)
+            if 0 <= ts < len(tokens) and 0 < te <= len(tokens):
+                cs = tokens[ts].span[0]
+                ce = tokens[te - 1].span[1]
+            else:
+                cs, ce = 0, 0
             if "ARG0" in role:
-                a0_t, a0_s = itxt, (cs, ce)
+                a0_text, a0_span = itxt, (cs, ce)
             elif "ARG1" in role:
-                a1_t, a1_s = itxt, (cs, ce)
-        if not a0_t or not a1_t:
-            return None
-        es, ee = a0_s[0], a1_s[1]
-        evidence = text[es:ee] if text else f"{a0_t}...{a1_t}"
-        self._counter += 1
-        return Relation(id=f"rel_{self._counter:03d}", subject=a0_t, predicate="PROPERTY_OF",
-                        object=a1_t, evidence=evidence, evidence_span=(es, ee),
-                        confidence=0.75, source="srl/ARG0-ARG1")
+                a1_text, a1_span = itxt, (cs, ce)
+            elif role == "PRED":
+                pred_text = itxt
 
-    def extract_all(self, text: str, raw: dict, tokens: list[Token]) -> list[Relation]:
-        relations = []
-        for i, d in enumerate(raw.get("dep", [])):
-            if isinstance(d, (list, tuple)) and len(d) >= 2:
-                rel = self.extract_from_dep(i, str(d[1]), int(d[0]), tokens, text)
-                if rel:
-                    relations.append(rel)
+        if not a0_text or not a1_text:
+            return None
+
+        pred, conf = _SRL_PRED_MAP.get(pred_text, ("PROPERTY_OF", 0.70))
+
+        evidence = _span_between(a0_span, a1_span, text)
+        if not evidence:
+            evidence = f"{a0_text} {pred_text} {a1_text}"
+
+        self._counter += 1
+        return Relation(
+            id=f"rel_{self._counter:03d}",
+            subject=a0_text.strip(),
+            predicate=pred,
+            object=a1_text.strip(),
+            evidence=evidence,
+            evidence_span=(a0_span[0], a1_span[1]),
+            confidence=conf,
+            source=f"srl/{pred_text}",
+        )
+
+    # ── DEP Extraction (supplementary, amod only) ──
+
+    def extract_from_dep(self, child_idx: int, deprel: str, head_idx: int,
+                         tokens: list, text: str = "") -> Optional[Relation]:
+        """Extract adjective-property relations from DEP (amod only)."""
+        deprel = str(deprel).strip().lower()
+
+        if deprel in _COMPOUND_INTERNAL:
+            return None
+
+        if deprel != "amod":
+            return None
+
+        head_0 = head_idx - 1
+        if not (0 <= child_idx < len(tokens) and 0 <= head_0 < len(tokens)):
+            return None
+
+        ct, ht = tokens[child_idx], tokens[head_0]
+
+        if not _is_content(ct) or not _is_content(ht):
+            return None
+        if ct.text == ht.text:
+            return None
+
+        evidence = _span_between(ct.span, ht.span, text)
+        if not evidence:
+            evidence = f"{ht.text}{ct.text}"
+
+        self._counter += 1
+        return Relation(
+            id=f"rel_{self._counter:03d}",
+            subject=ht.text,
+            predicate="HAS_PROPERTY",
+            object=ct.text,
+            evidence=evidence,
+            evidence_span=(min(ct.span[0], ht.span[0]), max(ct.span[1], ht.span[1])),
+            confidence=0.80,
+            source="dep/amod",
+        )
+
+    # ── Aggregate ──
+
+    def extract_all(self, text: str, raw: dict, tokens: list) -> list:
+        """Extract relations: SRL first, then supplementary DEP (amod)."""
+        relations: list = []
+
         for f in raw.get("srl", []):
             if isinstance(f, list):
                 rel = self.extract_from_srl(f, tokens, text)
                 if rel:
                     relations.append(rel)
+
+        for i, d in enumerate(raw.get("dep", [])):
+            if isinstance(d, (list, tuple)) and len(d) >= 2:
+                rel = self.extract_from_dep(i, str(d[1]), int(d[0]), tokens, text)
+                if rel:
+                    relations.append(rel)
+
         return relations
