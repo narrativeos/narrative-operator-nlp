@@ -247,14 +247,15 @@ class HanlpSchemaMapper:
                 if i < len(entity_cats):
                     parts.append(entity_cats[i])
                 if i < len(preds):
-                    parts.append("谓词")
+                    parts.append("PRED")
             template = " ".join(parts)
 
             for r in relations:
                 if r.predicate_verb in preds:
                     rel_summaries.append(f"{r.subject}→{r.predicate_verb}→{r.object}")
 
-            attr_count = sum(len(e.attributes) for e in entities)
+            # Count attributes for entities appearing in THIS sentence
+            attr_count = sum(len(e.attributes) for e in entities if e.text in sent)
 
             patterns.append(SentencePattern(
                 sentence=sent,
