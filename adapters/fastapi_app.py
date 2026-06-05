@@ -605,13 +605,17 @@ function renderPatterns(patterns){
     const rows=patterns.map(p=>{
         const tags=[];
         if(p.sentence_type!=='declarative') tags.push(`<span class="tag">${p.sentence_type}</span>`);
-        if(p.polarity==='negative') tags.push(`<span class="tag negative">否定</span>`);
-        if(p.voice==='passive') tags.push(`<span class="tag passive">被动</span>`);
+        // polarity/voice now always default; hints are in limitations
         if(p.structural_type&&p.structural_type!=='subject_predicate') tags.push(`<span class="tag structural">${esc(p.structural_type)}</span>`);
         if(p.rhetorical_form&&p.rhetorical_form!=='none') tags.push(`<span class="tag">${esc(p.rhetorical_form)}</span>`);
         if(p.sub_types&&p.sub_types.length) p.sub_types.forEach(t=>tags.push(`<span class="tag">${t}</span>`));
         if(p.sentence_length_tier) tags.push(`<span class="tag tier">${esc(p.sentence_length_tier)}</span>`);
         const rels=p.relation_summary.join(', ')||'-';
+        // Signal NLP gaps: negation, passive detected as hints (not confident fields)
+        const hasNegation = p.limitations&&p.limitations.some(l=>l.startsWith('hint:negation'));
+        const hasPassive  = p.limitations&&p.limitations.includes('hint:passive');
+        if(hasNegation) tags.push(`<span class="tag negative">⚠否定</span>`);
+        if(hasPassive)  tags.push(`<span class="tag passive">⚠被动</span>`);
         const limits=p.limitations&&p.limitations.length
           ? p.limitations.map(l=>`<span class="tag limit" title="NLP无法确定，留给下游">⚠${esc(l)}</span>`).join(' ')
           : '<span style="color:#484f58">-</span>';

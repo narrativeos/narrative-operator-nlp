@@ -314,15 +314,53 @@ def _detect_structural_type(text: str,
 
 
 def _detect_polarity(text: str) -> str:
-    for neg in ("不", "没", "无", "非", "未", "别", "莫", "勿"):
-        if neg in text:
-            return "negative"
+    """Returns 'affirmative' as safe default.
+
+    Chinese negation detection via keyword matching CANNOT achieve near-100%:
+    - False positives: double-negation (不无道理→affirmative), lexicalized
+      compounds (不错=good, 非常=very, 无限=infinite, 未来=future),
+      proper nouns (无锡=Wuxi, 非洲=Africa).
+    - False negatives: implicit negation (难以, 拒绝), rhetorical negation.
+    - Scope ambiguity: 他不认为这是对的 → negation scopes over 'think',
+      not the proposition.
+
+    Reliable negation detection requires syntactic scope resolution +
+    discourse context — beyond current NLP capability.
+    Negation hints are recorded in limitations for downstream processing.
+    """
     return "affirmative"
 
 
+# Known false-positive compounds: contain negation char but are NOT negative.
+# NOTE: This list is necessarily incomplete — it's a best-effort filter,
+# not a solution. True negation detection requires syntactic scope resolution.
+_NEG_FALSE_POSITIVES = frozenset({
+    "不错", "没关系", "不得了", "不得已", "不由得", "说不定",
+    "非常", "非洲", "非凡", "非但", "无非",
+    "无限", "无数", "无论", "无线电", "无锡",
+    "未来", "未必", "未免", "未婚",
+    "别致", "区别", "分别", "告别",
+    "莫大", "莫非", "莫名其妙",
+    "毫不", "毫无",  # can be negative or emphatic-affirmative; ambiguous
+    "不锈钢", "不锈", "不厌其烦", "不亦乐乎",
+    "未遂", "未免", "未知",
+    "非常规", "非正式",
+})
+
+# Characters that can indicate negation (excluding proper-noun contexts)
+_NEG_CHARS = frozenset({"不", "没", "无", "非", "未", "别", "莫", "勿"})
+
+
 def _detect_voice(text: str) -> str:
-    if "被" in text:
-        return "passive"
+    """Returns 'active' as safe default.
+
+    '被' keyword is ~90% reliable for passive, but misses:
+    - Lexical passives (遭受, 受到, 得到, 给, 让, 叫 — ambiguous with
+      causative/pivotal).
+    - Semantic passives without marker (饭吃完了).
+
+    Passive hints go to limitations for downstream.
+    """
     return "active"
 
 
@@ -377,7 +415,25 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
     """
     limits: list[str] = []
 
-    # serial_verb — multiple ARG0s suggest serial verb clauses (heuristic)
+    # ── Negation hint: chars present but NLP can't resolve scope ──
+    neg_hits = [c for c in _NEG_CHARS if c in text]
+    if neg_hits:
+        # Filter known false positives: check if neg char only appears in compounds
+        effective = []
+        for c in neg_hits:
+            # Quick check: if text contains any known false-positive compound
+            # that uses this char, flag as ambiguous
+            ambiguous = any(c in fp and fp in text for fp in _NEG_FALSE_POSITIVES)
+            if not ambiguous:
+                effective.append(c)
+        if effective:
+            limits.append(f"hint:negation({','.join(effective)})")
+
+    # ── Passive hint ──
+    if "被" in text:
+        limits.append("hint:passive")
+
+    # ── serial_verb — multiple ARG0s suggest serial verb clauses (heuristic) ──
     nsubj_count = 0
     for f in frames:
         for item in f:
@@ -386,20 +442,20 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
     if nsubj_count >= 3:
         limits.append("hint:serial_verb")
 
-    # pivotal — keyword hints only; needs deeper parsing (e.g., "请他吃饭")
+    # ── pivotal — keyword hints only; needs deeper parsing (e.g., "请他吃饭") ──
     pivotal_kw = {"请", "让", "叫", "派", "命令", "要求"}
     if any(w in text for w in pivotal_kw) and not text.startswith("请勿"):
         limits.append("hint:pivotal")
 
-    # imperative accuracy — keyword detection is approximate
+    # ── imperative accuracy — keyword detection is approximate ──
     if _detect_sentence_type(text) == "imperative":
         limits.append("hint:imperative-approx")
 
-    # rhetorical_form is heuristic (comma count)
+    # ── rhetorical_form is heuristic (comma count) ──
     if _detect_rhetorical(text) == "parallel":
         limits.append("hint:parallel-approx")
 
-    # ellipsis — no reliable heuristic; always a downstream task
+    # ── ellipsis — no reliable heuristic; always a downstream task ──
     # (e.g., "你去哪？图书馆。" — missing predicate)
 
     return limits
