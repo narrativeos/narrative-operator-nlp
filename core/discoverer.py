@@ -387,54 +387,44 @@ def discover_words(text: str, **kwargs) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# ConvSeg (optional, requires TensorFlow in a clean environment)
+# ConvSeg (PKU_NAME_MERGED_SIX_MONTHS_CONVSEG — optional TF model)
 # ---------------------------------------------------------------------------
 
-_CONVSEG_VENV = "/tmp/convseg-venv"
+_convseg_model: object | None = None
+_CONVSEG_AVAILABLE: bool | None = None  # tri-state: None=unchecked
 
 
-def _run_convseg_subprocess(text: str) -> list[str] | None:
-    """Run ConvSeg tokenizer in a subprocess using a clean venv.
-
-    Returns list of tokens or None if unavailable.
-    """
-    import subprocess
-
-    code = f'''
-import hanlp
-from hanlp.pretrained.tok import PKU_NAME_MERGED_SIX_MONTHS_CONVSEG
-convseg = hanlp.load(PKU_NAME_MERGED_SIX_MONTHS_CONVSEG, verbose=False)
-import json
-result = convseg({text!r})
-print(json.dumps(result))
-'''
+def _get_convseg():
+    """Lazy-load ConvSeg model. Returns model or None if unavailable."""
+    global _convseg_model, _CONVSEG_AVAILABLE
+    if _CONVSEG_AVAILABLE is False:
+        return None
+    if _convseg_model is not None:
+        return _convseg_model
     try:
-        proc = subprocess.run(
-            [_CONVSEG_VENV + "/bin/python", "-c", code],
-            capture_output=True, text=True, timeout=120,
-            env={**__import__("os").environ, "PYTHONPATH": ""},
-        )
-        if proc.returncode != 0:
-            return None
-        import json as _json
-        return _json.loads(proc.stdout.strip().split("\n")[-1])
+        import tensorflow  # noqa: F401
+        from transformers import TFAutoModel  # noqa: F401
+        import hanlp
+        from hanlp.pretrained.tok import PKU_NAME_MERGED_SIX_MONTHS_CONVSEG
+        _convseg_model = hanlp.load(PKU_NAME_MERGED_SIX_MONTHS_CONVSEG, verbose=False)
+        _CONVSEG_AVAILABLE = True
+        return _convseg_model
     except Exception:
+        _CONVSEG_AVAILABLE = False
         return None
 
 
 def discover_convseg(text: str) -> dict | None:
-    """Run ConvSeg and return comparison data.
+    """Run ConvSeg tokenizer directly and return comparison data.
 
-    Returns dict with 'tokens' and 'candidates' (words not in MTL output),
-    or None if ConvSeg is unavailable.
+    Returns dict with 'tokens' and 'candidates' (multi-char words),
+    or None if ConvSeg (TensorFlow) is unavailable.
     """
-    tokens = _run_convseg_subprocess(text)
-    if tokens is None:
+    model = _get_convseg()
+    if model is None:
         return None
-
-    # Filter: keep only multi-char tokens as candidates
+    tokens: list[str] = model(text)
     candidates = [t for t in tokens if len(t) >= 2]
-
     return {
         "engine": "convseg_pku_merged",
         "tokens": tokens,
