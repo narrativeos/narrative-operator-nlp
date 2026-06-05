@@ -39,21 +39,40 @@ class EntityCategory:
 
 class RelationPredicate:
     """NSP standard relation types."""
+    # Core
     IS_A = "IS_A"
     PART_OF = "PART_OF"
-    PROPERTY_OF = "PROPERTY_OF"
     HAS_PROPERTY = "HAS_PROPERTY"
+    PROPERTY_OF = "PROPERTY_OF"
+    # Spatial / temporal
     LOCATED_AT = "LOCATED_AT"
     TEMPORAL_AT = "TEMPORAL_AT"
+    # Causal / influence
     CAUSES = "CAUSES"
+    AFFECTS = "AFFECTS"
+    # Production / composition
+    PRODUCES = "PRODUCES"
+    COMPOSED_OF = "COMPOSED_OF"
+    # Transfer / exchange
+    TRANSFERS_TO = "TRANSFERS_TO"
     DEPENDS_ON = "DEPENDS_ON"
+    # Movement
+    MOVED_TO = "MOVED_TO"
+    DEPARTED_FROM = "DEPARTED_FROM"
+    # Interaction
+    INTERACTS_WITH = "INTERACTS_WITH"
+    # Control
+    CONTROLS = "CONTROLS"
+    # Reference
     EQUIVALENT_TO = "EQUIVALENT_TO"
     REFERENCE_OF = "REFERENCE_OF"
     CONSTRAINT_OF = "CONSTRAINT_OF"
 
     ALL = frozenset({
-        IS_A, PART_OF, PROPERTY_OF, HAS_PROPERTY,
-        LOCATED_AT, TEMPORAL_AT, CAUSES, DEPENDS_ON,
+        IS_A, PART_OF, HAS_PROPERTY, PROPERTY_OF,
+        LOCATED_AT, TEMPORAL_AT, CAUSES, AFFECTS,
+        PRODUCES, COMPOSED_OF, TRANSFERS_TO, DEPENDS_ON,
+        MOVED_TO, DEPARTED_FROM, INTERACTS_WITH, CONTROLS,
         EQUIVALENT_TO, REFERENCE_OF, CONSTRAINT_OF,
     })
 
