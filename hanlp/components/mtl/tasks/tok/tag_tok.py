@@ -119,8 +119,7 @@ class TaggingTokenization(Task, TransformerTaggingTokenizer):
                      criterion) -> Union[torch.FloatTensor, Dict[str, torch.FloatTensor]]:
         return TransformerTaggingTokenizer.compute_loss(self, criterion, output, batch['tag_id'], batch['mask'])
 
-    def decode_output(self, output: Union[torch.Tensor, Dict[str, torch.Tensor], Iterable[torch.Tensor], Any],
-                      mask: torch.BoolTensor, batch: Dict[str, Any], decoder, **kwargs) -> Union[Dict[str, Any], Any]:
+    def decode_output(self, output, mask, batch, decoder, **kwargs):
         return TransformerTaggingTokenizer.decode_output(self, output, mask, batch, decoder)
 
     def update_metrics(self, batch: Dict[str, Any],

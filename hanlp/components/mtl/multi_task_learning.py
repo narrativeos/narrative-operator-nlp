@@ -551,6 +551,10 @@ class MultiTaskLearning(TorchComponent):
             if v is None:
                 continue
             doc[k] = reorder(v, order)
+        # Also copy confidence keys (not in task_names)
+        for k in results:
+            if k.endswith('_conf') and k not in doc:
+                doc[k] = reorder(results[k], order)
         # Allow task to perform finalization on document
         for group in target_tasks:
             for task_name in group:
@@ -596,6 +600,13 @@ class MultiTaskLearning(TorchComponent):
                                              results)
         self.decode_output(output_dict, batch, output_key)
         results[output_key].extend(task.prediction_to_result(output_dict[output_key]['prediction'], batch))
+        # Copy token confidence from output_dict to results
+        for key, val in output_dict.items():
+            if isinstance(val, dict) and 'confidences' in val:
+                conf_key = key + '_conf'
+                if conf_key not in results:
+                    results[conf_key] = []
+                results[conf_key].append(val['confidences'])
         return output_dict
 
     def _resolve_task_name(self, dependencies):
@@ -720,6 +731,7 @@ class MultiTaskLearning(TorchComponent):
         return h, output_dict
 
     def decode_output(self, output_dict, batch, task_name=None):
+        import torch.nn.functional as F
         if not task_name:
             for task_name, task in self.tasks.items():
                 output_per_task = output_dict.get(task_name, None)
@@ -728,6 +740,11 @@ class MultiTaskLearning(TorchComponent):
                         output_per_task['output'],
                         output_per_task['mask'],
                         batch, self.model.decoders[task_name])
+                    # Store token confidence for tokenizer tasks
+                    if 'tok' in task_name and 'output' in output_per_task:
+                        raw = output_per_task['output']
+                        if isinstance(raw, torch.Tensor) and raw.dim() >= 2:
+                            output_per_task['confidences'] = F.softmax(raw, dim=-1).max(dim=-1).values.cpu().tolist()
         else:
             output_per_task = output_dict[task_name]
             output_per_task['prediction'] = self.tasks[task_name].decode_output(
@@ -735,6 +752,11 @@ class MultiTaskLearning(TorchComponent):
                 output_per_task['mask'],
                 batch,
                 self.model.decoders[task_name])
+            # Store token confidence
+            if 'tok' in task_name:
+                raw = output_per_task['output']
+                if isinstance(raw, torch.Tensor) and raw.dim() >= 2:
+                    output_per_task['confidences'] = torch.nn.functional.softmax(raw, dim=-1).max(dim=-1).values.cpu().tolist()
 
     def update_metrics(self, batch: Dict[str, Any], output_dict: Dict[str, Any], metrics: MetricDict, task_name):
         task = self.tasks[task_name]

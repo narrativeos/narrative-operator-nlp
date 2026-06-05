@@ -69,6 +69,7 @@ class Token(BaseModel):
     pos: str = Field(..., min_length=1, description="Part-of-speech (Universal POS standard)")
     span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
     source: str = Field(default="", description="NLP model source (e.g., hanlp_v2, hanlp_lzh)")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Token confidence from softmax")
 
     @field_validator("span")
     @classmethod

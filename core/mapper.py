@@ -52,6 +52,10 @@ class HanlpSchemaMapper:
     def _map_tokens(self, text: str, raw: dict) -> list[Token]:
         tok_fine = raw.get("tok/fine", [])
         pos = raw.get("pos/ctb", [])
+        tok_conf = raw.get("tok/fine_conf") or raw.get("tok/coarse_conf")
+        # Flatten if nested (batch-level list)
+        if tok_conf and isinstance(tok_conf[0], list):
+            tok_conf = tok_conf[0]
         tokens: list[Token] = []
         cursor = 0
         for i in range(len(tok_fine)):
@@ -64,7 +68,8 @@ class HanlpSchemaMapper:
             else:
                 start, end = cursor, cursor + len(token_text)
                 cursor = end
-            tokens.append(Token(id=i, text=token_text, pos=token_pos, span=(start, end)))
+            conf = float(tok_conf[i]) if tok_conf and i < len(tok_conf) else 1.0
+            tokens.append(Token(id=i, text=token_text, pos=token_pos, span=(start, end), confidence=conf))
         return tokens
 
     def _map_entities(self, text: str, raw: dict, tokens: list[Token]) -> list:
