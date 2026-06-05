@@ -44,17 +44,23 @@ class TransformerNamedEntityRecognizer(TransformerTagger):
 
     # noinspection PyMethodOverriding
     def decode_output(self, logits, mask, batch, model=None):
+        import torch
+        import torch.nn.functional as F
         output = super().decode_output(logits, mask, batch, model)
         prediction = super().prediction_to_human(output, self.vocabs['tag'].idx_to_token, batch)
-        return self.tag_to_span(prediction, batch)
+        # Compute per-token confidence from softmax
+        probs = F.softmax(logits, dim=-1)  # [batch, seq_len, n_tags]
+        token_conf = probs.max(dim=-1).values  # [batch, seq_len]
+        spans = self.tag_to_span(prediction, batch, token_conf)
+        return spans
 
-    def tag_to_span(self, batch_tags, batch):
+    def tag_to_span(self, batch_tags, batch, token_conf=None):
         spans = []
         sents = batch[self.config.token_key]
         dict_whitelist = self.dict_whitelist
         dict_blacklist = self.dict_blacklist
         merge_types = self.config.get('merge_types', None)
-        for tags, tokens in zip(batch_tags, sents):
+        for sent_idx, (tags, tokens) in enumerate(zip(batch_tags, sents)):
             entities = get_entities(tags)
             if dict_whitelist:
                 matches = dict_whitelist.tokenize(tokens)
@@ -98,6 +104,19 @@ class TransformerNamedEntityRecognizer(TransformerTagger):
                     if entity not in dict_blacklist:
                         pruned.append((label, start, end))
                 entities = pruned
+
+            # Attach per-entity confidence from token scores
+            if token_conf is not None and sent_idx < token_conf.shape[0]:
+                scored = []
+                for label, start, end in entities:
+                    end_clamped = min(end, token_conf.shape[1])
+                    if start < end_clamped:
+                        score = float(token_conf[sent_idx, start:end_clamped].mean())
+                    else:
+                        score = 1.0
+                    scored.append((label, start, end, round(score, 4)))
+                entities = scored
+
             spans.append(entities)
         return spans
 
@@ -106,8 +125,13 @@ class TransformerNamedEntityRecognizer(TransformerTagger):
         delimiter_in_entity = self.config.get('delimiter_in_entity', ' ')
         for spans_per_sent, tokens in zip(spans, batch.get(f'{self.config.token_key}_', batch[self.config.token_key])):
             ner_per_sent = []
-            for label, start, end in spans_per_sent:
-                ner_per_sent.append((delimiter_in_entity.join(tokens[start:end]), label, start, end))
+            for item in spans_per_sent:
+                if len(item) == 4:
+                    label, start, end, score = item
+                    ner_per_sent.append((delimiter_in_entity.join(tokens[start:end]), label, start, end, score))
+                else:
+                    label, start, end = item
+                    ner_per_sent.append((delimiter_in_entity.join(tokens[start:end]), label, start, end))
             batch_ner.append(ner_per_sent)
         return batch_ner
 

@@ -32,13 +32,15 @@ class EntityMappingRules:
     def map(self, raw_tuple: tuple, source: str, tokens: list[Token], text: str = "") -> Optional[Entity]:
         if len(raw_tuple) < 4:
             return None
-        ent_text, label, tok_s, tok_e = str(raw_tuple[0]).strip(), str(raw_tuple[1]).strip(), int(raw_tuple[2]), int(raw_tuple[3])
+        ent_text = str(raw_tuple[0]).strip()
+        label = str(raw_tuple[1]).strip()
+        tok_s, tok_e = int(raw_tuple[2]), int(raw_tuple[3])
+        confidence = float(raw_tuple[4]) if len(raw_tuple) >= 5 else 1.0
         if not ent_text or not label:
             return None
         category = self.SOURCE_MAPS.get(source, {}).get(label) or self._keyword(ent_text)
         if category is None:
             return None
-        # Convert token indices to character span
         if 0 <= tok_s < len(tokens) and 0 < tok_e <= len(tokens):
             cs, ce = tokens[tok_s].span[0], tokens[tok_e - 1].span[1]
         elif text and ent_text:
@@ -48,7 +50,7 @@ class EntityMappingRules:
             cs, ce = 0, len(ent_text)
         self._counter += 1
         return Entity(id=f"ent_{self._counter:03d}", text=ent_text, category=category,
-                      span=(cs, ce), normalized=ent_text, source=source, confidence=1.0)
+                      span=(cs, ce), normalized=ent_text, source=source, confidence=confidence)
 
     def map_all(self, text: str, raw: dict, tokens: list[Token]) -> list[Entity]:
         entities = []
