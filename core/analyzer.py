@@ -109,7 +109,7 @@ def _assess_quality(tokens: list[Token], raw: dict) -> bool:
 
 def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
                     dict_combine: Optional[set] = None
-                    ) -> tuple[list, list, list, bool]:
+                    ) -> tuple[list, list, list, list, bool]:
     try:
         pipeline = _get_modern_pipeline()
         if dict_combine:
@@ -120,10 +120,11 @@ def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
         raw = pipeline(text)
     except Exception as exc:
         logger.warning("Modern pipeline failed: %s", exc)
-        return [], [], [], False
+        return [], [], [], [], False
     doc = mapper.map(text, raw, source="hanlp_v2")
     _apply_offset(doc, offset)
-    return doc.content.tokens, doc.content.entities, doc.content.relations, _assess_quality(doc.content.tokens, raw)
+    return (doc.content.tokens, doc.content.entities, doc.content.relations,
+            doc.content.patterns, _assess_quality(doc.content.tokens, raw))
 
 
 def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
@@ -141,7 +142,8 @@ def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "hanlp_lzh"
-    return doc.content.tokens, doc.content.entities, doc.content.relations, _assess_quality(doc.content.tokens, normalized)
+    return (doc.content.tokens, doc.content.entities, doc.content.relations,
+            doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
 
 
 def _apply_offset(doc: NarrativeDocument, offset: int):
@@ -217,21 +219,22 @@ def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
             merged.append((sent_text, offset, lang, conf))
 
     # Process each segment
-    all_tokens, all_entities, all_relations = [], [], []
+    all_tokens, all_entities, all_relations, all_patterns = [], [], [], []
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
-            tokens, entities, relations, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+            tokens, entities, relations, patterns, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
             if not ok and should_fallback(conf):
                 logger.info("Classical→Modern fallback for: %s...", seg_text[:20])
-                tokens, entities, relations, _ = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+                tokens, entities, relations, patterns, _ = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
         else:
-            tokens, entities, relations, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+            tokens, entities, relations, patterns, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
             if not ok and should_fallback(conf):
                 logger.info("Modern→Classical fallback for: %s...", seg_text[:20])
-                tokens, entities, relations, _ = _analyze_classical(seg_text, seg_offset, mapper)
+                tokens, entities, relations, patterns, _ = _analyze_classical(seg_text, seg_offset, mapper)
         all_tokens.extend(tokens)
         all_entities.extend(entities)
         all_relations.extend(relations)
+        all_patterns.extend(patterns)
 
     # Re-number token IDs globally, sorted by position
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
@@ -242,5 +245,6 @@ def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
 
     return NarrativeDocument(
         meta=NarrativeMeta(source=meta_source, text_length=len(text)),
-        content=NarrativeContent(tokens=all_tokens, entities=all_entities, relations=all_relations, structural={}),
+        content=NarrativeContent(tokens=all_tokens, entities=all_entities,
+                                 relations=all_relations, patterns=all_patterns, structural={}),
     )

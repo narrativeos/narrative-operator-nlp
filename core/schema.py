@@ -176,6 +176,18 @@ class Relation(BaseModel):
         return v
 
 
+# ── Sentence Pattern ──
+
+class SentencePattern(BaseModel):
+    """Structural pattern of a sentence for statistical aggregation."""
+    sentence: str = Field(default="", description="Original sentence text")
+    template: str = Field(default="", description="Entity-category template, e.g. 'MATERIAL 是 MATERIAL'")
+    entity_sequence: list[str] = Field(default_factory=list, description="Ordered entity categories")
+    predicates: list[str] = Field(default_factory=list, description="SRL predicate verbs in this sentence")
+    relation_summary: list[str] = Field(default_factory=list, description="Relation summaries, e.g. '碳钢→是→钢'")
+    attribute_count: int = Field(default=0, description="Number of entity attributes assigned")
+
+
 # ---------------------------------------------------------------------------
 # NarrativeMeta
 # ---------------------------------------------------------------------------
@@ -210,6 +222,7 @@ class NarrativeContent(BaseModel):
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
     entities: list[Entity] = Field(default_factory=list, description="Unified entity list")
     relations: list[Relation] = Field(default_factory=list, description="Extracted relation triples")
+    patterns: list[SentencePattern] = Field(default_factory=list, description="Sentence-level structural patterns")
     structural: dict = Field(
         default_factory=dict,
         description="Raw NLP engine output (for debugging only)",

@@ -38,6 +38,8 @@ class HanlpSchemaMapper:
         self._assign_attributes(text, raw, tokens, entities)
         # PARAMETERs are properties, not standalone entities
         entities = [e for e in entities if e.category != "PARAMETER"]
+        relations = self._map_relations(text, raw, tokens, entities)
+        patterns = self._build_patterns(text, raw, entities, relations)
         return NarrativeDocument(
             meta=NarrativeMeta(
                 source=source,
@@ -48,7 +50,8 @@ class HanlpSchemaMapper:
             content=NarrativeContent(
                 tokens=tokens,
                 entities=entities,
-                relations=self._map_relations(text, raw, tokens, entities),
+                relations=relations,
+                patterns=patterns,
                 structural=raw,
             ),
         )
@@ -158,3 +161,67 @@ class HanlpSchemaMapper:
                     confidence=0.85,
                 )
                 a0_entity.attributes.append(attr)
+
+    def _build_patterns(self, text: str, raw: dict, entities: list,
+                        relations: list) -> list:
+        """Build sentence-level structural patterns for statistical aggregation."""
+        from .schema import SentencePattern
+
+        patterns: list = []
+        for f in raw.get("srl", []):
+            if not isinstance(f, list):
+                continue
+
+            preds: list[str] = []
+            entity_cats: list[str] = []
+            for item in f:
+                if len(item) < 4:
+                    continue
+                role = str(item[1]).upper()
+                itxt = str(item[0])
+                if role == "PRED":
+                    preds.append(itxt)
+                if role in ("ARG0", "ARG1"):
+                    # ARG text already tells us the entity span — just match by text
+                    matched_cat = None
+                    for e in entities:
+                        if e.text == itxt or e.text in itxt:
+                            matched_cat = e.category
+                            break
+                    entity_cats.append(matched_cat or "?")
+
+            if not preds:
+                continue
+
+            template = " ".join(
+                f"{entity_cats[i // 2] if i % 2 == 0 else preds[i // 2]}"
+                if i < len(entity_cats) * 2 - 1 else ""
+                for i in range(len(entity_cats) * 2 - 1)
+            )
+            # Simpler: interleave
+            parts: list[str] = []
+            for i in range(max(len(entity_cats), len(preds))):
+                if i < len(entity_cats):
+                    parts.append(entity_cats[i])
+                if i < len(preds):
+                    parts.append(preds[i])
+            template = " ".join(parts)
+
+            # Relation summary
+            rel_summaries: list[str] = []
+            for r in relations:
+                if r.predicate_verb in preds:
+                    rel_summaries.append(f"{r.subject}→{r.predicate_verb}→{r.object}")
+
+            attr_count = sum(len(e.attributes) for e in entities)
+
+            patterns.append(SentencePattern(
+                sentence=text,
+                template=template,
+                entity_sequence=entity_cats,
+                predicates=preds,
+                relation_summary=rel_summaries,
+                attribute_count=attr_count,
+            ))
+
+        return patterns
