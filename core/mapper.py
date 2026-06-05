@@ -316,38 +316,21 @@ def _detect_structural_type(text: str,
 def _detect_polarity(text: str) -> str:
     """Returns 'affirmative' as safe default.
 
-    Chinese negation detection via keyword matching CANNOT achieve near-100%:
-    - False positives: double-negation (不无道理→affirmative), lexicalized
-      compounds (不错=good, 非常=very, 无限=infinite, 未来=future),
-      proper nouns (无锡=Wuxi, 非洲=Africa).
-    - False negatives: implicit negation (难以, 拒绝), rhetorical negation.
-    - Scope ambiguity: 他不认为这是对的 → negation scopes over 'think',
-      not the proposition.
+    Chinese negation detection via character matching CANNOT achieve near-100%.
+    No filtering is applied — a partial false-positive whitelist would create
+    an illusion of accuracy while inevitably missing edge cases (open class of
+    lexicalized compounds, proper nouns, double negation, scope ambiguity).
 
-    Reliable negation detection requires syntactic scope resolution +
-    discourse context — beyond current NLP capability.
-    Negation hints are recorded in limitations for downstream processing.
+    Raw negation-character hints are reported in limitations for downstream
+    resolution (LLM, rules, manual review).
     """
     return "affirmative"
 
 
-# Known false-positive compounds: contain negation char but are NOT negative.
-# NOTE: This list is necessarily incomplete — it's a best-effort filter,
-# not a solution. True negation detection requires syntactic scope resolution.
-_NEG_FALSE_POSITIVES = frozenset({
-    "不错", "没关系", "不得了", "不得已", "不由得", "说不定",
-    "非常", "非洲", "非凡", "非但", "无非",
-    "无限", "无数", "无论", "无线电", "无锡",
-    "未来", "未必", "未免", "未婚",
-    "别致", "区别", "分别", "告别",
-    "莫大", "莫非", "莫名其妙",
-    "毫不", "毫无",  # can be negative or emphatic-affirmative; ambiguous
-    "不锈钢", "不锈", "不厌其烦", "不亦乐乎",
-    "未遂", "未免", "未知",
-    "非常规", "非正式",
-})
-
-# Characters that can indicate negation (excluding proper-noun contexts)
+# Characters that MAY indicate negation.
+# NOTE: No filtering is applied. These are raw hints only.
+# A character hit does NOT mean the sentence is negative —
+# it means "this char exists, downstream should resolve its scope."
 _NEG_CHARS = frozenset({"不", "没", "无", "非", "未", "别", "莫", "勿"})
 
 
@@ -415,19 +398,12 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
     """
     limits: list[str] = []
 
-    # ── Negation hint: chars present but NLP can't resolve scope ──
+    # ── Negation hint: raw char detection, NO filtering ──
+    # A partial whitelist (removed) cannot be exhaustive and creates
+    # false confidence. Downstream must resolve scope.
     neg_hits = [c for c in _NEG_CHARS if c in text]
     if neg_hits:
-        # Filter known false positives: check if neg char only appears in compounds
-        effective = []
-        for c in neg_hits:
-            # Quick check: if text contains any known false-positive compound
-            # that uses this char, flag as ambiguous
-            ambiguous = any(c in fp and fp in text for fp in _NEG_FALSE_POSITIVES)
-            if not ambiguous:
-                effective.append(c)
-        if effective:
-            limits.append(f"hint:negation({','.join(effective)})")
+        limits.append(f"hint:negation({','.join(neg_hits)})")
 
     # ── Passive hint ──
     if "被" in text:
