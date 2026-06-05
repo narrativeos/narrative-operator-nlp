@@ -13,6 +13,7 @@ Strategy (redesigned):
 """
 
 from __future__ import annotations
+import re
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -73,10 +74,6 @@ _SRL_PRED_MAP: dict[str, tuple[str, float]] = {
     "控制": ("CONTROLS", 0.82), "管理": ("CONTROLS", 0.80),
 }
 
-# ── DEP predicate → NSP predicate (only meaningful cross-entity edges) ──
-_DEP_PRED_MAP = {
-    "amod": ("HAS_PROPERTY", 0.80),
-}
 
 
 def _resolve_predicate(pred_text: str) -> tuple[str, float]:
@@ -100,7 +97,7 @@ def _is_content(token) -> bool:
 # ── SRL phrase normalization ──
 
 # Patterns that indicate a trailing modifier to strip from SRL arguments
-_STRIP_TRAILING_RE = __import__('re').compile(
+_STRIP_TRAILING_RE = re.compile(
     r"(的[一|两|几|多|少|种|类|个|些|部分|方面]*|等)$"
 )
 # Bare adjectives that should not appear as standalone relation objects
@@ -108,19 +105,6 @@ _BARE_ADJECTIVES = {"高", "低", "大", "小", "多", "少", "新", "旧", "好
                     "快", "慢", "长", "短", "强", "弱", "重", "轻", "深", "浅"}
 
 
-def _normalize_arg(arg_text: str, tokens: list | None = None) -> str:
-    """Strip trailing modifiers from SRL arguments to extract core entity.
-
-    '钢的一种' → '钢'
-    '高强度和高韧性' → '高强度和高韧性' (complex — keep as-is)
-    '碳钢' → '碳钢'
-    """
-    arg = arg_text.strip()
-    # Strip trailing "的X" patterns
-    stripped = _STRIP_TRAILING_RE.sub("", arg).strip()
-    if stripped and len(stripped) >= 1:
-        return stripped
-    return arg
 
 
 def _is_amod_redundant(srl_objects: set, amod_subject: str, amod_object: str) -> bool:
