@@ -67,6 +67,8 @@ class RelationPredicate:
     EQUIVALENT_TO = "EQUIVALENT_TO"
     REFERENCE_OF = "REFERENCE_OF"
     CONSTRAINT_OF = "CONSTRAINT_OF"
+    # Generic fallback — raw predicate preserved in predicate_verb
+    RELATES_TO = "RELATES_TO"
 
     ALL = frozenset({
         IS_A, PART_OF, HAS_PROPERTY, PROPERTY_OF,
@@ -74,6 +76,7 @@ class RelationPredicate:
         PRODUCES, COMPOSED_OF, TRANSFERS_TO, DEPENDS_ON,
         MOVED_TO, DEPARTED_FROM, INTERACTS_WITH, CONTROLS,
         EQUIVALENT_TO, REFERENCE_OF, CONSTRAINT_OF,
+        RELATES_TO,
     })
 
 
@@ -137,6 +140,7 @@ class Relation(BaseModel):
     subject: str = Field(..., min_length=1, description="Subject text")
     subject_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     predicate: str = Field(..., description="Relation type from predefined set")
+    predicate_verb: str | None = Field(default=None, description="Original SRL predicate verb (e.g. '生产', '抛光')")
     object: str = Field(..., min_length=1, description="Object text")
     object_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     evidence: str = Field(..., min_length=1, description="Original text fragment supporting this relation")
