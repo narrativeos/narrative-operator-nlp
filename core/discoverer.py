@@ -384,3 +384,59 @@ def discover_words(text: str, **kwargs) -> list[str]:
     """Return just the discovered word strings (top 20)."""
     result = discover(text, **kwargs)
     return [c.word for c in result.candidates[:20]]
+
+
+# ---------------------------------------------------------------------------
+# ConvSeg (optional, requires TensorFlow in a clean environment)
+# ---------------------------------------------------------------------------
+
+_CONVSEG_VENV = "/tmp/convseg-venv"
+
+
+def _run_convseg_subprocess(text: str) -> list[str] | None:
+    """Run ConvSeg tokenizer in a subprocess using a clean venv.
+
+    Returns list of tokens or None if unavailable.
+    """
+    import subprocess
+
+    code = f'''
+import hanlp
+from hanlp.pretrained.tok import PKU_NAME_MERGED_SIX_MONTHS_CONVSEG
+convseg = hanlp.load(PKU_NAME_MERGED_SIX_MONTHS_CONVSEG, verbose=False)
+import json
+result = convseg({text!r})
+print(json.dumps(result))
+'''
+    try:
+        proc = subprocess.run(
+            [_CONVSEG_VENV + "/bin/python", "-c", code],
+            capture_output=True, text=True, timeout=120,
+            env={**__import__("os").environ, "PYTHONPATH": ""},
+        )
+        if proc.returncode != 0:
+            return None
+        import json as _json
+        return _json.loads(proc.stdout.strip().split("\n")[-1])
+    except Exception:
+        return None
+
+
+def discover_convseg(text: str) -> dict | None:
+    """Run ConvSeg and return comparison data.
+
+    Returns dict with 'tokens' and 'candidates' (words not in MTL output),
+    or None if ConvSeg is unavailable.
+    """
+    tokens = _run_convseg_subprocess(text)
+    if tokens is None:
+        return None
+
+    # Filter: keep only multi-char tokens as candidates
+    candidates = [t for t in tokens if len(t) >= 2]
+
+    return {
+        "engine": "convseg_pku_merged",
+        "tokens": tokens,
+        "candidates": candidates,
+    }

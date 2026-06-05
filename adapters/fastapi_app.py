@@ -147,13 +147,13 @@ async def analyze_dep(request: AnalyzeRequest):
 
 @app.post("/analyze/discover")
 async def analyze_discover(request: AnalyzeRequest):
-    """Discover potential new words using PMI + MTL hybrid strategy.
+    """Discover potential new words using PMI + MTL hybrid + ConvSeg comparison.
 
-    Returns candidates suitable for dict_combine.
+    Returns candidates from three engines for comparison.
     """
     try:
         from core.analyzer import _get_modern_pipeline
-        from core.discoverer import discover as discover_words
+        from core.discoverer import discover as discover_words, discover_convseg
         from core.schema import Token
 
         pipeline = _get_modern_pipeline()
@@ -183,7 +183,14 @@ async def analyze_discover(request: AnalyzeRequest):
             min_freq=1,
             max_candidates=30,
         )
-        return result.to_dict()
+
+        # Try ConvSeg comparison
+        convseg_result = discover_convseg(request.text)
+
+        response = result.to_dict()
+        if convseg_result:
+            response["convseg"] = convseg_result
+        return response
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
 
@@ -424,18 +431,37 @@ function renderDepSVG(data){
 function renderDiscover(data){
     if(!data||!data.candidates){ document.getElementById('discover').innerHTML='<div class="card">未发现候选新词</div>'; return; }
     const candidates=data.candidates;
-    if(!candidates.length){ document.getElementById('discover').innerHTML='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现候选新词</span></div>'; return; }
+    const convseg=data.convseg;
 
-    const items=candidates.map(c=>{
+    // PMI+MTL candidates
+    const pmiItems=candidates.length?candidates.map(c=>{
         const color=c.score>=5?'#7ee787':c.score>=3?'#e3b341':'#f85149';
-        const freqBadge=c.frequency>=2?`<span class="freq">×${c.frequency}</span>`:'';
-        return `<span class="discover-item" onclick="toggleDictWord(this,'${esc(c.word)}')" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span>${freqBadge}</span>`;
-    }).join('');
+        return `<span class="discover-item" onclick="toggleDictWord(this,'${esc(c.word)}')" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span></span>`;
+    }).join(''):'<span style="color:#484f58">-</span>';
+
+    // ConvSeg candidates
+    let convsegHtml='<span style="color:#484f58">ConvSeg 不可用（需 TensorFlow）</span>';
+    if(convseg&&convseg.candidates){
+        convsegHtml=convseg.candidates.map(w=>{
+            const inPmi=candidates.some(c=>c.word===w);
+            const style=inPmi?'background:#1a3a1a;border-color:#238636':''; // green if also found by PMI
+            return `<span class="discover-item" style="${style}" onclick="toggleDictWord(this,'${esc(w)}')" title="点击添加到自定义词典">${esc(w)}<span class="score" style="color:#58a6ff">conv</span></span>`;
+        }).join('')||'<span style="color:#484f58">-</span>';
+    }
 
     document.getElementById('discover').innerHTML=`
     <div class="card">
       <h3>🔍 新词发现 <small style="color:#484f58;font-weight:normal">(点击候选词加入自定义词典)</small></h3>
-      <div style="margin-bottom:12px">${items}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <h4 style="font-size:13px;color:#e3b341;margin-bottom:8px">🧬 PMI + MTL 混合</h4>
+          <div style="margin-bottom:8px">${pmiItems}</div>
+        </div>
+        <div>
+          <h4 style="font-size:13px;color:#58a6ff;margin-bottom:8px">🧠 ConvSeg (PKU_NAME)</h4>
+          <div style="margin-bottom:8px">${convsegHtml}</div>
+        </div>
+      </div>
       <button onclick="applyDict()" style="margin-top:8px">📋 应用选中词典并重新分析</button>
       <button onclick="clearDictSelection()" style="margin-top:8px;margin-left:8px;background:#21262d;color:#c9d1d9">清除选择</button>
     </div>`;
