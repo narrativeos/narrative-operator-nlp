@@ -36,6 +36,8 @@ class HanlpSchemaMapper:
         tokens = self._map_tokens(text, raw)
         entities = self._map_entities(text, raw, tokens)
         self._assign_attributes(text, raw, tokens, entities)
+        # PARAMETERs are properties, not standalone entities
+        entities = [e for e in entities if e.category != "PARAMETER"]
         return NarrativeDocument(
             meta=NarrativeMeta(
                 source=source,
