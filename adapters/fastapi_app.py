@@ -37,6 +37,40 @@ def _apply_dict(pipeline, dict_words: list[str]):
         except (KeyError, AttributeError):
             pass
 
+
+def _discover_true_new_words(text: str, doc: NarrativeDocument, dict_combine: list[str]) -> list[str]:
+    """Run new word discovery and filter to true new words.
+
+    A "true new word" is a candidate that is NOT already a single token
+    in the MTL output — i.e., MTL would split it but it should be merged.
+    """
+    from core.discoverer import discover as run_discover, discover_convseg
+    from core.schema import Token
+
+    # MTL tokens as-is (single tokens)
+    mtl_token_set = {t.text for t in doc.content.tokens}
+
+    # PMI + MTL discovery
+    pmi_result = run_discover(
+        text,
+        mtl_tokens=doc.content.tokens,
+        min_freq=1,
+        max_candidates=30,
+    )
+    pmi_words = {c.word for c in pmi_result.candidates}
+
+    # ConvSeg discovery
+    convseg_result = discover_convseg(text)
+    convseg_words = set(convseg_result["candidates"]) if convseg_result else set()
+
+    # Merge all candidates
+    all_candidates = pmi_words | convseg_words
+
+    # True new words: not already in MTL output
+    true_new = sorted(w for w in all_candidates if w not in mtl_token_set)
+
+    return true_new
+
 # ---------------------------------------------------------------------------
 # FastAPI App
 # ---------------------------------------------------------------------------
@@ -70,18 +104,24 @@ class AnalyzeRequest(BaseModel):
         description="Custom dictionary words to force-combine during tokenization (e.g. ['碳钢','高强度'])",
         examples=[["碳钢", "高强度", "高韧性", "立方庭", "海淀区"]],
     )
+    discover: bool = Field(
+        default=False,
+        description="Enable new word discovery (PMI + ConvSeg comparison)",
+    )
 
 
 class AnalyzeResponse(BaseModel):
     """Wraps NarrativeDocument for API serialization."""
     meta: dict
     content: dict
+    true_new_words: list[str] | None = None
 
     @classmethod
-    def from_doc(cls, doc: NarrativeDocument) -> "AnalyzeResponse":
+    def from_doc(cls, doc: NarrativeDocument, true_new_words: list[str] | None = None) -> "AnalyzeResponse":
         return cls(
             meta=doc.meta.model_dump(),
             content=doc.content.model_dump(),
+            true_new_words=true_new_words,
         )
 
 
@@ -107,11 +147,17 @@ async def analyze_endpoint(request: AnalyzeRequest):
     """
     Analyze text and return NSP-standardized narrative atoms.
 
-    This is the primary endpoint for manual testing and Studio prototyping.
+    When discover=True, also runs new word discovery and returns
+    true_new_words — candidates not already tokenized by MTL.
     """
     try:
         doc = analyze(request.text, dict_combine=set(request.dict_combine) if request.dict_combine else None)
-        return AnalyzeResponse.from_doc(doc)
+
+        true_new_words: list[str] | None = None
+        if request.discover:
+            true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
+
+        return AnalyzeResponse.from_doc(doc, true_new_words=true_new_words)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
@@ -283,7 +329,10 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <main>
 <div class="input-area">
 <textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</textarea>
+<div style="display:flex;flex-direction:column;gap:6px">
 <button id="analyzeBtn" onclick="analyze()">🔍 分析</button>
+<label style="font-size:11px;color:#8b949e;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:4px"><input type="checkbox" id="discoverToggle" onchange="analyze()"> 🔍 新词发现</label>
+</div>
 </div>
 <div class="input-area" style="margin-bottom:16px">
 <input id="dictInput" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
@@ -313,7 +362,8 @@ async function analyze(){
     if(!text) return;
     const dictRaw=document.getElementById('dictInput').value.trim();
     const dictCombine=dictRaw?dictRaw.split(/[\s,，;；]+/).filter(w=>w) :[];
-    const body={text, dict_combine: dictCombine};
+    const discover=document.getElementById('discoverToggle').checked;
+    const body={text, dict_combine: dictCombine, discover};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
     ['nsp','pretty','depsvg','discover','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
@@ -339,6 +389,7 @@ async function analyze(){
 function renderNSP(data){
     if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
     const c=data.content;
+    const trueNew=data.true_new_words||[];
     const tokens=c.tokens.map(t=>{
         const pct=Math.round((t.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
@@ -353,6 +404,14 @@ function renderNSP(data){
 
     const relations=c.relations.map(r=>`<div class="relation-row"><span class="subj">${r.subject}</span> &rarr; <span class="pred">${r.predicate}</span> &rarr; <span class="obj">${r.object}</span><span class="src">${r.source}</span></div>`).join('')||'<span style="color:#484f58">-</span>';
 
+    let newWordsHtml='';
+    if(trueNew.length>0){
+        const badges=trueNew.map(w=>`<span class="discover-item" onclick="toggleDictWord(this,'${esc(w)}');event.stopPropagation()" style="border-color:#e3b341" title="点击加入自定义词典">🆕 ${esc(w)}</span>`).join('');
+        newWordsHtml=`<div class="card" style="border-color:#e3b341"><h3 style="color:#e3b341">🆕 发现真新词 <small style="color:#8b949e;font-weight:normal">(点击加入自定义词典)</small></h3><div>${badges}</div><button onclick="applyDict()" style="margin-top:8px;font-size:12px;padding:6px 16px">📋 一键应用并重新分析</button></div>`;
+    }else if(data.true_new_words!==undefined&&data.true_new_words!==null){
+        newWordsHtml='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现真新词（所有候选词已在分词结果中）</span></div>';
+    }
+
     document.getElementById('nsp').innerHTML=`
     <div class="stats">
     <div class="stat"><b>${c.tokens.length}</b> tokens</div>
@@ -360,6 +419,7 @@ function renderNSP(data){
     <div class="stat"><b>${c.relations.length}</b> relations</div>
     <div class="stat">source: <b>${data.meta.source}</b></div>
     </div>
+    ${newWordsHtml}
     <div class="card"><h3>📝 分词 & POS</h3><div style="line-height:2">${tokens}</div></div>
     <div class="card"><h3>🏷️ 实体 Entities</h3><div>${entities}</div></div>
     <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>`;
