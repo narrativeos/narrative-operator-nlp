@@ -21,17 +21,6 @@ if TYPE_CHECKING:
 
 from .schema import Relation
 
-# ── Function words to never use as relation endpoints ──
-_FUNCTION_WORDS = {
-    "是", "的", "了", "和", "与", "或", "不", "也", "都", "就", "一", "二", "三",
-    "四", "五", "六", "七", "八", "九", "十", "个", "种", "次", "回", "这", "那",
-    "哪", "每", "着", "过", "得", "地", "之", "把", "被", "让", "给", "对", "从",
-    "到", "向", "由", "以", "为", "所", "而", "且", "但", "却", "只", "还", "又",
-    "再", "才", "将", "能", "会", "可", "要", "用", "做", "来", "去", "出", "进",
-    "开", "关", "有", "没", "说", "想", "看", "听", "吃", "喝", "走", "跑",
-    "吗", "呢", "吧", "啊", "嘛", "呀", "第", "如", "等",
-}
-
 # ── Compound-internal dep rels (entity merging, not cross-entity) ──
 _COMPOUND_INTERNAL = {"nn", "assmod", "assm", "nummod", "clf", "det", "punct", "cc", "conj", "root", "top", "attr", "pass", "etmp", "prep", "pobj", "appos", "nmod", "lobj", "plmod", "tmod", "advcl", "rcmod", "nsubjpass"}
 
@@ -88,35 +77,9 @@ def _resolve_predicate(pred_text: str) -> tuple[str, float]:
     return ("RELATES_TO", 0.60)
 
 
-def _is_content(token) -> bool:
-    """Check if a token is meaningful content (not a function word)."""
-    text = token.text if hasattr(token, 'text') else str(token)
-    return text not in _FUNCTION_WORDS and len(text) >= 1
-
-
-# ── SRL phrase normalization ──
-
-# Patterns that indicate a trailing modifier to strip from SRL arguments
 _STRIP_TRAILING_RE = re.compile(
     r"(的[一|两|几|多|少|种|类|个|些|部分|方面]*|等)$"
 )
-# Bare adjectives that should not appear as standalone relation objects
-_BARE_ADJECTIVES = {"高", "低", "大", "小", "多", "少", "新", "旧", "好", "坏",
-                    "快", "慢", "长", "短", "强", "弱", "重", "轻", "深", "浅"}
-
-
-
-
-def _is_amod_redundant(srl_objects: set, amod_subject: str, amod_object: str) -> bool:
-    """Check if an amod relation is already covered by an SRL relation.
-
-    e.g., SRL: 碳钢 HAS_PROPERTY 高强度和高韧性
-          amod: 强度 HAS_PROPERTY 高 → redundant (covered by SRL compound)
-    """
-    for srl_obj in srl_objects:
-        if amod_subject in srl_obj and amod_object in srl_obj:
-            return True
-    return False
 
 
 def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
@@ -202,8 +165,6 @@ class RelationExtractionRules:
 
         ct, ht = tokens[child_idx], tokens[head_0]
 
-        if not _is_content(ct) or not _is_content(ht):
-            return None
         if ct.text == ht.text:
             return None
 
@@ -241,7 +202,6 @@ class RelationExtractionRules:
                 entity_texts.add(e.text)
 
         # Extract SRL relations
-        srl_objects: set[str] = set()
         relations: list = []
         for f in raw.get("srl", []):
             if isinstance(f, list):
@@ -251,20 +211,12 @@ class RelationExtractionRules:
                     rel = self._entity_normalize(rel, entity_texts)
                     if rel:
                         relations.append(rel)
-                        srl_objects.add(rel.object)
 
         # Extract DEP relations (suppress if covered by SRL or bare adjective)
         for i, d in enumerate(raw.get("dep", [])):
             if isinstance(d, (list, tuple)) and len(d) >= 2:
                 rel = self.extract_from_dep(i, str(d[1]), int(d[0]), tokens, text)
                 if rel:
-                    # Suppress if object is a bare adjective
-                    if rel.object in _BARE_ADJECTIVES:
-                        continue
-                    # Suppress if SRL already covers this subject+object
-                    if _is_amod_redundant(srl_objects, rel.subject, rel.object):
-                        continue
-                    # Normalize to entities
                     rel = self._entity_normalize(rel, entity_texts)
                     if rel:
                         relations.append(rel)
