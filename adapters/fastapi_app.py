@@ -334,6 +334,17 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .error{color:#f85149;padding:12px;background:#3a1a1a;border-radius:6px}
 .sample-btn{font-size:11px;padding:4px 8px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;margin:2px}
 .sample-btn:hover{color:#c9d1d9;border-color:#58a6ff}
+.pattern-table{width:100%;border-collapse:collapse;font-size:12px}
+.pattern-table th{text-align:left;padding:6px 8px;color:#8b949e;border-bottom:1px solid #30363d;font-weight:normal}
+.pattern-table td{padding:6px 8px;border-bottom:1px solid #21262d}
+.pattern-table .tpl{color:#7ee787;font-family:monospace}
+.pattern-table .pred{color:#e3b341}
+.pattern-table .rel{color:#58a6ff}
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin:1px 2px}
+.tag.negative{background:#3a1a1a;color:#f85149}
+.tag.passive{background:#1a1a3a;color:#79c0ff}
+.tag.active{background:#1a3a1a;color:#7ee787}
+.tag.declarative{background:#21262d;color:#8b949e}
 </style>
 </head>
 <body>
@@ -368,12 +379,14 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('pretty')">🎨 HanLP 原生可视化</div>
 <div class="tab" onclick="switchTab('depsvg')">🧬 依存树 SVG</div>
 <div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
+<div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
 </div>
 <div id="nsp" class="panel active"></div>
 <div id="pretty" class="panel"></div>
 <div id="depsvg" class="panel"></div>
 <div id="discover" class="panel"></div>
+<div id="patterns" class="panel"></div>
 <div id="json" class="panel"></div>
 </main>
 <script>
@@ -388,7 +401,7 @@ async function analyze(){
     const body={text, dict_combine: dictCombine, discover, enhance};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
-    ['nsp','pretty','depsvg','discover','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
+    ['nsp','pretty','depsvg','discover','patterns','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
@@ -405,6 +418,8 @@ async function analyze(){
     if(r3._error) document.getElementById('depsvg').innerHTML='<div class="error">分析失败: '+r3._error+'</div>';
     else renderDepSVG(r3);    if(r4._error) document.getElementById('discover').innerHTML='<div class=\"error\">新词发现失败: '+r4._error+'</div>';
     else renderDiscover(r4);    if(!r1._error) renderJSON(r1);
+    const patData=r1.content&&r1.content.patterns;
+    if(patData&&patData.length) renderPatterns(patData); else document.getElementById('patterns').innerHTML='<div class="card"><h3>📊 句式模式</h3><span style="color:#484f58">无模式数据</span></div>';
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
@@ -576,6 +591,47 @@ function clearDictSelection(){
 function applyDict(){
     if(selectedDictWords.length) document.getElementById('dictInput').value=selectedDictWords.join(' ');
     analyze();
+}
+
+function renderPatterns(patterns){
+    if(!patterns||!patterns.length){ document.getElementById('patterns').innerHTML='<div class="card"><span style="color:#484f58">无句式数据</span></div>'; return; }
+
+    const rows=patterns.map(p=>{
+        const tags=[];
+        if(p.sentence_type!=='declarative') tags.push(`<span class="tag">${p.sentence_type}</span>`);
+        if(p.polarity==='negative') tags.push(`<span class="tag negative">否定</span>`);
+        if(p.voice==='passive') tags.push(`<span class="tag passive">被动</span>`);
+        if(p.sub_types&&p.sub_types.length) p.sub_types.forEach(t=>tags.push(`<span class="tag">${t}</span>`));
+        const rels=p.relation_summary.join(', ')||'-';
+        return `<tr>
+          <td class="tpl">${esc(p.template)}</td>
+          <td class="pred">${esc(p.predicates.join(', '))}</td>
+          <td class="rel">${esc(rels)}</td>
+          <td style="color:#484f58">${p.attribute_count>0?'⚡'+p.attribute_count:'-'}</td>
+          <td style="color:#484f58">${p.word_count||'-'}</td>
+          <td style="color:#484f58">${p.clause_count||'-'}</td>
+          <td>${tags.join('')||'<span style="color:#484f58">-</span>'}</td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('patterns').innerHTML=`
+    <div class="card">
+      <h3>📊 句式模式 <small style="color:#484f58;font-weight:normal">(可按模板聚合统计)</small></h3>
+      <div style="overflow-x:auto">
+      <table class="pattern-table">
+        <thead><tr>
+          <th>模板 Template</th>
+          <th>谓词</th>
+          <th>关系</th>
+          <th>属性</th>
+          <th>词数</th>
+          <th>分句</th>
+          <th>特征</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div>
+    </div>`;
 }
 
 function renderJSON(data){
