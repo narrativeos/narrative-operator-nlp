@@ -108,6 +108,10 @@ class AnalyzeRequest(BaseModel):
         default=False,
         description="Enable new word discovery (PMI + ConvSeg comparison)",
     )
+    enhance: bool = Field(
+        default=False,
+        description="Auto-apply discovered new words as dict_combine and re-analyze",
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -147,14 +151,26 @@ async def analyze_endpoint(request: AnalyzeRequest):
     """
     Analyze text and return NSP-standardized narrative atoms.
 
-    When discover=True, also runs new word discovery and returns
-    true_new_words — candidates not already tokenized by MTL.
+    - discover=True: returns true_new_words alongside normal results.
+    - enhance=True:  auto-applies discovered new words as dict_combine,
+                      re-analyzes, and returns enhanced results.
     """
     try:
-        doc = analyze(request.text, dict_combine=set(request.dict_combine) if request.dict_combine else None)
+        user_dict = set(request.dict_combine) if request.dict_combine else set()
+
+        # Baseline analysis
+        doc = analyze(request.text, dict_combine=user_dict if user_dict else None)
 
         true_new_words: list[str] | None = None
-        if request.discover:
+
+        if request.enhance:
+            # Discover true new words from baseline
+            true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
+            if true_new_words:
+                # Re-analyze with enhanced dict (user + discovered)
+                enhanced_dict = user_dict | set(true_new_words)
+                doc = analyze(request.text, dict_combine=enhanced_dict if enhanced_dict else None)
+        elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
 
         return AnalyzeResponse.from_doc(doc, true_new_words=true_new_words)
@@ -331,7 +347,11 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</textarea>
 <div style="display:flex;flex-direction:column;gap:6px">
 <button id="analyzeBtn" onclick="analyze()">🔍 分析</button>
-<label style="font-size:11px;color:#8b949e;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:4px"><input type="checkbox" id="discoverToggle" onchange="analyze()"> 🔍 新词发现</label>
+<select id="discoverMode" onchange="analyze()" style="padding:4px 8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;cursor:pointer">
+<option value="">🔍 新词发现：关闭</option>
+<option value="discover">🔍 新词发现：仅发现</option>
+<option value="enhance">⚡ 新词发现：强化模式</option>
+</select>
 </div>
 </div>
 <div class="input-area" style="margin-bottom:16px">
@@ -362,8 +382,10 @@ async function analyze(){
     if(!text) return;
     const dictRaw=document.getElementById('dictInput').value.trim();
     const dictCombine=dictRaw?dictRaw.split(/[\s,，;；]+/).filter(w=>w) :[];
-    const discover=document.getElementById('discoverToggle').checked;
-    const body={text, dict_combine: dictCombine, discover};
+    const mode=document.getElementById('discoverMode').value;
+    const discover=mode==='discover';
+    const enhance=mode==='enhance';
+    const body={text, dict_combine: dictCombine, discover, enhance};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
     ['nsp','pretty','depsvg','discover','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
@@ -405,9 +427,13 @@ function renderNSP(data){
     const relations=c.relations.map(r=>`<div class="relation-row"><span class="subj">${r.subject}</span> &rarr; <span class="pred">${r.predicate}</span> &rarr; <span class="obj">${r.object}</span><span class="src">${r.source}</span></div>`).join('')||'<span style="color:#484f58">-</span>';
 
     let newWordsHtml='';
+    const mode=document.getElementById('discoverMode').value;
     if(trueNew.length>0){
-        const badges=trueNew.map(w=>`<span class="discover-item" onclick="toggleDictWord(this,'${esc(w)}');event.stopPropagation()" style="border-color:#e3b341" title="点击加入自定义词典">🆕 ${esc(w)}</span>`).join('');
-        newWordsHtml=`<div class="card" style="border-color:#e3b341"><h3 style="color:#e3b341">🆕 发现真新词 <small style="color:#8b949e;font-weight:normal">(点击加入自定义词典)</small></h3><div>${badges}</div><button onclick="applyDict()" style="margin-top:8px;font-size:12px;padding:6px 16px">📋 一键应用并重新分析</button></div>`;
+        const label=mode==='enhance'?'⚡ 强化模式已应用':'🆕 发现真新词';
+        const borderColor=mode==='enhance'?'#238636':'#e3b341';
+        const titleColor=mode==='enhance'?'#7ee787':'#e3b341';
+        const badges=trueNew.map(w=>`<span class="discover-item" onclick="toggleDictWord(this,'${esc(w)}');event.stopPropagation()" style="border-color:${borderColor}" title="点击加入自定义词典">${mode==='enhance'?'✅':'🆕'} ${esc(w)}</span>`).join('');
+        newWordsHtml=`<div class="card" style="border-color:${borderColor}"><h3 style="color:${titleColor}">${label} <small style="color:#8b949e;font-weight:normal">(点击加入自定义词典)</small></h3><div>${badges}</div><button onclick="applyDict()" style="margin-top:8px;font-size:12px;padding:6px 16px">📋 一键应用并重新分析</button></div>`;
     }else if(data.true_new_words!==undefined&&data.true_new_words!==null){
         newWordsHtml='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现真新词（所有候选词已在分词结果中）</span></div>';
     }

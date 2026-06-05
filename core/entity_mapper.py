@@ -17,8 +17,15 @@ _ONTONOTES_MAP = {"PERSON":"PERSON","NORP":"ORGANIZATION","FAC":"FACILITY","ORG"
     "PERCENT":"NUMBER","MONEY":"NUMBER","QUANTITY":"NUMBER","CARDINAL":"NUMBER",
     "ORDINAL":"NUMBER","LAW":"STANDARD","EVENT":"UNKNOWN","WORK_OF_ART":"UNKNOWN","LANGUAGE":"UNKNOWN"}
 
-_MATERIAL = frozenset({"钢","铁","铜","铝","钛","合金","不锈钢","碳钢","铸铁",
-    "铝合金","钛合金","塑料","橡胶","陶瓷","玻璃","纤维","复合材料"})
+_MATERIAL = frozenset({
+    # Metals & alloys
+    "钢","铁","铜","铝","钛","锌","镍","铬","锰","锡","铅","镁","钨","钴",
+    "合金","不锈钢","碳钢","铸铁","铝合金","钛合金","镁合金","铜合金",
+    # Non-metals
+    "塑料","橡胶","陶瓷","玻璃","纤维","复合材料","碳纤维",
+    # Elements (single-char, for compound detection)
+    "碳","硅","硼","硫","磷",
+})
 _STANDARD = frozenset({"GB","GB/T","ISO","ASTM","DIN","JIS","EN","标准","规范"})
 _PARAMETER = frozenset({"强度","硬度","韧性","密度","熔点","沸点","抗拉强度","屈服强度","延伸率"})
 
@@ -59,6 +66,11 @@ class EntityMappingRules:
                 mapped = self.map(raw_ent, ner_key, tokens, text)
                 if mapped and not self._dup(mapped, entities):
                     entities.append(mapped)
+
+        # Post-processing
+        entities.sort(key=lambda e: e.span[0])
+        entities = self._merge_adjacent(entities)
+        entities = self._discover_keyword_entities(entities, tokens, text)
         return entities
 
     @staticmethod
@@ -74,3 +86,77 @@ class EntityMappingRules:
             if e.text == candidate.text and candidate.span[0] < e.span[1] and candidate.span[1] > e.span[0]:
                 return True
         return False
+
+    # ---- Post-processing ----
+
+    @staticmethod
+    def _merge_adjacent(entities: list[Entity]) -> list[Entity]:
+        """Merge adjacent same-category entities into compound entities.
+
+        '北京'(LOC) + '立方庭'(LOC) → '北京立方庭'(LOC)
+        '碳'(MATERIAL) + '钢'(MATERIAL) → '碳钢'(MATERIAL)
+        """
+        if len(entities) < 2:
+            return entities
+        merged = []
+        i = 0
+        while i < len(entities):
+            cur = entities[i]
+            j = i + 1
+            while j < len(entities):
+                nxt = entities[j]
+                if (cur.category == nxt.category
+                        and cur.span[1] == nxt.span[0]):
+                    cur = Entity(
+                        id=cur.id,
+                        text=cur.text + nxt.text,
+                        category=cur.category,
+                        span=(cur.span[0], nxt.span[1]),
+                        normalized=cur.normalized + nxt.normalized,
+                        source=cur.source,
+                        confidence=min(cur.confidence, nxt.confidence),
+                    )
+                    j += 1
+                else:
+                    break
+            merged.append(cur)
+            i = j
+        return merged
+
+    def _discover_keyword_entities(
+        self, entities: list[Entity], tokens: list[Token], text: str
+    ) -> list[Entity]:
+        """Scan tokens for domain keywords not caught by NER.
+
+        Multi-char tokens matching _MATERIAL/_STANDARD/_PARAMETER → entities.
+        Single-char tokens only matched against _MATERIAL (e.g., 钢, 铁, 铜).
+        """
+        result = list(entities)
+        entity_spans = {(e.span[0], e.span[1]) for e in entities}
+
+        for t in tokens:
+            span_key = (t.span[0], t.span[1])
+            if span_key in entity_spans:
+                continue
+            # Single-char: only match materials (钢, 铁, 铜, 铝...)
+            if len(t.text) == 1 and t.text in _MATERIAL:
+                cat = "MATERIAL"
+            elif len(t.text) >= 2:
+                cat = self._keyword(t.text)
+            else:
+                continue
+            if cat and cat != "UNKNOWN":
+                self._counter += 1
+                result.append(Entity(
+                    id=f"ent_{self._counter:03d}",
+                    text=t.text,
+                    category=cat,
+                    span=t.span,
+                    normalized=t.text,
+                    source="keyword",
+                    confidence=1.0,
+                ))
+                entity_spans.add(span_key)
+
+        result.sort(key=lambda e: e.span[0])
+        return result
