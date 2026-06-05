@@ -142,6 +142,53 @@ async def analyze_dep(request: AnalyzeRequest):
 
 
 # ---------------------------------------------------------------------------
+# New Word Discovery
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze/discover")
+async def analyze_discover(request: AnalyzeRequest):
+    """Discover potential new words using PMI + MTL hybrid strategy.
+
+    Returns candidates suitable for dict_combine.
+    """
+    try:
+        from core.analyzer import _get_modern_pipeline
+        from core.discoverer import discover as discover_words
+        from core.schema import Token
+
+        pipeline = _get_modern_pipeline()
+        _apply_dict(pipeline, request.dict_combine)
+        raw = pipeline(request.text)
+
+        # Build MTL tokens
+        pos_list = raw.get("pos/ctb", [])
+        tok_list = raw.get("tok/fine", [])
+        mtl_tokens = []
+        cursor = 0
+        for i, t in enumerate(tok_list):
+            start = request.text.find(t, cursor)
+            if start < 0:
+                start = cursor
+            mtl_tokens.append(Token(
+                id=i, text=t,
+                pos=pos_list[i] if i < len(pos_list) else "X",
+                span=(start, start + len(t)),
+                source="hanlp_v2",
+            ))
+            cursor = start + len(t)
+
+        result = discover_words(
+            request.text,
+            mtl_tokens=mtl_tokens,
+            min_freq=1,
+            max_candidates=30,
+        )
+        return result.to_dict()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+
+
+# ---------------------------------------------------------------------------
 
 @app.post("/analyze/pretty")
 async def analyze_pretty(request: AnalyzeRequest):
@@ -209,6 +256,11 @@ button:disabled{background:#21262d;color:#484f58;cursor:not-allowed}
 .relation-row .obj{color:#79c0ff}
 .relation-row .src{color:#484f58;font-size:11px;margin-left:auto}
 pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;font-size:11px;line-height:1.15;color:#c9d1d9}
+.discover-item{display:inline-flex;align-items:center;gap:6px;background:#21262d;padding:6px 12px;margin:4px;border-radius:6px;font-size:13px;cursor:pointer;border:1px solid #30363d;transition:all .2s}
+.discover-item:hover{border-color:#58a6ff}
+.discover-item.selected{background:#1a3a1a;border-color:#238636}
+.discover-item .score{font-size:10px;color:#484f58;margin-left:4px}
+.discover-item .freq{font-size:10px;color:#e3b341;margin-left:2px}
 .loading{text-align:center;padding:40px;color:#8b949e}
 .error{color:#f85149;padding:12px;background:#3a1a1a;border-radius:6px}
 .sample-btn{font-size:11px;padding:4px 8px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:4px;cursor:pointer;margin:2px}
@@ -239,11 +291,13 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
 <div class="tab" onclick="switchTab('pretty')">🎨 HanLP 原生可视化</div>
 <div class="tab" onclick="switchTab('depsvg')">🧬 依存树 SVG</div>
+<div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
 </div>
 <div id="nsp" class="panel active"></div>
 <div id="pretty" class="panel"></div>
 <div id="depsvg" class="panel"></div>
+<div id="discover" class="panel"></div>
 <div id="json" class="panel"></div>
 </main>
 <script>
@@ -255,22 +309,23 @@ async function analyze(){
     const body={text, dict_combine: dictCombine};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
-    ['nsp','pretty','depsvg','json'].forEach(id=>document.getElementById(id).innerHTML='<div class="loading">⏳ 分析中...</div>');
+    ['nsp','pretty','depsvg','discover','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
-    const [r1,r2,r3]=await Promise.all([
+    const [r1,r2,r3,r4]=await Promise.all([
         post('/analyze',body),
         post('/analyze/pretty',body),
-        post('/analyze/dep',body)
+        post('/analyze/dep',body),
+        post('/analyze/discover',body)
     ]);
     if(r1._error) document.getElementById('nsp').innerHTML='<div class="error">分析失败: '+r1._error+'</div>';
     else renderNSP(r1);
     if(r2._error) document.getElementById('pretty').innerHTML='<div class="error">分析失败: '+r2._error+'</div>';
     else renderPretty(r2);
     if(r3._error) document.getElementById('depsvg').innerHTML='<div class="error">分析失败: '+r3._error+'</div>';
-    else renderDepSVG(r3);
-    if(!r1._error) renderJSON(r1);
+    else renderDepSVG(r3);    if(r4._error) document.getElementById('discover').innerHTML='<div class=\"error\">新词发现失败: '+r4._error+'</div>';
+    else renderDiscover(r4);    if(!r1._error) renderJSON(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
@@ -364,6 +419,50 @@ function renderDepSVG(data){
 
     svg+=`</svg>`;
     document.getElementById('depsvg').innerHTML=`<div class="card"><h3>🧬 依存句法树 (SVG)</h3><div style="overflow-x:auto">${svg}</div></div>`;
+}
+
+function renderDiscover(data){
+    if(!data||!data.candidates){ document.getElementById('discover').innerHTML='<div class="card">未发现候选新词</div>'; return; }
+    const candidates=data.candidates;
+    if(!candidates.length){ document.getElementById('discover').innerHTML='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现候选新词</span></div>'; return; }
+
+    const items=candidates.map(c=>{
+        const color=c.score>=5?'#7ee787':c.score>=3?'#e3b341':'#f85149';
+        const freqBadge=c.frequency>=2?`<span class="freq">×${c.frequency}</span>`:'';
+        return `<span class="discover-item" onclick="toggleDictWord(this,'${esc(c.word)}')" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span>${freqBadge}</span>`;
+    }).join('');
+
+    document.getElementById('discover').innerHTML=`
+    <div class="card">
+      <h3>🔍 新词发现 <small style="color:#484f58;font-weight:normal">(点击候选词加入自定义词典)</small></h3>
+      <div style="margin-bottom:12px">${items}</div>
+      <button onclick="applyDict()" style="margin-top:8px">📋 应用选中词典并重新分析</button>
+      <button onclick="clearDictSelection()" style="margin-top:8px;margin-left:8px;background:#21262d;color:#c9d1d9">清除选择</button>
+    </div>`;
+    window._discoverCandidates=candidates;
+}
+
+let selectedDictWords=[];
+function toggleDictWord(el,word){
+    el.classList.toggle('selected');
+    if(el.classList.contains('selected')){
+        if(!selectedDictWords.includes(word)) selectedDictWords.push(word);
+    }else{
+        selectedDictWords=selectedDictWords.filter(w=>w!==word);
+    }
+    const dictInput=document.getElementById('dictInput');
+    dictInput.value=selectedDictWords.join(' ');
+}
+
+function clearDictSelection(){
+    selectedDictWords=[];
+    document.getElementById('dictInput').value='';
+    document.querySelectorAll('.discover-item.selected').forEach(el=>el.classList.remove('selected'));
+}
+
+function applyDict(){
+    if(selectedDictWords.length) document.getElementById('dictInput').value=selectedDictWords.join(' ');
+    analyze();
 }
 
 function renderJSON(data){
