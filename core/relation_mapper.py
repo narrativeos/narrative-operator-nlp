@@ -97,6 +97,44 @@ def _is_content(token) -> bool:
     return text not in _FUNCTION_WORDS and len(text) >= 1
 
 
+# ── SRL phrase normalization ──
+
+# Patterns that indicate a trailing modifier to strip from SRL arguments
+_STRIP_TRAILING_RE = __import__('re').compile(
+    r"(的[一|两|几|多|少|种|类|个|些|部分|方面]*|等)$"
+)
+# Bare adjectives that should not appear as standalone relation objects
+_BARE_ADJECTIVES = {"高", "低", "大", "小", "多", "少", "新", "旧", "好", "坏",
+                    "快", "慢", "长", "短", "强", "弱", "重", "轻", "深", "浅"}
+
+
+def _normalize_arg(arg_text: str, tokens: list | None = None) -> str:
+    """Strip trailing modifiers from SRL arguments to extract core entity.
+
+    '钢的一种' → '钢'
+    '高强度和高韧性' → '高强度和高韧性' (complex — keep as-is)
+    '碳钢' → '碳钢'
+    """
+    arg = arg_text.strip()
+    # Strip trailing "的X" patterns
+    stripped = _STRIP_TRAILING_RE.sub("", arg).strip()
+    if stripped and len(stripped) >= 1:
+        return stripped
+    return arg
+
+
+def _is_amod_redundant(srl_objects: set, amod_subject: str, amod_object: str) -> bool:
+    """Check if an amod relation is already covered by an SRL relation.
+
+    e.g., SRL: 碳钢 HAS_PROPERTY 高强度和高韧性
+          amod: 强度 HAS_PROPERTY 高 → redundant (covered by SRL compound)
+    """
+    for srl_obj in srl_objects:
+        if amod_subject in srl_obj and amod_object in srl_obj:
+            return True
+    return False
+
+
 def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
     """Extract text covering two spans."""
     start = min(sp1[0], sp2[0])
@@ -203,20 +241,77 @@ class RelationExtractionRules:
 
     # ── Aggregate ──
 
-    def extract_all(self, text: str, raw: dict, tokens: list) -> list:
-        """Extract relations: SRL first, then supplementary DEP (amod)."""
-        relations: list = []
+    def extract_all(self, text: str, raw: dict, tokens: list,
+                    entities: list | None = None) -> list:
+        """Extract relations: SRL first, then supplementary DEP (amod).
 
+        When entities are provided, relations are normalized and filtered:
+        - Endpoints are matched to recognized entities
+        - Non-entity endpoints cause the relation to be dropped
+        - Bare adjectives (高, 大, ...) as objects are suppressed
+        """
+        # Build entity index: entity text → canonical text
+        entity_texts: set[str] = set()
+        if entities:
+            for e in entities:
+                entity_texts.add(e.text)
+
+        # Extract SRL relations
+        srl_objects: set[str] = set()
+        relations: list = []
         for f in raw.get("srl", []):
             if isinstance(f, list):
                 rel = self.extract_from_srl(f, tokens, text)
                 if rel:
-                    relations.append(rel)
+                    # Normalize endpoints to entities
+                    rel = self._entity_normalize(rel, entity_texts)
+                    if rel:
+                        relations.append(rel)
+                        srl_objects.add(rel.object)
 
+        # Extract DEP relations (suppress if covered by SRL or bare adjective)
         for i, d in enumerate(raw.get("dep", [])):
             if isinstance(d, (list, tuple)) and len(d) >= 2:
                 rel = self.extract_from_dep(i, str(d[1]), int(d[0]), tokens, text)
                 if rel:
-                    relations.append(rel)
+                    # Suppress if object is a bare adjective
+                    if rel.object in _BARE_ADJECTIVES:
+                        continue
+                    # Suppress if SRL already covers this subject+object
+                    if _is_amod_redundant(srl_objects, rel.subject, rel.object):
+                        continue
+                    # Normalize to entities
+                    rel = self._entity_normalize(rel, entity_texts)
+                    if rel:
+                        relations.append(rel)
 
         return relations
+
+    def _entity_normalize(self, rel: Relation,
+                          entity_texts: set[str]) -> Relation | None:
+        """Normalize relation endpoints against known entities.
+
+        Strategy:
+        1. Exact match → keep as-is
+        2. Strip trailing \"的X\" modifier → retry exact match
+        3. No match → drop the relation
+        """
+        if not entity_texts:
+            return rel
+
+        # Try exact match, then strip-modifier match for each endpoint
+        for attr in ("subject", "object"):
+            text = getattr(rel, attr)
+            if text in entity_texts:
+                continue  # already matches
+
+            # Try stripping trailing "的X" patterns
+            stripped = _STRIP_TRAILING_RE.sub("", text).strip()
+            if stripped and stripped != text and stripped in entity_texts:
+                setattr(rel, attr, stripped)
+                continue
+
+            # No match — relation invalid
+            return None
+
+        return rel

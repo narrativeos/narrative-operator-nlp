@@ -34,6 +34,7 @@ class HanlpSchemaMapper:
 
     def map(self, text: str, raw: dict, source: str = "hanlp_v2") -> NarrativeDocument:
         tokens = self._map_tokens(text, raw)
+        entities = self._map_entities(text, raw, tokens)
         return NarrativeDocument(
             meta=NarrativeMeta(
                 source=source,
@@ -43,8 +44,8 @@ class HanlpSchemaMapper:
             ),
             content=NarrativeContent(
                 tokens=tokens,
-                entities=self._map_entities(text, raw, tokens),
-                relations=self._map_relations(text, raw, tokens),
+                entities=entities,
+                relations=self._map_relations(text, raw, tokens, entities),
                 structural=raw,
             ),
         )
@@ -75,5 +76,6 @@ class HanlpSchemaMapper:
     def _map_entities(self, text: str, raw: dict, tokens: list[Token]) -> list:
         return self.entity_rules.map_all(text, raw, tokens)
 
-    def _map_relations(self, text: str, raw: dict, tokens: list[Token]) -> list:
-        return self.relation_rules.extract_all(text, raw, tokens)
+    def _map_relations(self, text: str, raw: dict, tokens: list[Token],
+                       entities: list) -> list:
+        return self.relation_rules.extract_all(text, raw, tokens, entities)
