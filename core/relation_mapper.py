@@ -167,9 +167,27 @@ class RelationExtractionRules:
 
     def _entity_normalize(self, rel: Relation,
                           entity_texts: set[str]) -> Relation | None:
-        """Only keep relations where both endpoints are recognized entities."""
+        """Normalize endpoints: exact match → sub-entity match → reject.
+
+        If an SRL argument is a phrase containing a known entity
+        (e.g., '钢的一种' contains entity '钢'), normalize to that entity.
+        Only single-entity matches are accepted to avoid ambiguity.
+        """
         if not entity_texts:
             return rel
-        if rel.subject not in entity_texts or rel.object not in entity_texts:
+
+        for attr in ("subject", "object"):
+            text = getattr(rel, attr)
+            if text in entity_texts:
+                continue  # exact match
+
+            # Find entities that are substrings of this argument
+            matches = [e for e in entity_texts if e in text]
+            if len(matches) == 1:
+                setattr(rel, attr, matches[0])  # normalize to single matched entity
+                continue
+
+            # No match or ambiguous → drop
             return None
+
         return rel
