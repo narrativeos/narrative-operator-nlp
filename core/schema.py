@@ -210,8 +210,8 @@ class SentencePattern(BaseModel):
         description="ba_construction|bei_construction|serial_verb|pivotal|ellipsis"
     )
     rhetorical_form: str = Field(
-        default="none",
-        description="none|parallel|loose"
+        default="unknown",
+        description="unknown|none|parallel|loose — NLP cannot reliably determine; hints in limitations"
     )
     sentence_length_tier: str = Field(
         default="medium",

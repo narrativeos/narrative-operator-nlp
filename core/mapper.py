@@ -283,16 +283,21 @@ class HanlpSchemaMapper:
 # ── Syntactic feature detectors ──
 
 def _detect_sentence_type(text: str) -> str:
-    """Detect sentence mood from ending punctuation and keywords."""
+    """Detect sentence mood from ending punctuation only.
+
+    Punctuation-based detection is near-100%:
+    - ？→ interrogative
+    - ！→ exclamatory
+    - Otherwise → declarative (safe catch-all)
+
+    Imperative detection via keywords (请/别/勿/禁止) is NOT near-100%
+    — hints go to limitations for downstream resolution.
+    """
     last = text.strip()[-1] if text.strip() else ""
     if last == "？":
         return "interrogative"
     if last == "！":
         return "exclamatory"
-    # Imperative: starts with verb or contains 请/别/不要
-    stripped = text.strip()
-    if any(stripped.startswith(w) for w in ("请", "别", "不要", "禁止", "切勿")):
-        return "imperative"
     return "declarative"
 
 
@@ -348,27 +353,23 @@ def _detect_voice(text: str) -> str:
 
 
 def _detect_sub_types(text: str) -> list[str]:
-    """Detect special constructions with high confidence.
-    
-    Only ba_construction and bei_construction are keyword-reliable.
-    serial_verb, pivotal, ellipsis require deeper parsing — 
-    hints are provided in limitations field for downstream processing.
+    """Returns empty list as safe default.
+
+    Special constructions (ba_construction, bei_construction, serial_verb,
+    pivotal, ellipsis) cannot be reliably detected via keyword matching.
+    Hints go to limitations for downstream resolution.
     """
-    types: list[str] = []
-    if "把" in text:
-        types.append("ba_construction")
-    if "被" in text:
-        types.append("bei_construction")
-    return types
+    return []
 
 
 def _detect_rhetorical(text: str) -> str:
-    commas = text.count("，") + text.count(",")
-    if commas >= 2:
-        return "parallel"
-    if commas == 0:
-        return "loose"
-    return "none"
+    """Returns 'unknown' as safe default.
+
+    Rhetorical structure detection via comma counting is NOT near-100%.
+    A sentence with ≥2 commas may be a list, not parallel structure.
+    Hints go to limitations for downstream resolution.
+    """
+    return "unknown"
 
 
 def _detect_length_tier(text: str) -> str:
@@ -399,15 +400,29 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
     limits: list[str] = []
 
     # ── Negation hint: raw char detection, NO filtering ──
-    # A partial whitelist (removed) cannot be exhaustive and creates
-    # false confidence. Downstream must resolve scope.
     neg_hits = [c for c in _NEG_CHARS if c in text]
     if neg_hits:
         limits.append(f"hint:negation({','.join(neg_hits)})")
 
-    # ── Passive hint ──
+    # ── Passive / bei-construction hint ──
     if "被" in text:
         limits.append("hint:passive")
+
+    # ── Ba-construction hint ──
+    if "把" in text:
+        limits.append("hint:ba-construction")
+
+    # ── Imperative hint (keyword-based, NOT near-100%) ──
+    stripped = text.strip()
+    if any(stripped.startswith(w) for w in ("请", "别", "不要", "禁止", "切勿")):
+        limits.append("hint:imperative")
+
+    # ── Rhetorical structure hint (comma count, NOT near-100%) ──
+    commas = text.count("，") + text.count(",")
+    if commas >= 2:
+        limits.append("hint:parallel")
+    elif commas == 0:
+        limits.append("hint:loose")
 
     # ── serial_verb — multiple ARG0s suggest serial verb clauses (heuristic) ──
     nsubj_count = 0
