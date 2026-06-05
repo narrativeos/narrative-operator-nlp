@@ -608,16 +608,11 @@ function renderPatterns(patterns){
         if(p.structural_type&&p.structural_type!=='subject_predicate') tags.push(`<span class="tag structural">${esc(p.structural_type)}</span>`);
         if(p.sentence_length_tier) tags.push(`<span class="tag tier">${esc(p.sentence_length_tier)}</span>`);
         const rels=p.relation_summary.join(', ')||'-';
-        // ── NLP gap signals: all keyword/heuristic detections are in limitations ──
+        // Only NLP-derived hints survive (SRL-based serial_verb)
         const L = p.limitations||[];
-        if(L.some(l=>l.startsWith('hint:negation'))) tags.push(`<span class="tag negative">⚠否定</span>`);
-        if(L.includes('hint:passive'))  tags.push(`<span class="tag passive">⚠被动</span>`);
-        if(L.includes('hint:ba-construction')) tags.push(`<span class="tag">⚠把字</span>`);
-        if(L.includes('hint:imperative')) tags.push(`<span class="tag imperative">⚠祈使</span>`);
-        if(L.includes('hint:parallel')) tags.push(`<span class="tag">⚠排比</span>`);
-        if(L.includes('hint:loose')) tags.push(`<span class="tag">⚠松散</span>`);
         if(L.includes('hint:serial_verb')) tags.push(`<span class="tag">⚠连动</span>`);
-        if(L.includes('hint:pivotal')) tags.push(`<span class="tag">⚠兼语</span>`);
+        // All other features (negation, passive, ba, imperative, parallel, etc.)
+        // are NOT computable from HanLP MTL output — documented for downstream.
         const limits=L.length
           ? p.limitations.map(l=>`<span class="tag limit" title="NLP无法确定，留给下游">⚠${esc(l)}</span>`).join(' ')
           : '<span style="color:#484f58">-</span>';

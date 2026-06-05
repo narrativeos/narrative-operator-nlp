@@ -321,22 +321,11 @@ def _detect_structural_type(text: str,
 def _detect_polarity(text: str) -> str:
     """Returns 'affirmative' as safe default.
 
-    Chinese negation detection via character matching CANNOT achieve near-100%.
-    No filtering is applied — a partial false-positive whitelist would create
-    an illusion of accuracy while inevitably missing edge cases (open class of
-    lexicalized compounds, proper nouns, double negation, scope ambiguity).
-
-    Raw negation-character hints are reported in limitations for downstream
-    resolution (LLM, rules, manual review).
+    Chinese negation detection requires syntactic scope resolution
+    beyond current NLP capability. HanLP MTL output has no dedicated
+    negation feature. Downstream (LLM/rules) must resolve.
     """
     return "affirmative"
-
-
-# Characters that MAY indicate negation.
-# NOTE: No filtering is applied. These are raw hints only.
-# A character hit does NOT mean the sentence is negative —
-# it means "this char exists, downstream should resolve its scope."
-_NEG_CHARS = frozenset({"不", "没", "无", "非", "未", "别", "莫", "勿"})
 
 
 def _detect_voice(text: str) -> str:
@@ -391,40 +380,26 @@ def _sentence_punct(text: str) -> str:
 
 
 def _collect_limitations(text: str, frames: list) -> list[str]:
-    """Collect NLP capability gaps for downstream processing.
+    """Collect NLP capability gaps — ONLY from NLP output, NOT raw text.
 
-    Features that current NLP pipeline cannot reliably determine
-    are listed here so downstream systems (LLM, rules, manual review)
-    can fill them in.
+    Principle: SentencePattern must be computed from NLP pipeline results
+    (token/POS/NER/DEP/SRL), never from raw text string matching.
+
+    Features NOT computable from current NLP output (documented for downstream):
+    - Negation scope/polarity — no negation feature in HanLP MTL output
+    - Passive voice — DEP may have clues but not reliably for Chinese
+    - Ba-construction — no dedicated feature in MTL output
+    - Imperative mood — no mood feature in MTL output
+    - Rhetorical structure — no discourse parsing in MTL output
+    - Pivotal construction — requires deep syntactic analysis
+    - Ellipsis — no reliable detection method
+
+    Only SRL-derived signals are provided here.
     """
     limits: list[str] = []
 
-    # ── Negation hint: raw char detection, NO filtering ──
-    neg_hits = [c for c in _NEG_CHARS if c in text]
-    if neg_hits:
-        limits.append(f"hint:negation({','.join(neg_hits)})")
-
-    # ── Passive / bei-construction hint ──
-    if "被" in text:
-        limits.append("hint:passive")
-
-    # ── Ba-construction hint ──
-    if "把" in text:
-        limits.append("hint:ba-construction")
-
-    # ── Imperative hint (keyword-based, NOT near-100%) ──
-    stripped = text.strip()
-    if any(stripped.startswith(w) for w in ("请", "别", "不要", "禁止", "切勿")):
-        limits.append("hint:imperative")
-
-    # ── Rhetorical structure hint (comma count, NOT near-100%) ──
-    commas = text.count("，") + text.count(",")
-    if commas >= 2:
-        limits.append("hint:parallel")
-    elif commas == 0:
-        limits.append("hint:loose")
-
-    # ── serial_verb — multiple ARG0s suggest serial verb clauses (heuristic) ──
+    # ── serial_verb: multiple ARG0s suggest serial verb clauses ──
+    # Derived from SRL output (NLP), not raw text.
     nsubj_count = 0
     for f in frames:
         for item in f:
@@ -432,21 +407,5 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
                 nsubj_count += 1
     if nsubj_count >= 3:
         limits.append("hint:serial_verb")
-
-    # ── pivotal — keyword hints only; needs deeper parsing (e.g., "请他吃饭") ──
-    pivotal_kw = {"请", "让", "叫", "派", "命令", "要求"}
-    if any(w in text for w in pivotal_kw) and not text.startswith("请勿"):
-        limits.append("hint:pivotal")
-
-    # ── imperative accuracy — keyword detection is approximate ──
-    if _detect_sentence_type(text) == "imperative":
-        limits.append("hint:imperative-approx")
-
-    # ── rhetorical_form is heuristic (comma count) ──
-    if _detect_rhetorical(text) == "parallel":
-        limits.append("hint:parallel-approx")
-
-    # ── ellipsis — no reliable heuristic; always a downstream task ──
-    # (e.g., "你去哪？图书馆。" — missing predicate)
 
     return limits
