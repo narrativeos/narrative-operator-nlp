@@ -234,7 +234,8 @@ class Document(dict):
                 ner_per_sample = ner_samples[i]
                 # For nested NER, use the longest span
                 start_offsets = [None for i in range(length)]
-                for ent, label, b, e in ner_per_sample:
+                for item in ner_per_sample:
+                    ent, label, b, e = item[0], item[1], item[2], item[3]  # supports 4-tuple or 5-tuple
                     if not start_offsets[b] or e > start_offsets[b][-1]:
                         start_offsets[b] = (ent, label, b, e)
                 ner_per_sample = [y for y in start_offsets if y]
@@ -243,7 +244,8 @@ class Document(dict):
                 _ner = []
                 _type = []
                 offset = 0
-                for ent, label, b, e in ner_per_sample:
+                for item in ner_per_sample:
+                    ent, label, b, e = item[0], item[1], item[2], item[3]  # supports 4/5-tuple
                     render_labeled_span(b, e, _ner, _type, label, offset)
                     offset = e
                 if offset != length:
