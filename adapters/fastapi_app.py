@@ -345,6 +345,12 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .tag.passive{background:#1a1a3a;color:#79c0ff}
 .tag.active{background:#1a3a1a;color:#7ee787}
 .tag.declarative{background:#21262d;color:#8b949e}
+.tag.structural{background:#1a1a3a;color:#a5b4fc}
+.tag.tier{background:#1a2e1a;color:#7ee787}
+.tag.limit{background:#3a2a1a;color:#f0883e;cursor:help}
+.tag.interrogative{background:#2a1a3a;color:#c084fc}
+.tag.exclamatory{background:#3a1a2a;color:#f472b6}
+.tag.imperative{background:#1a3a2a;color:#6ee7b7}
 </style>
 </head>
 <body>
@@ -601,8 +607,14 @@ function renderPatterns(patterns){
         if(p.sentence_type!=='declarative') tags.push(`<span class="tag">${p.sentence_type}</span>`);
         if(p.polarity==='negative') tags.push(`<span class="tag negative">否定</span>`);
         if(p.voice==='passive') tags.push(`<span class="tag passive">被动</span>`);
+        if(p.structural_type&&p.structural_type!=='subject_predicate') tags.push(`<span class="tag structural">${esc(p.structural_type)}</span>`);
+        if(p.rhetorical_form&&p.rhetorical_form!=='none') tags.push(`<span class="tag">${esc(p.rhetorical_form)}</span>`);
         if(p.sub_types&&p.sub_types.length) p.sub_types.forEach(t=>tags.push(`<span class="tag">${t}</span>`));
+        if(p.sentence_length_tier) tags.push(`<span class="tag tier">${esc(p.sentence_length_tier)}</span>`);
         const rels=p.relation_summary.join(', ')||'-';
+        const limits=p.limitations&&p.limitations.length
+          ? p.limitations.map(l=>`<span class="tag limit" title="NLP无法确定，留给下游">⚠${esc(l)}</span>`).join(' ')
+          : '<span style="color:#484f58">-</span>';
         return `<tr>
           <td class="tpl">${esc(p.template)}</td>
           <td class="pred">${esc(p.predicates.join(', '))}</td>
@@ -611,6 +623,7 @@ function renderPatterns(patterns){
           <td style="color:#484f58">${p.word_count||'-'}</td>
           <td style="color:#484f58">${p.clause_count||'-'}</td>
           <td>${tags.join('')||'<span style="color:#484f58">-</span>'}</td>
+          <td>${limits}</td>
         </tr>`;
     }).join('');
 
@@ -627,6 +640,7 @@ function renderPatterns(patterns){
           <th>词数</th>
           <th>分句</th>
           <th>特征</th>
+          <th>限制/下游</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>

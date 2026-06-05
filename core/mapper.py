@@ -196,10 +196,32 @@ class HanlpSchemaMapper:
 
         patterns: list = []
         for si, frames in enumerate(sent_frames):
-            if not frames:
-                continue
-
             sent = sentences[si]
+
+            if not frames:
+                # Sentence with no SRL — still emit a pattern with syntactic features
+                # Estimate word count from sentence length (~2 chars/word for Chinese)
+                est_words = len(sent.strip()) // 2
+                patterns.append(SentencePattern(
+                    sentence=sent,
+                    sentence_type=_detect_sentence_type(sent),
+                    structural_type="unknown",
+                    polarity=_detect_polarity(sent),
+                    voice=_detect_voice(sent),
+                    sub_types=_detect_sub_types(sent),
+                    rhetorical_form=_detect_rhetorical(sent),
+                    sentence_length_tier=_detect_length_tier(sent),
+                    template="",
+                    entity_sequence=[],
+                    predicates=[],
+                    relation_summary=[],
+                    attribute_count=0,
+                    word_count=est_words,
+                    clause_count=_count_clauses(sent),
+                    punctuation_mark=_sentence_punct(sent),
+                    limitations=_collect_limitations(sent, frames),
+                ))
+                continue
             preds, entity_cats, rel_summaries = [], [], []
 
             for f in frames:
@@ -238,9 +260,12 @@ class HanlpSchemaMapper:
             patterns.append(SentencePattern(
                 sentence=sent,
                 sentence_type=_detect_sentence_type(sent),
+                structural_type=_detect_structural_type(sent, frames),
                 polarity=_detect_polarity(sent),
                 voice=_detect_voice(sent),
                 sub_types=_detect_sub_types(sent),
+                rhetorical_form=_detect_rhetorical(sent),
+                sentence_length_tier=_detect_length_tier(sent),
                 template=template,
                 entity_sequence=entity_cats,
                 predicates=preds,
@@ -249,6 +274,7 @@ class HanlpSchemaMapper:
                 word_count=len(raw.get("tok/fine", [])),
                 clause_count=_count_clauses(sent),
                 punctuation_mark=_sentence_punct(sent),
+                limitations=_collect_limitations(sent, frames),
             ))
 
         return patterns
@@ -257,12 +283,34 @@ class HanlpSchemaMapper:
 # ── Syntactic feature detectors ──
 
 def _detect_sentence_type(text: str) -> str:
+    """Detect sentence mood from ending punctuation and keywords."""
     last = text.strip()[-1] if text.strip() else ""
     if last == "？":
         return "interrogative"
     if last == "！":
         return "exclamatory"
+    # Imperative: starts with verb or contains 请/别/不要
+    stripped = text.strip()
+    if any(stripped.startswith(w) for w in ("请", "别", "不要", "禁止", "切勿")):
+        return "imperative"
     return "declarative"
+
+
+def _detect_structural_type(text: str,
+                            frames: list) -> str:
+    """Detect subject-predicate vs non-subject-predicate structure."""
+    for f in frames:
+        has_arg0 = has_pred = False
+        for item in f:
+            if len(item) >= 4:
+                role = str(item[1]).upper()
+                if role == "ARG0":
+                    has_arg0 = True
+                elif role == "PRED":
+                    has_pred = True
+        if has_arg0 and has_pred:
+            return "subject_predicate"
+    return "non_subject_predicate"
 
 
 def _detect_polarity(text: str) -> str:
@@ -279,12 +327,36 @@ def _detect_voice(text: str) -> str:
 
 
 def _detect_sub_types(text: str) -> list[str]:
+    """Detect special constructions with high confidence.
+    
+    Only ba_construction and bei_construction are keyword-reliable.
+    serial_verb, pivotal, ellipsis require deeper parsing — 
+    hints are provided in limitations field for downstream processing.
+    """
     types: list[str] = []
     if "把" in text:
         types.append("ba_construction")
     if "被" in text:
         types.append("bei_construction")
     return types
+
+
+def _detect_rhetorical(text: str) -> str:
+    commas = text.count("，") + text.count(",")
+    if commas >= 2:
+        return "parallel"
+    if commas == 0:
+        return "loose"
+    return "none"
+
+
+def _detect_length_tier(text: str) -> str:
+    length = len(text.strip())
+    if length <= 10:
+        return "short"
+    if length <= 30:
+        return "medium"
+    return "long"
 
 
 def _count_clauses(text: str) -> int:
@@ -294,3 +366,40 @@ def _count_clauses(text: str) -> int:
 def _sentence_punct(text: str) -> str:
     last = text.strip()[-1] if text.strip() else ""
     return last if last in "。？！" else ""
+
+
+def _collect_limitations(text: str, frames: list) -> list[str]:
+    """Collect NLP capability gaps for downstream processing.
+
+    Features that current NLP pipeline cannot reliably determine
+    are listed here so downstream systems (LLM, rules, manual review)
+    can fill them in.
+    """
+    limits: list[str] = []
+
+    # serial_verb — multiple ARG0s suggest serial verb clauses (heuristic)
+    nsubj_count = 0
+    for f in frames:
+        for item in f:
+            if len(item) >= 4 and str(item[1]).upper() == "ARG0":
+                nsubj_count += 1
+    if nsubj_count >= 3:
+        limits.append("hint:serial_verb")
+
+    # pivotal — keyword hints only; needs deeper parsing (e.g., "请他吃饭")
+    pivotal_kw = {"请", "让", "叫", "派", "命令", "要求"}
+    if any(w in text for w in pivotal_kw) and not text.startswith("请勿"):
+        limits.append("hint:pivotal")
+
+    # imperative accuracy — keyword detection is approximate
+    if _detect_sentence_type(text) == "imperative":
+        limits.append("hint:imperative-approx")
+
+    # rhetorical_form is heuristic (comma count)
+    if _detect_rhetorical(text) == "parallel":
+        limits.append("hint:parallel-approx")
+
+    # ellipsis — no reliable heuristic; always a downstream task
+    # (e.g., "你去哪？图书馆。" — missing predicate)
+
+    return limits

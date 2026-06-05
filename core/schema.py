@@ -191,23 +191,31 @@ class SentencePattern(BaseModel):
     # ── Syntactic Structure ──
     sentence_type: str = Field(
         default="declarative",
-        description="declarative|interrogative|imperative|exclamatory — from ending punctuation"
+        description="declarative|interrogative|imperative|exclamatory"
+    )
+    structural_type: str = Field(
+        default="subject_predicate",
+        description="subject_predicate|non_subject_predicate|unknown (no SRL frames available)"
     )
     polarity: str = Field(
         default="affirmative",
-        description="affirmative|negative — from negator presence"
+        description="affirmative|negative"
     )
     voice: str = Field(
         default="active",
-        description="active|passive — from 被/把 construction"
+        description="active|passive"
     )
     sub_types: list[str] = Field(
         default_factory=list,
-        description="Special construction labels: ba_construction, bei_construction, serial_verb, pivotal, ellipsis"
+        description="ba_construction|bei_construction|serial_verb|pivotal|ellipsis"
     )
     rhetorical_form: str = Field(
         default="none",
-        description="none|parallel|loose — rhetorical structure"
+        description="none|parallel|loose"
+    )
+    sentence_length_tier: str = Field(
+        default="medium",
+        description="short(<=10)|medium(11-30)|long(>30) — by character count"
     )
 
     # ── NLP-derived Semantic Structure ──
@@ -221,6 +229,12 @@ class SentencePattern(BaseModel):
     word_count: int = Field(default=0, ge=0, description="Token count")
     clause_count: int = Field(default=1, ge=1, description="Clause count (comma/semicolon segments + 1)")
     punctuation_mark: str = Field(default="", description="Sentence-ending punctuation mark")
+
+    # ── Limitations (留给下游) ──
+    limitations: list[str] = Field(
+        default_factory=list,
+        description="Features NLP could not determine: serial_verb, pivotal, ellipsis, imperative-accuracy, etc."
+    )
 
 
 # ---------------------------------------------------------------------------
