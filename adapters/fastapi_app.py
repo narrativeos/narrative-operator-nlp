@@ -278,7 +278,11 @@ function renderNSP(data){
 }
 
 function renderPretty(data){
-    if(!data||!data.pretty){ document.getElementById('pretty').innerHTML='<div class="error">分析失败</div>'; return; }
+    if(!data||!data.pretty){
+        const err=data&&data.detail?data.detail:(data&&data._error?data._error:'无 pretty 字段');
+        document.getElementById('pretty').innerHTML=`<div class="error">分析失败: ${esc(err)}</div>`;
+        return;
+    }
     document.getElementById('pretty').innerHTML=`<div class="card"><pre class="pretty">${escapeHtml(data.pretty)}</pre></div>`;
 }
 
