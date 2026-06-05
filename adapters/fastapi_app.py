@@ -421,7 +421,8 @@ function renderNSP(data){
     const entities=c.entities.map(e=>{
         const pct=Math.round((e.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
-        return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
+        const attrs=(e.attributes||[]).map(a=>`<small style="color:#e3b341;margin-left:2px">${a.key}=${a.value||'?'}</small>`).join('');
+        return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
     }).join('')||'<span style="color:#484f58">-</span>';
 
     const relations=c.relations.map(r=>`<div class="relation-row"><span class="subj">${r.subject}</span> &rarr; <span class="pred">${r.predicate}</span> &rarr; <span class="obj">${r.object}</span><span class="src">${r.source}</span></div>`).join('')||'<span style="color:#484f58">-</span>';

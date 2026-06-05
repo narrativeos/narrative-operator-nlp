@@ -129,14 +129,25 @@ class HanlpSchemaMapper:
                 param_entity = entity_by_text.get(param_text)
                 if param_entity is None:
                     continue
-                # Extract value from param text: "高强度" → key="强度", value="高"
-                # Simple heuristic: first char = value, rest = key
-                if len(param_text) >= 2:
-                    key = param_text[1:]   # "强度"
-                    value = param_text[0]  # "高"
+
+                # Split "高强度" → key="强度", value="高"
+                # If param_text IS a known parameter keyword → no value prefix
+                from .entity_mapper import _PARAMETER as KNOWN_PARAMS
+                if param_text in KNOWN_PARAMS:
+                    key, value = param_text, ""
                 else:
-                    key = param_text
-                    value = ""
+                    # Try suffix match: "高强度" ends with "强度" → key="强度", value="高"
+                    matched_kw = None
+                    for kw in sorted(KNOWN_PARAMS, key=len, reverse=True):
+                        if param_text.endswith(kw) and len(kw) >= 2:
+                            matched_kw = kw
+                            break
+                    if matched_kw:
+                        key = matched_kw
+                        value = param_text[:-len(matched_kw)]
+                    else:
+                        key = param_text
+                        value = ""
 
                 attr = EntityAttribute(
                     key=key,
