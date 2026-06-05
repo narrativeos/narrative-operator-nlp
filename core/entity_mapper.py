@@ -78,6 +78,11 @@ class EntityMappingRules:
         if text in _MATERIAL: return "MATERIAL"
         if text in _STANDARD: return "STANDARD"
         if text in _PARAMETER: return "PARAMETER"
+        # Suffix match: "高强度" ends with "强度" → PARAMETER
+        if len(text) >= 3:
+            for kw in _PARAMETER:
+                if text.endswith(kw) and len(kw) >= 2:
+                    return "PARAMETER"
         return "UNKNOWN"
 
     @staticmethod

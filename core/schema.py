@@ -101,6 +101,16 @@ class Token(BaseModel):
         return v
 
 
+# ── Entity Attribute ──
+
+class EntityAttribute(BaseModel):
+    """A key-value property assigned to an entity (e.g. 强度=高)."""
+    key: str = Field(..., min_length=1, description="Attribute name, e.g. '强度'")
+    value: str = Field(default="", description="Attribute value, e.g. '高'")
+    predicate_verb: str = Field(default="", description="Original SRL predicate, e.g. '具有'")
+    confidence: float = Field(default=0.80, ge=0.0, le=1.0)
+
+
 # ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
@@ -114,6 +124,7 @@ class Entity(BaseModel):
     normalized: str = Field(default="", description="Normalized/canonical form")
     source: str = Field(default="", description="Source NER model, e.g. ner/ontonotes")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score [0, 1]")
+    attributes: list[EntityAttribute] = Field(default_factory=list, description="Key-value properties of this entity")
 
     @field_validator("span")
     @classmethod

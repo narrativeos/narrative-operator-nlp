@@ -35,6 +35,7 @@ class HanlpSchemaMapper:
     def map(self, text: str, raw: dict, source: str = "hanlp_v2") -> NarrativeDocument:
         tokens = self._map_tokens(text, raw)
         entities = self._map_entities(text, raw, tokens)
+        self._assign_attributes(text, raw, tokens, entities)
         return NarrativeDocument(
             meta=NarrativeMeta(
                 source=source,
@@ -79,3 +80,68 @@ class HanlpSchemaMapper:
     def _map_relations(self, text: str, raw: dict, tokens: list[Token],
                        entities: list) -> list:
         return self.relation_rules.extract_all(text, raw, tokens, entities)
+
+    def _assign_attributes(self, text: str, raw: dict, tokens: list,
+                           entities: list) -> None:
+        """Assign entity attributes from SRL property frames.
+
+        When SRL gives ARG0=entity, ARG1=compound of PARAMETER entities
+        (e.g., '高强度和高韧性'), split into individual attributes
+        and attach to the ARG0 entity.
+        """
+        from .schema import EntityAttribute
+
+        # Build entity lookup by text
+        entity_by_text: dict[str, object] = {e.text: e for e in entities}
+        param_entities = {e.text for e in entities if e.category == "PARAMETER"}
+
+        for f in raw.get("srl", []):
+            if not isinstance(f, list):
+                continue
+            a0_text, a1_text = "", ""
+            pred_text = ""
+            for item in f:
+                if len(item) < 4:
+                    continue
+                role = str(item[1]).upper()
+                if "ARG0" in role:
+                    a0_text = str(item[0])
+                elif "ARG1" in role:
+                    a1_text = str(item[0])
+                elif role == "PRED":
+                    pred_text = str(item[0])
+
+            if not a0_text or not a1_text or not pred_text:
+                continue
+
+            # ARG0 must be an entity
+            a0_entity = entity_by_text.get(a0_text)
+            if a0_entity is None:
+                continue
+
+            # Find all PARAMETER entities that are substrings of ARG1
+            matched = [p for p in param_entities if p in a1_text]
+            if not matched:
+                continue
+
+            # Assign each parameter as an attribute
+            for param_text in matched:
+                param_entity = entity_by_text.get(param_text)
+                if param_entity is None:
+                    continue
+                # Extract value from param text: "高强度" → key="强度", value="高"
+                # Simple heuristic: first char = value, rest = key
+                if len(param_text) >= 2:
+                    key = param_text[1:]   # "强度"
+                    value = param_text[0]  # "高"
+                else:
+                    key = param_text
+                    value = ""
+
+                attr = EntityAttribute(
+                    key=key,
+                    value=value,
+                    predicate_verb=pred_text,
+                    confidence=0.85,
+                )
+                a0_entity.attributes.append(attr)
