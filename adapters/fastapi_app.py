@@ -28,6 +28,15 @@ from pydantic import BaseModel, Field
 from core.analyzer import analyze
 from core.schema import NarrativeDocument
 
+
+def _apply_dict(pipeline, dict_words: list[str]):
+    """Apply custom dictionary to pipeline's tokenizer if words provided."""
+    if dict_words and hasattr(pipeline, '__getitem__'):
+        try:
+            pipeline['tok/fine'].dict_combine = set(dict_words)
+        except (KeyError, AttributeError):
+            pass
+
 # ---------------------------------------------------------------------------
 # FastAPI App
 # ---------------------------------------------------------------------------
@@ -55,6 +64,11 @@ class AnalyzeRequest(BaseModel):
     source: str = Field(
         default="hanlp_v2",
         description="NLP engine identifier",
+    )
+    dict_combine: list[str] = Field(
+        default=[],
+        description="Custom dictionary words to force-combine during tokenization (e.g. ['碳钢','高强度'])",
+        examples=[["碳钢", "高强度", "高韧性", "立方庭", "海淀区"]],
     )
 
 
@@ -96,7 +110,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
     This is the primary endpoint for manual testing and Studio prototyping.
     """
     try:
-        doc = analyze(request.text)
+        doc = analyze(request.text, dict_combine=set(request.dict_combine) if request.dict_combine else None)
         return AnalyzeResponse.from_doc(doc)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -116,6 +130,7 @@ async def analyze_dep(request: AnalyzeRequest):
     try:
         from core.analyzer import _get_modern_pipeline
         pipeline = _get_modern_pipeline()
+        _apply_dict(pipeline, request.dict_combine)
         raw = pipeline(request.text)
         tokens = [{"id": i, "text": t, "pos": raw.get("pos/ctb", [""] * len(raw["tok/fine"]))[i] if i < len(raw.get("pos/ctb", [])) else "X"}
                   for i, t in enumerate(raw.get("tok/fine", []))]
@@ -134,6 +149,7 @@ async def analyze_pretty(request: AnalyzeRequest):
     try:
         from core.analyzer import _get_modern_pipeline
         pipeline = _get_modern_pipeline()
+        _apply_dict(pipeline, request.dict_combine)
         raw = pipeline(request.text)
         from hanlp_common.document import Document
         doc = Document(raw)
@@ -210,6 +226,9 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</textarea>
 <button id="analyzeBtn" onclick="analyze()">🔍 分析</button>
 </div>
+<div class="input-area" style="margin-bottom:16px">
+<input id="dictInput" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
+</div>
 <div style="margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">
 <span style="font-size:11px;color:#484f58;line-height:24px">示例:</span>
 <button class="sample-btn" onclick="setSample('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。')">材料+地点</button>
@@ -231,6 +250,9 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 async function analyze(){
     const text=document.getElementById('input').value.trim();
     if(!text) return;
+    const dictRaw=document.getElementById('dictInput').value.trim();
+    const dictCombine=dictRaw?dictRaw.split(/[\s,，;；]+/).filter(w=>w) :[];
+    const body={text, dict_combine: dictCombine};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
     ['nsp','pretty','depsvg','json'].forEach(id=>document.getElementById(id).innerHTML='<div class="loading">⏳ 分析中...</div>');
@@ -238,9 +260,9 @@ async function analyze(){
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
     const [r1,r2,r3]=await Promise.all([
-        post('/analyze',{text}),
-        post('/analyze/pretty',{text}),
-        post('/analyze/dep',{text})
+        post('/analyze',body),
+        post('/analyze/pretty',body),
+        post('/analyze/dep',body)
     ]);
     if(r1._error) document.getElementById('nsp').innerHTML='<div class="error">分析失败: '+r1._error+'</div>';
     else renderNSP(r1);
@@ -255,7 +277,11 @@ async function analyze(){
 function renderNSP(data){
     if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
     const c=data.content;
-    const tokens=c.tokens.map(t=>`<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span}">${t.text}</span>`).join('');
+    const tokens=c.tokens.map(t=>{
+        const pct=Math.round((t.confidence||1)*100);
+        const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
+        return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}%">${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
+    }).join('');
 
     const entities=c.entities.map(e=>{
         const pct=Math.round((e.confidence||1)*100);

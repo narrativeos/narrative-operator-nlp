@@ -107,10 +107,17 @@ def _assess_quality(tokens: list[Token], raw: dict) -> bool:
 # Per-Segment Analysis
 # ---------------------------------------------------------------------------
 
-def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper
+def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
+                    dict_combine: Optional[set] = None
                     ) -> tuple[list, list, list, bool]:
     try:
-        raw = _get_modern_pipeline()(text)
+        pipeline = _get_modern_pipeline()
+        if dict_combine:
+            try:
+                pipeline['tok/fine'].dict_combine = dict_combine
+            except (KeyError, AttributeError):
+                pass
+        raw = pipeline(text)
     except Exception as exc:
         logger.warning("Modern pipeline failed: %s", exc)
         return [], [], [], False
@@ -179,7 +186,7 @@ def _normalize_lzh_keys(raw: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
-def analyze(text: str) -> NarrativeDocument:
+def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
 
@@ -213,12 +220,12 @@ def analyze(text: str) -> NarrativeDocument:
     all_tokens, all_entities, all_relations = [], [], []
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
-            tokens, entities, relations, ok = _analyze_classical(seg_text, seg_offset, mapper)
+            tokens, entities, relations, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
             if not ok and should_fallback(conf):
                 logger.info("Classical→Modern fallback for: %s...", seg_text[:20])
-                tokens, entities, relations, _ = _analyze_modern(seg_text, seg_offset, mapper)
+                tokens, entities, relations, _ = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
         else:
-            tokens, entities, relations, ok = _analyze_modern(seg_text, seg_offset, mapper)
+            tokens, entities, relations, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
             if not ok and should_fallback(conf):
                 logger.info("Modern→Classical fallback for: %s...", seg_text[:20])
                 tokens, entities, relations, _ = _analyze_classical(seg_text, seg_offset, mapper)

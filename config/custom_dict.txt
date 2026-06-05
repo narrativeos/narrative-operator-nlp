@@ -1,0 +1,30 @@
+# 自定义分词词典 — Custom Tokenization Dictionary
+# 每行一个词，以 # 开头的行为注释
+# HanLP dict_combine 会将模型输出中连续匹配的 token 合并为一个词
+# 格式：每行一个词
+
+# === 材料 / Materials ===
+碳钢
+不锈钢
+合金钢
+高强度
+高韧性
+低碳钢
+钛合金
+
+# === 地名 / Locations ===
+立方庭
+海淀区
+中关村
+
+# === 组织机构 / Organizations ===
+北京大学
+清华大学
+中国科学院
+
+# === 通用复合词 / General Compounds ===
+人工智能
+自然语言处理
+机器学习
+深度学习
+神经网络
