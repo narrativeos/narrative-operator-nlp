@@ -373,7 +373,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 </div>
 </div>
 <div class="input-area" style="margin-bottom:16px">
-<input id="dictInput" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
+<input id="dictInput" value="碳钢 高强度 高韧性 立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
 </div>
 <div style="margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">
 <span style="font-size:11px;color:#484f58;line-height:24px">示例:</span>
