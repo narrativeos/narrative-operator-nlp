@@ -200,8 +200,7 @@ class HanlpSchemaMapper:
 
             if not frames:
                 # Sentence with no SRL — still emit a pattern with syntactic features
-                # Estimate word count from sentence length (~2 chars/word for Chinese)
-                est_words = len(sent.strip()) // 2
+                est_words = _count_sentence_words(sent, raw)
                 patterns.append(SentencePattern(
                     sentence=sent,
                     sentence_type=_detect_sentence_type(sent),
@@ -271,7 +270,7 @@ class HanlpSchemaMapper:
                 predicates=preds,
                 relation_summary=rel_summaries,
                 attribute_count=attr_count,
-                word_count=len(raw.get("tok/fine", [])),
+                word_count=_count_sentence_words(sent, raw),
                 clause_count=_count_clauses(sent),
                 punctuation_mark=_sentence_punct(sent),
                 limitations=_collect_limitations(sent, frames),
@@ -377,6 +376,33 @@ def _count_clauses(text: str) -> int:
 def _sentence_punct(text: str) -> str:
     last = text.strip()[-1] if text.strip() else ""
     return last if last in "。？！" else ""
+
+
+def _count_sentence_words(sentence: str, raw: dict) -> int:
+    """Count tokens from NLP output that belong to this sentence, by text position."""
+    tok_fine = raw.get("tok/fine", [])
+    if not tok_fine:
+        return len(sentence.strip()) // 2  # fallback estimate
+
+    # Reconstruct token positions using same logic as _map_tokens
+    # but for the full text; then count tokens falling within sentence span
+    text = "".join(tok_fine)  # HanLP fine-grained tokens reconstruct the text
+    sent_start = text.find(sentence)
+    if sent_start < 0:
+        return len(sentence.strip()) // 2
+    sent_end = sent_start + len(sentence)
+
+    count = 0
+    cursor = 0
+    for t in tok_fine:
+        idx = text.find(t, cursor)
+        if idx >= 0:
+            if sent_start <= idx < sent_end:
+                count += 1
+            cursor = idx + len(t)
+        else:
+            cursor += len(t)
+    return count
 
 
 def _collect_limitations(text: str, frames: list) -> list[str]:

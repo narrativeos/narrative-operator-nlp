@@ -337,6 +337,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .pattern-table{width:100%;border-collapse:collapse;font-size:12px}
 .pattern-table th{text-align:left;padding:6px 8px;color:#8b949e;border-bottom:1px solid #30363d;font-weight:normal}
 .pattern-table td{padding:6px 8px;border-bottom:1px solid #21262d}
+.pattern-table .sent{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pattern-table .tpl{color:#7ee787;font-family:monospace}
 .pattern-table .pred{color:#e3b341}
 .pattern-table .rel{color:#58a6ff}
@@ -603,28 +604,23 @@ function renderPatterns(patterns){
     if(!patterns||!patterns.length){ document.getElementById('patterns').innerHTML='<div class="card"><span style="color:#484f58">无句式数据</span></div>'; return; }
 
     const rows=patterns.map(p=>{
-        const tags=[];
-        if(p.sentence_type!=='declarative') tags.push(`<span class="tag">${p.sentence_type}</span>`);
-        if(p.structural_type&&p.structural_type!=='subject_predicate') tags.push(`<span class="tag structural">${esc(p.structural_type)}</span>`);
-        if(p.sentence_length_tier) tags.push(`<span class="tag tier">${esc(p.sentence_length_tier)}</span>`);
         const rels=p.relation_summary.join(', ')||'-';
-        // Only NLP-derived hints survive (SRL-based serial_verb)
-        const L = p.limitations||[];
-        if(L.includes('hint:serial_verb')) tags.push(`<span class="tag">⚠连动</span>`);
-        // All other features (negation, passive, ba, imperative, parallel, etc.)
-        // are NOT computable from HanLP MTL output — documented for downstream.
-        const limits=L.length
-          ? p.limitations.map(l=>`<span class="tag limit" title="NLP无法确定，留给下游">⚠${esc(l)}</span>`).join(' ')
-          : '<span style="color:#484f58">-</span>';
+        const structTag = p.structural_type==='unknown' 
+            ? '<span class="tag structural">?</span>'
+            : p.structural_type==='subject_predicate'
+                ? '<span class="tag active">主谓</span>'
+                : '<span class="tag structural">非主谓</span>';
+        const sentAbbr = p.sentence.length > 28 ? p.sentence.slice(0,26)+'…' : p.sentence;
         return `<tr>
-          <td class="tpl">${esc(p.template)}</td>
-          <td class="pred">${esc(p.predicates.join(', '))}</td>
+          <td class="sent" title="${esc(p.sentence)}">${esc(sentAbbr)}</td>
+          <td class="tpl">${esc(p.template)||'<span style="color:#484f58">—</span>'}</td>
+          <td class="pred">${esc(p.predicates.join(', '))||'<span style="color:#484f58">—</span>'}</td>
           <td class="rel">${esc(rels)}</td>
-          <td style="color:#484f58">${p.attribute_count>0?'⚡'+p.attribute_count:'-'}</td>
-          <td style="color:#484f58">${p.word_count||'-'}</td>
-          <td style="color:#484f58">${p.clause_count||'-'}</td>
-          <td>${tags.join('')||'<span style="color:#484f58">-</span>'}</td>
-          <td>${limits}</td>
+          <td style="text-align:center">${structTag}</td>
+          <td style="text-align:center;color:#484f58">${p.attribute_count>0?'⚡'+p.attribute_count:'0'}</td>
+          <td style="text-align:center;color:#484f58">${p.word_count||'-'}</td>
+          <td style="text-align:center;color:#484f58">${p.clause_count||'-'}</td>
+          <td style="text-align:center"><span class="tag tier">${esc(p.sentence_length_tier)}</span></td>
         </tr>`;
     }).join('');
 
@@ -634,14 +630,15 @@ function renderPatterns(patterns){
       <div style="overflow-x:auto">
       <table class="pattern-table">
         <thead><tr>
+          <th>句子</th>
           <th>模板 Template</th>
           <th>谓词</th>
           <th>关系</th>
+          <th>结构</th>
           <th>属性</th>
           <th>词数</th>
           <th>分句</th>
-          <th>特征</th>
-          <th>限制/下游</th>
+          <th>句长</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
