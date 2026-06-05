@@ -32,7 +32,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # Layer 2: copy app and install narrative extras
 COPY . .
-RUN pip install --no-cache-dir -e ".[narrative]"
+RUN pip install --no-cache-dir -e ".[narrative]" \
+    && pip install --no-cache-dir -e plugins/hanlp_common
 
 # ── Environment ──────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1
