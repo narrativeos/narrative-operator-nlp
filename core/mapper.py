@@ -164,41 +164,63 @@ class HanlpSchemaMapper:
 
     def _build_patterns(self, text: str, raw: dict, entities: list,
                         relations: list) -> list:
-        """Build sentence-level structural patterns for statistical aggregation."""
+        """Build sentence-level structural patterns for statistical aggregation.
+
+        Each sentence (split by 。！？) gets one pattern combining all its SRL frames.
+        """
         from .schema import SentencePattern
+        import re
+
+        srl_frames = [f for f in raw.get("srl", []) if isinstance(f, list)]
+        if not srl_frames:
+            return []
+
+        # Split into sentences
+        sentences = re.split(r"(?<=[。！？])", text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        # Group SRL frames by which sentence their ARG0 appears in
+        sent_frames: list[list] = [[] for _ in sentences]
+        for f in srl_frames:
+            a0 = ""
+            for item in f:
+                if len(item) >= 4 and str(item[1]).upper() == "ARG0":
+                    a0 = str(item[0])
+                    break
+            if not a0:
+                continue
+            for si, sent in enumerate(sentences):
+                if a0 in sent:
+                    sent_frames[si].append(f)
+                    break
 
         patterns: list = []
-        for f in raw.get("srl", []):
-            if not isinstance(f, list):
+        for si, frames in enumerate(sent_frames):
+            if not frames:
                 continue
 
-            preds: list[str] = []
-            entity_cats: list[str] = []
-            for item in f:
-                if len(item) < 4:
-                    continue
-                role = str(item[1]).upper()
-                itxt = str(item[0])
-                if role == "PRED":
-                    preds.append(itxt)
-                if role in ("ARG0", "ARG1"):
-                    # ARG text already tells us the entity span — just match by text
-                    matched_cat = None
-                    for e in entities:
-                        if e.text == itxt or e.text in itxt:
-                            matched_cat = e.category
-                            break
-                    entity_cats.append(matched_cat or "?")
+            sent = sentences[si]
+            preds, entity_cats, rel_summaries = [], [], []
+
+            for f in frames:
+                for item in f:
+                    if len(item) < 4:
+                        continue
+                    role = str(item[1]).upper()
+                    itxt = str(item[0])
+                    if role == "PRED":
+                        preds.append(itxt)
+                    if role in ("ARG0", "ARG1"):
+                        mc = None
+                        for e in entities:
+                            if e.text == itxt or e.text in itxt:
+                                mc = e.category
+                                break
+                        entity_cats.append(mc or "?")
 
             if not preds:
                 continue
 
-            template = " ".join(
-                f"{entity_cats[i // 2] if i % 2 == 0 else preds[i // 2]}"
-                if i < len(entity_cats) * 2 - 1 else ""
-                for i in range(len(entity_cats) * 2 - 1)
-            )
-            # Simpler: interleave
             parts: list[str] = []
             for i in range(max(len(entity_cats), len(preds))):
                 if i < len(entity_cats):
@@ -207,37 +229,26 @@ class HanlpSchemaMapper:
                     parts.append(preds[i])
             template = " ".join(parts)
 
-            # Relation summary
-            rel_summaries: list[str] = []
             for r in relations:
                 if r.predicate_verb in preds:
                     rel_summaries.append(f"{r.subject}→{r.predicate_verb}→{r.object}")
 
             attr_count = sum(len(e.attributes) for e in entities)
 
-            # ── Auto-detect syntactic features ──
-            sentence_type = _detect_sentence_type(text)
-            polarity = _detect_polarity(text)
-            voice = _detect_voice(text)
-            sub_types = _detect_sub_types(text)
-            word_count = len(raw.get("tok/fine", []))
-            clause_count = _count_clauses(text)
-            punct = _sentence_punct(text)
-
             patterns.append(SentencePattern(
-                sentence=text,
-                sentence_type=sentence_type,
-                polarity=polarity,
-                voice=voice,
-                sub_types=sub_types,
+                sentence=sent,
+                sentence_type=_detect_sentence_type(sent),
+                polarity=_detect_polarity(sent),
+                voice=_detect_voice(sent),
+                sub_types=_detect_sub_types(sent),
                 template=template,
                 entity_sequence=entity_cats,
                 predicates=preds,
                 relation_summary=rel_summaries,
                 attribute_count=attr_count,
-                word_count=word_count,
-                clause_count=clause_count,
-                punctuation_mark=punct,
+                word_count=len(raw.get("tok/fine", [])),
+                clause_count=_count_clauses(sent),
+                punctuation_mark=_sentence_punct(sent),
             ))
 
         return patterns
