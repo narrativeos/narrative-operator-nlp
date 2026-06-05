@@ -215,13 +215,71 @@ class HanlpSchemaMapper:
 
             attr_count = sum(len(e.attributes) for e in entities)
 
+            # ── Auto-detect syntactic features ──
+            sentence_type = _detect_sentence_type(text)
+            polarity = _detect_polarity(text)
+            voice = _detect_voice(text)
+            sub_types = _detect_sub_types(text)
+            word_count = len(raw.get("tok/fine", []))
+            clause_count = _count_clauses(text)
+            punct = _sentence_punct(text)
+
             patterns.append(SentencePattern(
                 sentence=text,
+                sentence_type=sentence_type,
+                polarity=polarity,
+                voice=voice,
+                sub_types=sub_types,
                 template=template,
                 entity_sequence=entity_cats,
                 predicates=preds,
                 relation_summary=rel_summaries,
                 attribute_count=attr_count,
+                word_count=word_count,
+                clause_count=clause_count,
+                punctuation_mark=punct,
             ))
 
         return patterns
+
+
+# ── Syntactic feature detectors ──
+
+def _detect_sentence_type(text: str) -> str:
+    last = text.strip()[-1] if text.strip() else ""
+    if last == "？":
+        return "interrogative"
+    if last == "！":
+        return "exclamatory"
+    return "declarative"
+
+
+def _detect_polarity(text: str) -> str:
+    for neg in ("不", "没", "无", "非", "未", "别", "莫", "勿"):
+        if neg in text:
+            return "negative"
+    return "affirmative"
+
+
+def _detect_voice(text: str) -> str:
+    if "被" in text:
+        return "passive"
+    return "active"
+
+
+def _detect_sub_types(text: str) -> list[str]:
+    types: list[str] = []
+    if "把" in text:
+        types.append("ba_construction")
+    if "被" in text:
+        types.append("bei_construction")
+    return types
+
+
+def _count_clauses(text: str) -> int:
+    return max(1, text.count("，") + text.count("；") + 1)
+
+
+def _sentence_punct(text: str) -> str:
+    last = text.strip()[-1] if text.strip() else ""
+    return last if last in "。？！" else ""

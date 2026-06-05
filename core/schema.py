@@ -179,13 +179,48 @@ class Relation(BaseModel):
 # ── Sentence Pattern ──
 
 class SentencePattern(BaseModel):
-    """Structural pattern of a sentence for statistical aggregation."""
+    """Structural pattern of a sentence for statistical aggregation.
+
+    Combines syntactic features (sentence type, polarity, voice, ...)
+    with NLP-derived semantic structure (entity sequence, predicates).
+    """
+
+    # ── Basic Info ──
     sentence: str = Field(default="", description="Original sentence text")
-    template: str = Field(default="", description="Entity-category template, e.g. 'MATERIAL 是 MATERIAL'")
-    entity_sequence: list[str] = Field(default_factory=list, description="Ordered entity categories")
+
+    # ── Syntactic Structure ──
+    sentence_type: str = Field(
+        default="declarative",
+        description="declarative|interrogative|imperative|exclamatory — from ending punctuation"
+    )
+    polarity: str = Field(
+        default="affirmative",
+        description="affirmative|negative — from negator presence"
+    )
+    voice: str = Field(
+        default="active",
+        description="active|passive — from 被/把 construction"
+    )
+    sub_types: list[str] = Field(
+        default_factory=list,
+        description="Special construction labels: ba_construction, bei_construction, serial_verb, pivotal, ellipsis"
+    )
+    rhetorical_form: str = Field(
+        default="none",
+        description="none|parallel|loose — rhetorical structure"
+    )
+
+    # ── NLP-derived Semantic Structure ──
+    template: str = Field(default="", description="Entity-category + predicate template, e.g. 'MATERIAL 是 MATERIAL'")
+    entity_sequence: list[str] = Field(default_factory=list, description="Ordered entity categories from SRL ARGs")
     predicates: list[str] = Field(default_factory=list, description="SRL predicate verbs in this sentence")
     relation_summary: list[str] = Field(default_factory=list, description="Relation summaries, e.g. '碳钢→是→钢'")
     attribute_count: int = Field(default=0, description="Number of entity attributes assigned")
+
+    # ── Statistical Metadata ──
+    word_count: int = Field(default=0, ge=0, description="Token count")
+    clause_count: int = Field(default=1, ge=1, description="Clause count (comma/semicolon segments + 1)")
+    punctuation_mark: str = Field(default="", description="Sentence-ending punctuation mark")
 
 
 # ---------------------------------------------------------------------------
