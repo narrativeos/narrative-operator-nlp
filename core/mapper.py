@@ -247,7 +247,7 @@ class HanlpSchemaMapper:
                 if i < len(entity_cats):
                     parts.append(entity_cats[i])
                 if i < len(preds):
-                    parts.append(preds[i])
+                    parts.append("谓词")
             template = " ".join(parts)
 
             for r in relations:
