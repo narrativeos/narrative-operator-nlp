@@ -93,15 +93,9 @@ class RelationExtractionRules:
     # ── SRL Extraction (primary) ──
 
     def extract_from_srl(self, frame: list, tokens: list,
-                         text: str = "") -> Optional[Relation]:
-        """Extract relation from SRL frame.
-
-        Handles multiple argument patterns:
-        - ARG0 + PRED + ARG1           → RELATES_TO (transitive)
-        - ARG1 + PRED + ARG2           → RELATES_TO (copular)
-        - ARG0 + PRED + ARGM-LOC       → LOCATED_AT
-        - ARG0 + PRED                  → RELATES_TO (intransitive, bare)
-        """
+                         text: str = "") -> list[Relation]:
+        """Extract relations from SRL frame. One frame can yield
+        multiple relations (e.g. ARG0→ARG1 + ARG1→ARGM-LOC)."""
         args: dict[str, tuple[str, tuple]] = {}
         pred_text = ""
 
@@ -126,38 +120,36 @@ class RelationExtractionRules:
         a2 = args.get("arg2")
         loc = args.get("argm-loc")
 
-        # ── Choose subject/object pair ──
+        # ── Generate all applicable relation pairs ──
+        pairs: list[tuple[tuple, str]] = []
         if a0 and a1:
-            subj, obj = a0, a1
-            predicate = "RELATES_TO"
-        elif a1 and a2:
-            subj, obj = a1, a2
-            predicate = "RELATES_TO"
-        elif a0 and loc:
-            subj, obj = a0, loc
-            predicate = "LOCATED_AT"
-        elif a0:
-            subj, obj = a0, (pred_text, a0[1]) if pred_text else a0
-            predicate = "RELATES_TO"
-        else:
-            return None
+            pairs.append((a0, a1, "RELATES_TO"))
+        if a1 and a2:
+            pairs.append((a1, a2, "RELATES_TO"))
+        if a0 and loc:
+            pairs.append((a0, loc, "LOCATED_AT"))
+        if a1 and loc:
+            pairs.append((a1, loc, "LOCATED_AT"))
 
-        evidence = _span_between(subj[1], obj[1], text)
-        if not evidence:
-            evidence = f"{subj[0]} {pred_text} {obj[0]}"
+        relations = []
+        for subj, obj, predicate in pairs:
+            evidence = _span_between(subj[1], obj[1], text)
+            if not evidence:
+                evidence = f"{subj[0]} {pred_text} {obj[0]}"
 
-        self._counter += 1
-        return Relation(
-            id=f"rel_{self._counter:03d}",
-            subject=subj[0].strip(),
-            predicate=predicate,
-            predicate_verb=pred_text,
-            object=obj[0].strip(),
-            evidence=evidence,
-            evidence_span=(min(subj[1][0], obj[1][0]), max(subj[1][1], obj[1][1])),
-            confidence=0.60,
-            source=f"srl/{pred_text}",
-        )
+            self._counter += 1
+            relations.append(Relation(
+                id=f"rel_{self._counter:03d}",
+                subject=subj[0].strip(),
+                predicate=predicate,
+                predicate_verb=pred_text,
+                object=obj[0].strip(),
+                evidence=evidence,
+                evidence_span=(min(subj[1][0], obj[1][0]), max(subj[1][1], obj[1][1])),
+                confidence=0.60,
+                source=f"srl/{pred_text}",
+            ))
+        return relations
 
     # ── DEP Extraction (supplementary, amod only) ──
 
@@ -304,8 +296,8 @@ class RelationExtractionRules:
         if has_srl:
             for f in raw.get("srl", []):
                 if isinstance(f, list):
-                    rel = self.extract_from_srl(f, tokens, text)
-                    if rel:
+                    rels = self.extract_from_srl(f, tokens, text)
+                    for rel in rels:
                         rel = self._entity_normalize(rel, entity_texts, strict=False)
                         if rel:
                             relations.append(rel)
