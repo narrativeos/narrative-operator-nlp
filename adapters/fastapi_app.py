@@ -433,13 +433,15 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <label class="lang-option active" id="langAuto" onclick="setLanguage('auto')"><input type="radio" name="lang" value="auto" checked>🔄 自动识别</label>
 <label class="lang-option" id="langModern" onclick="setLanguage('modern')"><input type="radio" name="lang" value="modern">📄 现代汉语</label>
 <label class="lang-option" id="langClassical" onclick="setLanguage('classical')"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
+<label class="lang-option" id="langEnglish" onclick="setLanguage('english')"><input type="radio" name="lang" value="english">🇬🇧 English</label>
 </div>
 <div style="margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">
 <span style="font-size:11px;color:#484f58;line-height:24px">示例:</span>
-<button class="sample-btn" onclick="setSample('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。')">材料+地点</button>
-<button class="sample-btn" onclick="setSample('阿婆主来到北京立方庭参观自然语义科技公司。')">组织机构</button>
-<button class="sample-btn" onclick="setSample('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。')">🏯 古汉语</button>
-<button class="sample-btn" onclick="setSample('2021年HanLPv2.1为生产环境带来次世代最先进的多语种NLP技术。')">多任务</button>
+<button class="sample-btn" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">材料+地点</button>
+<button class="sample-btn" onclick="setLanguageAndAnalyze('阿婆主来到北京立方庭参观自然语义科技公司。','auto')">组织机构</button>
+<button class="sample-btn" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。','classical')">🏯 古汉语</button>
+<button class="sample-btn" onclick="setLanguageAndAnalyze('The cat sat on the mat. This is a simple test sentence.','english')">🇬🇧 English</button>
+<button class="sample-btn" onclick="setLanguageAndAnalyze('2021年HanLPv2.1为生产环境带来次世代最先进的多语种NLP技术。','auto')">多任务</button>
 </div>
 <div class="tabs">
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
@@ -807,6 +809,11 @@ function setSample(text){
     analyze();
 }
 
+function setLanguageAndAnalyze(text, lang){
+    document.getElementById('input').value=text;
+    setLanguage(lang);
+}
+
 function renderAPIDocs(){
     if(document.querySelector('#api .api-endpoint')) return; // already rendered
     const endpoints=[
@@ -891,8 +898,21 @@ window.toggleEndpoint=function(i){
 function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 const esc=escapeHtml;
 
-// Auto-analyze on load
-window.onload=analyze;
+// On load: analyze default text, then warm up classical + English models
+window.onload=async function(){
+    await analyze();
+    // Warm up classical
+    document.getElementById('input').value='北冥有鱼，其名为鲲。鲲之大，不知其几千里也。';
+    setLanguage('classical');
+    // Warm up English (wait for classical to finish)
+    await new Promise(r=>setTimeout(r,500));
+    document.getElementById('input').value='The cat sat on the mat. This is a simple test sentence.';
+    setLanguage('english');
+    // Restore default
+    await new Promise(r=>setTimeout(r,500));
+    document.getElementById('input').value='碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。';
+    setLanguage('auto');
+};
 </script>
 </body>
 </html>"""
