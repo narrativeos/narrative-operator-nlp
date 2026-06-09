@@ -43,24 +43,19 @@ def _get_english_pipeline():
     global _english_pipeline
     if _english_pipeline is None:
         import hanlp
-        url = "https://file.hankcs.com/hanlp/mtl/en_tok_lem_pos_ner_srl_udep_sdp_con_modernbert_base_prepend_false_20241229_053838.zip"
         try:
-            _english_pipeline = hanlp.load(url)
+            _english_pipeline = hanlp.load(
+                hanlp.pretrained.mtl.EN_TOK_LEM_POS_NER_SRL_UDEP_SDP_CON_MODERNBERT_BASE
+            )
             logger.info("English HanLP pipeline loaded (MODERNBERT-base).")
         except Exception as exc:
             logger.warning(
-                "English pipeline not available (need hanlp>=2.1.0): %s. "
-                "Pull upstream commits: git pull upstream main",
+                "English pipeline not available: %s. "
+                "Run: python scripts/setup_models.py --model LZH",
                 exc,
             )
             return None
     return _english_pipeline
-
-
-_LZH_MODEL_URL = (
-    "https://file.hankcs.com/hanlp/mtl/"
-    "kyoto_evahan_tok_lem_pos_udep_bert-ancient-chinese_lr_1_aug_dict_20250112_154422.zip"
-)
 
 
 def _get_classical_pipeline():
@@ -68,22 +63,17 @@ def _get_classical_pipeline():
     if _classical_pipeline is None:
         import hanlp
         try:
-            # Try the published pretrained constant first (future HanLP versions)
             _classical_pipeline = hanlp.load(
                 hanlp.pretrained.mtl.KYOTO_EVAHAN_TOK_LEM_POS_UDEP_LZH
             )
-        except AttributeError:
-            # Fallback: load by direct URL (current HanLP version)
-            try:
-                _classical_pipeline = hanlp.load(_LZH_MODEL_URL)
-            except Exception as exc:
-                logger.warning(
-                    "Classical Chinese model (LZH) not available: %s. "
-                    "Install with: python scripts/setup_models.py --model LZH",
-                    exc,
-                )
-                return None
-        logger.info("Classical Chinese HanLP pipeline loaded (KYOTO-EVAHAN).")
+            logger.info("Classical Chinese HanLP pipeline loaded (KYOTO-EVAHAN).")
+        except Exception as exc:
+            logger.warning(
+                "Classical Chinese model (LZH) not available: %s. "
+                "Run: python scripts/setup_models.py --model LZH",
+                exc,
+            )
+            return None
     return _classical_pipeline
 
 
