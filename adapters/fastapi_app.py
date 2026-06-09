@@ -405,15 +405,50 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .source-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
 .source-dot.hanlp_v2{background:#58a6ff}
 .source-dot.hanlp_lzh{background:#e3b341}
+/* Model Status Indicators */
+.model-status{display:flex;gap:12px;margin:8px 0 12px;flex-wrap:wrap}
+.model-status .stat{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;background:#161b22;border:1px solid #30363d}
+.model-status .stat .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.model-status .stat .dot.idle{background:#30363d}
+.model-status .stat .dot.loading{background:#e3b341;animation:pulse 1s infinite}
+.model-status .stat .dot.ready{background:#7ee787}
+.model-status .stat .dot.error{background:#f85149}
+@keyframes pulse{0%,100%{opacity:0.4}50%{opacity:1}}
+/* Sample Language Cards */
+.sample-cards{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.sample-card{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#21262d;border:1px solid #30363d;border-radius:8px;cursor:pointer;transition:all .2s;font-size:12px;color:#c9d1d9;flex:1;min-width:160px}
+.sample-card:hover{border-color:#58a6ff;background:#1a3a5c;color:#58a6ff}
+.sample-card .lang-tag{font-size:10px;padding:1px 6px;border-radius:4px;background:#1a3a1a;color:#7ee787}
+.sample-card .lang-tag.classical{background:#3a2a1a;color:#e3b341}
+.sample-card .lang-tag.english{background:#1a1a3a;color:#79c0ff}
+.sample-card .preview{color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
 <header>
 <h1>🧠 Narrative Operator NLP</h1>
 <span>HanLP MTL Demo</span>
-<span style="margin-left:auto;font-size:12px;color:#8b949e">Python 3.10 · ELECTRA_SMALL</span>
 </header>
 <main>
+<div class="model-status" id="modelStatus">
+<div class="stat" id="statusModern"><span class="dot idle" id="dotModern"></span>🌐 现代模型 <span id="labelModern">等待中</span></div>
+<div class="stat" id="statusClassical"><span class="dot idle" id="dotClassical"></span>🏯 古汉语  <span id="labelClassical">等待中</span></div>
+<div class="stat" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span>🇬🇧 英文模型 <span id="labelEnglish">等待中</span></div>
+</div>
+<div class="sample-cards" id="sampleCards">
+<div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
+  <span class="lang-tag">📄 现代</span>
+  <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。','classical')">
+  <span class="lang-tag classical">🏯 古汉语</span>
+  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('The cat sat on the mat. This is a simple test sentence.','english')">
+  <span class="lang-tag english">🇬🇧 英文</span>
+  <span class="preview">The cat sat on the mat. This is a simple test sentence.</span>
+</div>
+</div>
 <div class="input-area">
 <textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</textarea>
 <div style="display:flex;flex-direction:column;gap:6px">
@@ -434,14 +469,6 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <label class="lang-option" id="langModern" onclick="setLanguage('modern')"><input type="radio" name="lang" value="modern">📄 现代汉语</label>
 <label class="lang-option" id="langClassical" onclick="setLanguage('classical')"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
 <label class="lang-option" id="langEnglish" onclick="setLanguage('english')"><input type="radio" name="lang" value="english">🇬🇧 English</label>
-</div>
-<div style="margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">
-<span style="font-size:11px;color:#484f58;line-height:24px">示例:</span>
-<button class="sample-btn" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">材料+地点</button>
-<button class="sample-btn" onclick="setLanguageAndAnalyze('阿婆主来到北京立方庭参观自然语义科技公司。','auto')">组织机构</button>
-<button class="sample-btn" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。','classical')">🏯 古汉语</button>
-<button class="sample-btn" onclick="setLanguageAndAnalyze('The cat sat on the mat. This is a simple test sentence.','english')">🇬🇧 English</button>
-<button class="sample-btn" onclick="setLanguageAndAnalyze('2021年HanLPv2.1为生产环境带来次世代最先进的多语种NLP技术。','auto')">多任务</button>
 </div>
 <div class="tabs">
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
@@ -898,21 +925,53 @@ window.toggleEndpoint=function(i){
 function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 const esc=escapeHtml;
 
-// On load: analyze default text, then warm up classical + English models
+// On load: warm up all three models in parallel, show loading status
 window.onload=async function(){
-    await analyze();
-    // Warm up classical
-    document.getElementById('input').value='北冥有鱼，其名为鲲。鲲之大，不知其几千里也。';
-    setLanguage('classical');
-    // Warm up English (wait for classical to finish)
-    await new Promise(r=>setTimeout(r,500));
-    document.getElementById('input').value='The cat sat on the mat. This is a simple test sentence.';
-    setLanguage('english');
-    // Restore default
-    await new Promise(r=>setTimeout(r,500));
+    _setModelStatus('modern','loading','⏳ 加载中…');
+    _setModelStatus('classical','loading','⏳ 加载中…');
+    _setModelStatus('english','loading','⏳ 加载中…');
+
+    // Modern Chinese
+    try{
+        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。',language:'auto'})});
+        const d=await r.json();
+        _setModelStatus('modern','ready','✅ 已就绪');
+        _renderResults(d);
+    }catch(e){_setModelStatus('modern','error','❌ 失败');}
+
+    // Classical Chinese
+    try{
+        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'北冥有鱼，其名为鲲。鲲之大，不知其几千里也。',language:'classical'})});
+        await r.json();
+        _setModelStatus('classical','ready','✅ 已就绪');
+    }catch(e){_setModelStatus('classical','error','❌ 失败');}
+
+    // English
+    try{
+        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'The cat sat on the mat. This is a simple test sentence.',language:'english'})});
+        await r.json();
+        _setModelStatus('english','ready','✅ 已就绪');
+    }catch(e){_setModelStatus('english','error','❌ 失败');}
+
+    // Restore input to modern sample
     document.getElementById('input').value='碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。';
     setLanguage('auto');
 };
+
+function _setModelStatus(model,state,label){
+    const dot=document.getElementById('dot'+model.charAt(0).toUpperCase()+model.slice(1));
+    const lbl=document.getElementById('label'+model.charAt(0).toUpperCase()+model.slice(1));
+    if(dot){dot.className='dot '+state;}
+    if(lbl){lbl.textContent=label;}
+}
+
+function _renderResults(data){
+    renderNSP(data);
+    renderJSON(data);
+    const patData=data.content&&data.content.patterns;
+    if(patData&&patData.length) renderPatterns(patData);
+    renderLangDetect(data);
+}
 </script>
 </body>
 </html>"""
