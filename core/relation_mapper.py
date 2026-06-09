@@ -154,7 +154,7 @@ class RelationExtractionRules:
             predicate_verb=pred_text,
             object=obj[0].strip(),
             evidence=evidence,
-            evidence_span=(subj[1][0], obj[1][1]),
+            evidence_span=(min(subj[1][0], obj[1][0]), max(subj[1][1], obj[1][1])),
             confidence=0.60,
             source=f"srl/{pred_text}",
         )
