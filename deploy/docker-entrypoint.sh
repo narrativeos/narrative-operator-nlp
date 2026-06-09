@@ -28,10 +28,6 @@ else
     python scripts/setup_models.py --model MTL
 fi
 
-# LZH (classical Chinese) — model not yet published in this HanLP version
-echo "  ℹ️  LZH (古汉语) — 模型暂未发布，检测后回退到现代模型"
-echo "     Per-sentence detection works; routing falls back to modern"
-
 echo "  Models cached at $HANLP_HOME"
 
 # ── Launch Service ────────────────────────────────────────────

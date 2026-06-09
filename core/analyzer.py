@@ -48,7 +48,11 @@ def _get_english_pipeline():
             _english_pipeline = hanlp.load(url)
             logger.info("English HanLP pipeline loaded (MODERNBERT-base).")
         except Exception as exc:
-            logger.warning("English pipeline not available: %s", exc)
+            logger.warning(
+                "English pipeline not available (need hanlp>=2.1.0): %s. "
+                "Pull upstream commits: git pull upstream main",
+                exc,
+            )
             return None
     return _english_pipeline
 
