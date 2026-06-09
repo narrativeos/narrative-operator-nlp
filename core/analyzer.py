@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Optional
 
-from .language_detector import classify, classical_confidence
+from .language_detector import detect_language, classical_confidence, LanguageClass
 from .mapper import HanlpSchemaMapper
 from .schema import NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _modern_pipeline: Optional[object] = None
 _classical_pipeline: Optional[object] = None
+_english_pipeline: Optional[object] = None
 _mapper: Optional[HanlpSchemaMapper] = None
 
 
@@ -36,6 +37,20 @@ def _get_modern_pipeline():
         )
         logger.info("Modern Chinese HanLP pipeline loaded (ELECTRA-small).")
     return _modern_pipeline
+
+
+def _get_english_pipeline():
+    global _english_pipeline
+    if _english_pipeline is None:
+        import hanlp
+        url = "https://file.hankcs.com/hanlp/mtl/en_tok_lem_pos_ner_srl_udep_sdp_con_modernbert_base_prepend_false_20241229_053838.zip"
+        try:
+            _english_pipeline = hanlp.load(url)
+            logger.info("English HanLP pipeline loaded (MODERNBERT-base).")
+        except Exception as exc:
+            logger.warning("English pipeline not available: %s", exc)
+            return None
+    return _english_pipeline
 
 
 _LZH_MODEL_URL = (
@@ -168,6 +183,28 @@ def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
             doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
 
 
+def _analyze_english(text: str, offset: int, mapper: HanlpSchemaMapper
+                     ) -> tuple[list, list, list, list, bool]:
+    try:
+        pipeline = _get_english_pipeline()
+        if pipeline is None:
+            raise RuntimeError("English pipeline not loaded")
+        raw = pipeline(text)
+    except (AttributeError, ImportError, RuntimeError):
+        logger.warning("English model not available. Skipping.")
+        return [], [], [], [], False
+    except Exception as exc:
+        logger.warning("English pipeline failed: %s", exc)
+        return [], [], [], [], False
+    # English model uses standard UD keys, map directly
+    doc = mapper.map(text, raw, source="en_modernbert")
+    _apply_offset(doc, offset)
+    for t in doc.content.tokens:
+        t.source = "en_modernbert"
+    return (doc.content.tokens, doc.content.entities, doc.content.relations,
+            doc.content.patterns, _assess_quality(doc.content.tokens, raw))
+
+
 def _apply_offset(doc: NarrativeDocument, offset: int):
     for t in doc.content.tokens:
         t.span = (t.span[0] + offset, t.span[1] + offset)
@@ -216,16 +253,17 @@ def analyze(text: str, dict_combine: Optional[set] = None,
     Analyze text with automatic language detection and model routing.
 
     Args:
-        text: Raw Chinese text to analyze.
+        text: Raw text to analyze (Chinese or English).
         dict_combine: Optional set of words to force-combine during tokenization.
         language: Language mode:
-            - "auto" (default): per-sentence detection with fallback
+            - "auto" (default): per-sentence detection
             - "modern": force modern Chinese pipeline
             - "classical": force classical Chinese pipeline
+            - "english": force English pipeline
 
-    Modern Chinese → MTL (ELECTRA-small)
+    Modern Chinese  → MTL (ELECTRA-small)
     Classical Chinese → LZH (KYOTO-EVAHAN)
-    Mixed text → per-sentence routing with fallback
+    English          → MODERNBERT-base
 
     Returns a single NarrativeDocument with global offsets.
     """
@@ -240,7 +278,7 @@ def analyze(text: str, dict_combine: Optional[set] = None,
         # Group consecutive same-language sentences
         segments: list[tuple[str, int, str, float]] = []
         for sent_text, sent_offset in sentences:
-            lang, conf = classify(sent_text)
+            lang, conf = detect_language(sent_text)
             segments.append((sent_text, sent_offset, lang, conf))
             language_sentences.append({
                 "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
@@ -255,7 +293,15 @@ def analyze(text: str, dict_combine: Optional[set] = None,
             else:
                 merged.append((sent_text, offset, lang, conf))
     elif language == "classical":
-        lang = "classical"
+        lang: str = "classical"
+        merged = [(text, 0, lang, 1.0)]
+        for sent_text, sent_offset in sentences:
+            language_sentences.append({
+                "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
+                "label": lang, "confidence": 1.0,
+            })
+    elif language == "english":
+        lang = "english"
         merged = [(text, 0, lang, 1.0)]
         for sent_text, sent_offset in sentences:
             language_sentences.append({
@@ -279,6 +325,13 @@ def analyze(text: str, dict_combine: Optional[set] = None,
             if not ok:
                 logger.warning(
                     "Classical segment not analyzed (model unavailable): %s...",
+                    seg_text[:20],
+                )
+        elif lang == "english":
+            tokens, entities, relations, patterns, ok = _analyze_english(seg_text, seg_offset, mapper)
+            if not ok:
+                logger.warning(
+                    "English segment not analyzed (model unavailable): %s...",
                     seg_text[:20],
                 )
         else:

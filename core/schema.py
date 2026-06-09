@@ -21,8 +21,8 @@ class SentenceLanguage(BaseModel):
     """Language detection result for a single sentence."""
     text: str = Field(..., description="Sentence text")
     span: tuple[int, int] = Field(..., description="Character offset [start, end)")
-    label: str = Field(..., description="detected label: modern|classical")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score for classical [0,1]")
+    label: str = Field(..., description="Detected language: modern|classical|english")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score [0,1]")
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ class NarrativeMeta(BaseModel):
         description="ISO 8601 analysis timestamp",
     )
     text_length: int = Field(..., ge=0, description="Original text character count")
-    language_mode: str = Field(default="auto", description="Language mode used: auto|modern|classical")
+    language_mode: str = Field(default="auto", description="Language mode used: auto|modern|classical|english")
     language_sentences: list[SentenceLanguage] = Field(
         default_factory=list,
         description="Per-sentence language detection results",

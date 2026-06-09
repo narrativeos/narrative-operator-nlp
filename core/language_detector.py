@@ -209,6 +209,41 @@ _CLASSICAL_RHYTHM = re.compile(r"[\u4e00-\u9fff]{4}[，。；、]")
 # Presence of Arabic digits / Latin letters (strong modern signal)
 _MODERN_ALPHANUM = re.compile(r"[a-zA-Z0-9]")
 
+# ===========================================================================
+# English Detection Feature Sets
+# ===========================================================================
+
+# English common words (to confirm English text)
+_ENGLISH_STOP_WORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would",
+    "can", "could", "should", "may", "might", "shall",
+    "this", "that", "these", "those", "it", "its",
+    "i", "me", "my", "we", "us", "our", "you", "your",
+    "he", "him", "his", "she", "her", "they", "them", "their",
+    "not", "no", "nor", "but", "and", "or", "for", "so", "yet",
+    "if", "then", "else", "when", "where", "what", "which", "who",
+    "how", "why", "all", "each", "every", "some", "any", "many",
+    "much", "few", "more", "most", "other", "such", "only", "own",
+    "in", "on", "at", "to", "for", "with", "by", "from", "of",
+    "about", "into", "through", "during", "before", "after",
+    "above", "below", "between", "under", "over", "without",
+    "one", "two", "three", "first", "last", "next",
+    "here", "there", "now", "then", "always", "never", "often",
+    "very", "too", "also", "just", "still", "already", "almost",
+})
+
+# English structural patterns
+_ENGLISH_CONJUNCTIONS: frozenset[str] = frozenset({
+    "because", "although", "while", "since", "unless",
+    "whereas", "moreover", "furthermore", "nevertheless",
+    "consequently", "therefore", "accordingly", "besides",
+    "likewise", "meanwhile", "otherwise", "nonetheless",
+})
+
+# ASCII letter ratio threshold — if >= this ratio, text is probably English
+_ENGLISH_ASCII_RATIO = 0.6
+
 
 # ===========================================================================
 # Multi-Layer Scoring Engine
@@ -442,30 +477,53 @@ def _apply_mixed_penalty(score: float, text: str, text_no_punct: str) -> float:
 
 
 # ===========================================================================
-# Classification
+# Three-Way Language Detection
 # ===========================================================================
 
-LanguageClass = Literal["modern", "classical"]
+LanguageClass = Literal["modern", "classical", "english"]
 
 
-def classify(text: str) -> tuple[LanguageClass, float]:
+def detect_language(text: str) -> tuple[LanguageClass, float]:
     """
-    Classify text and return (primary_language, confidence).
+    Three-way language detection.
 
-    Conservative principle: when modern and classical signals coexist,
-    default to modern. Only pure classical sentences route to LZH model.
+    Returns (language, confidence):
+      ("english",   [0,1])   — English text
+      ("classical", [0,1])   — Classical Chinese
+      ("modern",    [0,1])   — Modern Chinese (default)
 
-    Thresholds:
-        confidence < 0.35  →  modern
-        0.35 <= c < 0.48   →  modern
-        0.48 <= c < 0.65   →  classical
-        c >= 0.65          →  classical
+    Detection priority: english → classical → modern.
     """
+    text = text.strip()
+    if len(text) < 3:
+        return ("modern", 0.0)
+
+    # ---------- English detection (high priority) ----------
+    # Count ASCII letters vs total content characters
+    letters = sum(1 for c in text if c.isascii() and c.isalpha())
+    total_content = sum(1 for c in text if c.isalpha())
+    if total_content > 0:
+        ascii_ratio = letters / total_content
+        if ascii_ratio >= _ENGLISH_ASCII_RATIO:
+            # Confirm with English stop words
+            words = text.lower().split()
+            stop_hits = sum(1 for w in words if w.strip(".,!?;:'\"()[]") in _ENGLISH_STOP_WORDS)
+            # Strong English signal: high ASCII ratio + stop words
+            if stop_hits >= 1:
+                eng_conf = min(0.5 + stop_hits * 0.05, 0.95)
+                return ("english", eng_conf)
+            # Pure ASCII with very high ratio but no stop words → likely English
+            if ascii_ratio >= 0.85:
+                return ("english", 0.60)
+
+    # ---------- Classical Chinese detection ----------
+    # Exclude English texts entirely
+    if total_content > 0 and letters / total_content > 0.3:
+        return ("modern", 0.0)
+
     conf = classical_confidence(text)
-
-    # Strip punctuation and apply mixed-signal penalty
-    text_no_punct = re.sub(r"[，。！？；、：\s]", "", text.strip())
-    conf = _apply_mixed_penalty(conf, text, text_no_punct)  # pass both
+    text_no_punct = re.sub(r"[，。！？；、：\s]", "", text)
+    conf = _apply_mixed_penalty(conf, text, text_no_punct)
 
     if conf >= 0.48:
         return ("classical", conf)

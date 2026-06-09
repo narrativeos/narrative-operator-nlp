@@ -114,8 +114,8 @@ class AnalyzeRequest(BaseModel):
     )
     language: str = Field(
         default="auto",
-        description="Language mode: auto (per-sentence detection), modern (force modern), classical (force classical)",
-        examples=["auto", "modern", "classical"],
+        description="Language mode: auto (per-sentence detection), modern, classical, english",
+        examples=["auto", "modern", "classical", "english"],
     )
 
 
@@ -820,7 +820,7 @@ function renderAPIDocs(){
                 {name:'dict_combine',type:'string[]',desc:'自定义词典 — 强制合并的分词单元',default:'[]',ex:'["碳钢","高强度"]'},
                 {name:'discover',type:'boolean',desc:'启用新词发现（PMI + ConvSeg 比对）',default:'false'},
                 {name:'enhance',type:'boolean',desc:'强化模式 — 自动应用发现的新词并重新分析',default:'false'},
-                {name:'language',type:'string',desc:'语言模式: auto(自动检测), modern(强制现代), classical(强制古汉语)',default:'"auto"',ex:'"classical"'},
+                {name:'language',type:'string',desc:'语言模式: auto(自动检测), modern(现代汉语), classical(古汉语), english(英文)',default:'"auto"',ex:'"classical"'},
             ],
             resp:'<pre class="pretty">{\\n  "meta": {"source": "hanlp_v2", "timestamp": "..."},\\n  "content": {\\n    "tokens": [...],\\n    "entities": [...],\\n    "relations": [...],\\n    "patterns": [...]\\n  },\\n  "true_new_words": [...] | null\\n}</pre>',
             ex:'curl -X POST http://localhost:8000/analyze -H "Content-Type: application/json" -d \\'{"text":"北冥有鱼，其名为鲲。","language":"classical"}\\''},
