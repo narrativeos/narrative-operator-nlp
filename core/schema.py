@@ -263,10 +263,6 @@ class NarrativeMeta(BaseModel):
     )
     text_length: int = Field(..., ge=0, description="Original text character count")
     language_mode: str = Field(default="auto", description="Language mode used: auto|modern|classical|english")
-    language_sentences: list[SentenceLanguage] = Field(
-        default_factory=list,
-        description="Per-sentence language detection results",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +285,10 @@ class NarrativeContent(BaseModel):
     entities: list[Entity] = Field(default_factory=list, description="Unified entity list")
     relations: list[Relation] = Field(default_factory=list, description="Extracted relation triples")
     patterns: list[SentencePattern] = Field(default_factory=list, description="Sentence-level structural patterns")
+    sentences: list[SentenceLanguage] = Field(
+        default_factory=list,
+        description="Per-sentence text, span, and detected language label",
+    )
     structural: dict = Field(
         default_factory=dict,
         description="Raw NLP engine output (for debugging only)",

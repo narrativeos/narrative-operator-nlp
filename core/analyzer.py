@@ -155,7 +155,8 @@ def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
             doc.content.patterns, _assess_quality(doc.content.tokens, raw))
 
 
-def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
+def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper,
+                       entity_dict: dict[str, str] | None = None
                        ) -> tuple[list, list, list, list, bool]:
     try:
         pipeline = _get_classical_pipeline()
@@ -169,7 +170,7 @@ def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
         logger.warning("Classical pipeline failed: %s", exc)
         return [], [], [], [], False
     normalized = _normalize_lzh_keys(raw)
-    doc = mapper.map(text, normalized, source="hanlp_lzh")
+    doc = mapper.map(text, normalized, source="hanlp_lzh", entity_dict=entity_dict)
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "hanlp_lzh"
@@ -242,7 +243,8 @@ def _normalize_lzh_keys(raw: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def analyze(text: str, dict_combine: Optional[set] = None,
-            language: str = "auto") -> NarrativeDocument:
+            language: str = "auto",
+            entity_dict: dict[str, str] | None = None) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
 
@@ -254,6 +256,10 @@ def analyze(text: str, dict_combine: Optional[set] = None,
             - "modern": force modern Chinese pipeline
             - "classical": force classical Chinese pipeline
             - "english": force English pipeline
+        entity_dict: Optional ``{term: NSP_category}`` dictionary for classical
+            Chinese entity recognition. No hardcoded dictionaries — the
+            caller (API / frontend) supplies this.
+            Example: ``{"北冥": "LOCATION", "鲲": "PERSON"}``.
 
     Modern Chinese  → MTL (ELECTRA-small)
     Classical Chinese → LZH (KYOTO-EVAHAN)
@@ -315,7 +321,9 @@ def analyze(text: str, dict_combine: Optional[set] = None,
     all_tokens, all_entities, all_relations, all_patterns = [], [], [], []
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
-            tokens, entities, relations, patterns, ok = _analyze_classical(seg_text, seg_offset, mapper)
+            tokens, entities, relations, patterns, ok = _analyze_classical(
+                seg_text, seg_offset, mapper, entity_dict,
+            )
             if not ok:
                 logger.warning(
                     "Classical segment not analyzed (model unavailable): %s...",
@@ -347,13 +355,17 @@ def analyze(text: str, dict_combine: Optional[set] = None,
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
+    sentence_objects = [SentenceLanguage(**s) for s in language_sentences]
+
     return NarrativeDocument(
         meta=NarrativeMeta(
             source=meta_source,
             text_length=len(text),
             language_mode=language,
-            language_sentences=[SentenceLanguage(**s) for s in language_sentences],
         ),
-        content=NarrativeContent(tokens=all_tokens, entities=all_entities,
-                                 relations=all_relations, patterns=all_patterns, structural={}),
+        content=NarrativeContent(
+            tokens=all_tokens, entities=all_entities,
+            relations=all_relations, patterns=all_patterns,
+            sentences=sentence_objects, structural={},
+        ),
     )

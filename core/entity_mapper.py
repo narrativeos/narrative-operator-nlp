@@ -59,7 +59,8 @@ class EntityMappingRules:
         return Entity(id=f"ent_{self._counter:03d}", text=ent_text, category=category,
                       span=(cs, ce), normalized=ent_text, source=source, confidence=confidence)
 
-    def map_all(self, text: str, raw: dict, tokens: list[Token]) -> list[Entity]:
+    def map_all(self, text: str, raw: dict, tokens: list[Token],
+                entity_dict: dict[str, str] | None = None) -> list[Entity]:
         entities = []
         for ner_key in ["ner/pku","ner/msra","ner/ontonotes"]:
             for raw_ent in raw.get(ner_key, []):
@@ -71,19 +72,252 @@ class EntityMappingRules:
         entities.sort(key=lambda e: e.span[0])
         entities = self._merge_adjacent(entities)
         entities = self._discover_keyword_entities(entities, tokens, text)
+
+        # Classical Chinese fallback: if no NER entities found and no SRL,
+        # use model-native signals: PROPN upos + xpos semantic parsing.
+        has_ner = any(
+            raw.get(k) for k in ["ner/pku", "ner/msra", "ner/ontonotes"]
+        )
+        has_srl = bool(raw.get("srl"))
+        if not has_ner and not has_srl:
+            classical_entities = self.map_classical_entities(
+                tokens, text, raw, entity_dict,
+            )
+            for ce in classical_entities:
+                if not self._dup(ce, entities):
+                    entities.append(ce)
+
+        entities.sort(key=lambda e: e.span[0])
         return entities
 
     @staticmethod
     def _keyword(text: str) -> Optional[str]:
+        # Modern domain keywords only (no classical dictionaries)
         if text in _MATERIAL: return "MATERIAL"
         if text in _STANDARD: return "STANDARD"
         if text in _PARAMETER: return "PARAMETER"
-        # Suffix match: "高强度" ends with "强度" → PARAMETER
         if len(text) >= 3:
             for kw in _PARAMETER:
                 if text.endswith(kw) and len(kw) >= 2:
                     return "PARAMETER"
-        return "UNKNOWN"
+        return None
+
+    # ── xpos semantic tag parser ──
+
+    @staticmethod
+    def _parse_xpos_category(xpos: str) -> Optional[str]:
+        """Parse LZH xpos semantic categories into NSP entity categories.
+
+        LZH xpos format (UniDic-based): ``<pos>,<品詞>,<サブカテゴリ>,<詳細>``.
+
+        Entity-relevant patterns (only for ``名詞``, skip ``代名詞``/pronouns):
+          - n,名詞,*,地名        → LOCATION   (place name)
+          - n,名詞,人,名         → PERSON     (person name)
+          - n,名詞,*,組織        → ORGANIZATION
+          - n,名詞,*,作品        → PRODUCT
+          - n,名詞,固有名詞,...  → UNKNOWN    (proper noun, too general)
+          - n,名詞,主体,...      → UNKNOWN    (concrete entity: 魚, 鳥, …)
+
+        Pronouns (代名詞) and other non-nominal tags are skipped to
+        avoid false positives like ``其`` (n,代名詞,人称,起格).
+        """
+        if not xpos or "," not in xpos:
+            return None
+        parts = xpos.split(",")
+        if len(parts) < 2:
+            return None
+        pos_class = parts[1].strip()
+        if pos_class != "名詞":
+            return None
+        rest = ",".join(parts[2:]) if len(parts) > 2 else ""
+        if "地名" in rest:
+            return "LOCATION"
+        if "地形" in rest:
+            return "LOCATION"
+        if "人" in rest and "名" in rest:
+            return "PERSON"
+        if "組織" in rest:
+            return "ORGANIZATION"
+        if "作品" in rest:
+            return "PRODUCT"
+        if "固有名詞" in rest:
+            return "LOCATION"  # proper noun, default to LOCATION
+        # Concrete entities: 固定物 (mountains, rivers, buildings),
+        # 主体 (animals: 魚, 鳥), 動物, 植物
+        if "固定物" in rest:
+            return "LOCATION"  # mountains, buildings → LOCATION
+        if "主体" in rest or "動物" in rest or "植物" in rest:
+            return "UNKNOWN"
+        return None
+
+    def map_classical_entities(
+        self, tokens: list[Token], text: str, raw: dict | None = None,
+        entity_dict: dict[str, str] | None = None,
+    ) -> list[Entity]:
+        """Extract entities from classical Chinese using model-native signals.
+
+        Zero hardcoded entity dictionaries. Three strategies:
+
+        1. (Optional) User-provided ``entity_dict`` full-text span matching.
+        2. PROPN upos tokens — proper nouns are entity candidates;
+           xpos semantic tags (地名→LOCATION, 人,名→PERSON) provide category.
+        3. xpos-only — non-PROPN nouns whose xpos carries a semantic hint.
+
+        Args:
+            tokens: Token list with upos tags.
+            text: Original text for span computation.
+            raw: Full HanLP output dict (needs ``pos/xpos``).
+            entity_dict: Optional ``{term: NSP_category}`` mapping supplied
+                         by the caller (API / frontend).
+        """
+        entities: list[Entity] = []
+        entity_spans: set[tuple[int, int]] = set()
+        xpos_tags: list[str] = raw.get("pos/xpos", []) if raw else []
+
+        # ── Strategy 1 (optional): user-provided entity dictionary ──
+        if entity_dict:
+            # Sort longest-first to prefer longer matches
+            sorted_dict = sorted(entity_dict.items(), key=lambda x: -len(x[0]))
+            for term, cat in sorted_dict:
+                if cat not in EntityCategory.ALL:
+                    continue
+                start = 0
+                while True:
+                    idx = text.find(term, start)
+                    if idx < 0:
+                        break
+                    span_key = (idx, idx + len(term))
+                    if span_key not in entity_spans:
+                        self._counter += 1
+                        entities.append(Entity(
+                            id=f"ent_{self._counter:03d}",
+                            text=term, category=cat,
+                            span=(idx, idx + len(term)),
+                            normalized=term, source="entity_dict",
+                            confidence=0.95,
+                        ))
+                        entity_spans.add(span_key)
+                    start = idx + 1
+
+        # ── Strategy 2: PROPN upos (proper nouns) ──
+        for i, t in enumerate(tokens):
+            span_key = (t.span[0], t.span[1])
+            if span_key in entity_spans:
+                continue
+            if t.pos in ("PROPN", "NR"):
+                # Try xpos semantic tag first
+                xpos = xpos_tags[i] if i < len(xpos_tags) else ""
+                xcat = self._parse_xpos_category(xpos) if xpos else None
+                cat = xcat or ("LOCATION" if len(t.text) >= 2 else None)
+                if cat is None:
+                    continue
+                self._counter += 1
+                entities.append(Entity(
+                    id=f"ent_{self._counter:03d}",
+                    text=t.text, category=cat, span=t.span,
+                    normalized=t.text,
+                    source=f"classical_{'xpos' if xcat else 'propn'}",
+                    confidence=0.80,
+                ))
+                entity_spans.add(span_key)
+
+        # ── Strategy 3: xpos-only (semantic tags on non-PROPN nouns) ──
+        for i, t in enumerate(tokens):
+            span_key = (t.span[0], t.span[1])
+            if span_key in entity_spans:
+                continue
+            xpos = xpos_tags[i] if i < len(xpos_tags) else ""
+            if not xpos:
+                continue
+            xcat = self._parse_xpos_category(xpos)
+            # Exclude classifiers / measure words (助数詞, 度量衡: 里, 个, 匹, …)
+            if "助数詞" in xpos or "度量衡" in xpos:
+                continue
+            # Fallback: NOUN tokens without clear xpos category still
+            # get UNKNOWN (e.g. 鹏 mis-tagged as verb by LZH).
+            if xcat is None and t.pos == "NOUN":
+                xcat = "UNKNOWN"
+            if xcat is None:
+                continue
+            self._counter += 1
+            entities.append(Entity(
+                id=f"ent_{self._counter:03d}",
+                text=t.text, category=xcat, span=t.span,
+                normalized=t.text, source="classical_xpos",
+                confidence=0.65,
+            ))
+            entity_spans.add(span_key)
+
+        # Adjacent merge
+        entities.sort(key=lambda e: e.span[0])
+        entities = self._merge_adjacent(entities)
+
+        # ── Det-compound merge (其 + 名 → 其名) ──
+        entities = self._merge_det_entities(entities, tokens, raw)
+
+        return entities
+
+    def _merge_det_entities(
+        self, entities: list[Entity], tokens: list[Token], raw: dict | None,
+    ) -> list[Entity]:
+        """Merge det children into their entity head (其+名→其名)."""
+        dep = raw.get("dep", []) if raw else []
+        if not dep:
+            return entities
+
+        # Build entity index by token index
+        ent_by_idx: dict[int, Entity] = {}
+        for e in entities:
+            for i, t in enumerate(tokens):
+                if t.span == e.span and t.text == e.text:
+                    ent_by_idx[i] = e
+                    break
+
+        merged: list[Entity] = []
+        merged_indices: set[int] = set()
+
+        for i, e in enumerate(entities):
+            # Find which token index this entity corresponds to
+            e_idx = None
+            for idx, ent in ent_by_idx.items():
+                if ent is e:
+                    e_idx = idx
+                    break
+            if e_idx is None or e_idx in merged_indices:
+                continue
+
+            # Collect det children that point to this entity's token
+            det_children: list[int] = []
+            for ci, d in enumerate(dep):
+                if not isinstance(d, (list, tuple)) or len(d) < 2:
+                    continue
+                if int(d[0]) - 1 == e_idx and str(d[1]).strip().lower() == "det":
+                    det_children.append(ci)
+
+            if not det_children:
+                merged.append(e)
+                continue
+
+            # Merge: det child + entity → compound
+            all_idx = sorted([e_idx] + det_children)
+            merged_text = "".join(tokens[i].text for i in all_idx)
+            merged_span = (
+                tokens[all_idx[0]].span[0],
+                tokens[all_idx[-1]].span[1],
+            )
+            merged.append(Entity(
+                id=e.id,
+                text=merged_text,
+                category=e.category,
+                span=merged_span,
+                normalized=merged_text,
+                source=e.source,
+                confidence=e.confidence,
+            ))
+            merged_indices.add(e_idx)
+            merged_indices.update(det_children)
+
+        return merged
 
     @staticmethod
     def _dup(candidate: Entity, existing: list[Entity]) -> bool:

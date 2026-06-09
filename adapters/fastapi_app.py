@@ -117,6 +117,13 @@ class AnalyzeRequest(BaseModel):
         description="Language mode: auto (per-sentence detection), modern, classical, english",
         examples=["auto", "modern", "classical", "english"],
     )
+    entity_dict: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional entity dictionary for classical Chinese: {term: NSP_category}. "
+                    "Example: {'北冥': 'LOCATION', '鲲': 'PERSON'}. "
+                    "No hardcoded dictionaries — the caller supplies this.",
+        examples=[{"北冥": "LOCATION", "鲲": "PERSON"}],
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -162,12 +169,14 @@ async def analyze_endpoint(request: AnalyzeRequest):
     """
     try:
         user_dict = set(request.dict_combine) if request.dict_combine else set()
+        user_entity_dict = request.entity_dict if request.entity_dict else None
 
         # Baseline analysis (with language mode)
         doc = analyze(
             request.text,
             dict_combine=user_dict if user_dict else None,
             language=request.language,
+            entity_dict=user_entity_dict,
         )
 
         true_new_words: list[str] | None = None
@@ -182,6 +191,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     request.text,
                     dict_combine=enhanced_dict if enhanced_dict else None,
                     language=request.language,
+                    entity_dict=user_entity_dict,
                 )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
@@ -406,13 +416,15 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .source-dot.hanlp_v2{background:#58a6ff}
 .source-dot.hanlp_lzh{background:#e3b341}
 /* Model Status Indicators */
-.model-status{display:flex;gap:12px;margin:8px 0 12px;flex-wrap:wrap}
-.model-status .stat{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11px;background:#161b22;border:1px solid #30363d}
-.model-status .stat .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.model-status .stat .dot.idle{background:#30363d}
-.model-status .stat .dot.loading{background:#e3b341;animation:pulse 1s infinite}
-.model-status .stat .dot.ready{background:#7ee787}
-.model-status .stat .dot.error{background:#f85149}
+.model-status{display:flex;gap:8px;margin:8px 0 12px;flex-wrap:wrap}
+.model-status .stat-item{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;font-size:11px;background:#161b22;border:1px solid #30363d}
+.model-status .stat-item .dot{width:6px;height:6px;min-width:6px;border-radius:50%;display:inline-block}
+.model-status .stat-item .dot.idle{background:#484f58}
+.model-status .stat-item .dot.loading{background:#e3b341;animation:pulse 1s infinite}
+.model-status .stat-item .dot.ready{background:#7ee787}
+.model-status .stat-item .dot.error{background:#f85149}
+.model-status .stat-item .label{color:#8b949e;font-size:11px}
+.model-status .stat-item .title{color:#c9d1d9;font-size:11px}
 @keyframes pulse{0%,100%{opacity:0.4}50%{opacity:1}}
 /* Sample Language Cards */
 .sample-cards{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
@@ -431,9 +443,9 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 </header>
 <main>
 <div class="model-status" id="modelStatus">
-<div class="stat" id="statusModern"><span class="dot idle" id="dotModern"></span>🌐 现代模型 <span id="labelModern">等待中</span></div>
-<div class="stat" id="statusClassical"><span class="dot idle" id="dotClassical"></span>🏯 古汉语  <span id="labelClassical">等待中</span></div>
-<div class="stat" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span>🇬🇧 英文模型 <span id="labelEnglish">等待中</span></div>
+<div class="stat-item" id="statusModern"><span class="dot idle" id="dotModern"></span><span class="title">🌐 现代</span><span class="label" id="labelModern">等待中</span></div>
+<div class="stat-item" id="statusClassical"><span class="dot idle" id="dotClassical"></span><span class="title">🏯 古汉语</span><span class="label" id="labelClassical">等待中</span></div>
+<div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
 </div>
 <div class="sample-cards" id="sampleCards">
 <div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
@@ -506,7 +518,7 @@ async function analyze(){
     const discover=mode==='discover';
     const enhance=mode==='enhance';
     const language=_currentLang;
-    const body={text, dict_combine: dictCombine, discover, enhance, language};
+    const body={text, dict_combine: dictCombine, discover, enhance, language, entity_dict: {}};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
     ['nsp','pretty','depsvg','discover','patterns','langdetect','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
@@ -545,7 +557,7 @@ function renderNSP(data){
         :'<span class="lang-badge" style="background:#1a1a3a;color:#79c0ff">🔄 自动识别</span>';
 
     // Language stats
-    const langSents=meta.language_sentences||[];
+    const langSents=c.sentences||[];
     const classicalCount=langSents.filter(s=>s.label==='classical').length;
     const modernCount=langSents.filter(s=>s.label==='modern').length;
 
@@ -769,11 +781,11 @@ function renderPatterns(patterns){
 }
 
 function renderLangDetect(data){
-    if(!data||!data.meta||!data.meta.language_sentences){
+    if(!data||!data.content||!data.content.sentences){
         document.getElementById('langdetect').innerHTML='<div class="card"><span style="color:#484f58">无语言检测数据</span></div>';
         return;
     }
-    const sents=data.meta.language_sentences;
+    const sents=data.content.sentences;
     const mode=data.meta.language_mode||'auto';
     const modeLabel=mode==='classical'?'🏯 古汉语 (强制)':mode==='modern'?'📄 现代汉语 (强制)':'🔄 自动识别';
 

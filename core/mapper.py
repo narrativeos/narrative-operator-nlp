@@ -32,9 +32,10 @@ class HanlpSchemaMapper:
         self.entity_rules = EntityMappingRules()
         self.relation_rules = RelationExtractionRules()
 
-    def map(self, text: str, raw: dict, source: str = "hanlp_v2") -> NarrativeDocument:
+    def map(self, text: str, raw: dict, source: str = "hanlp_v2",
+            entity_dict: dict[str, str] | None = None) -> NarrativeDocument:
         tokens = self._map_tokens(text, raw)
-        entities = self._map_entities(text, raw, tokens)
+        entities = self._map_entities(text, raw, tokens, entity_dict)
         self._assign_attributes(text, raw, tokens, entities)
         # PARAMETERs are properties, not standalone entities
         entities = [e for e in entities if e.category != "PARAMETER"]
@@ -58,7 +59,8 @@ class HanlpSchemaMapper:
 
     def _map_tokens(self, text: str, raw: dict) -> list[Token]:
         tok_fine = raw.get("tok/fine", [])
-        pos = raw.get("pos/ctb", [])
+        # POS fallback chain: upos (universal) → ctb → pku → "X"
+        pos = (raw.get("pos/upos") or raw.get("pos/ctb") or raw.get("pos/pku") or [])
         tok_conf = raw.get("tok/fine_conf") or raw.get("tok/coarse_conf")
         # Flatten if nested (batch-level list)
         if tok_conf and isinstance(tok_conf[0], list):
@@ -79,8 +81,9 @@ class HanlpSchemaMapper:
             tokens.append(Token(id=i, text=token_text, pos=token_pos, span=(start, end), confidence=conf))
         return tokens
 
-    def _map_entities(self, text: str, raw: dict, tokens: list[Token]) -> list:
-        return self.entity_rules.map_all(text, raw, tokens)
+    def _map_entities(self, text: str, raw: dict, tokens: list[Token],
+                      entity_dict: dict[str, str] | None = None) -> list:
+        return self.entity_rules.map_all(text, raw, tokens, entity_dict)
 
     def _map_relations(self, text: str, raw: dict, tokens: list[Token],
                        entities: list) -> list:
