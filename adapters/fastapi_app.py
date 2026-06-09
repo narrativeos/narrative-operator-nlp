@@ -690,14 +690,20 @@ function renderDiscover(data){
         return `<span class="discover-item" onclick="toggleDictWord(this,'${esc(c.word)}')" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span></span>`;
     }).join(''):'<span style="color:#484f58">-</span>';
 
-    // ConvSeg candidates
-    let convsegHtml='<span style="color:#484f58">ConvSeg 不可用（需 TensorFlow）</span>';
-    if(convseg&&convseg.candidates){
-        convsegHtml=convseg.candidates.map(w=>{
-            const inPmi=candidates.some(c=>c.word===w);
-            const style=inPmi?'background:#1a3a1a;border-color:#238636':''; // green if also found by PMI
-            return `<span class="discover-item" style="${style}" onclick="toggleDictWord(this,'${esc(w)}')" title="点击添加到自定义词典">${esc(w)}<span class="score" style="color:#58a6ff">conv</span></span>`;
-        }).join('')||'<span style="color:#484f58">-</span>';
+    // ConvSeg candidates (optional, requires TensorFlow)
+    let convsegHtml='';
+    if(convseg){
+        if(convseg.candidates&&convseg.candidates.length){
+            convsegHtml=convseg.candidates.map(w=>{
+                const inPmi=candidates.some(c=>c.word===w);
+                const style=inPmi?'background:#1a3a1a;border-color:#238636':'';
+                return `<span class="discover-item" style="${style}" onclick="toggleDictWord(this,'${esc(w)}')" title="点击添加到自定义词典">${esc(w)}<span class="score" style="color:#58a6ff">conv</span></span>`;
+            }).join('')||'<span style="color:#484f58">-</span>';
+        } else {
+            convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 模型未加载（需 TensorFlow 环境）</span>';
+        }
+    } else {
+        convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 未安装（需 TensorFlow）</span>';
     }
 
     document.getElementById('discover').innerHTML=`
