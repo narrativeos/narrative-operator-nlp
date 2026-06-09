@@ -19,9 +19,8 @@ echo "============================================"
 # ── Model Check & Auto-Download ───────────────────────────────
 echo ""
 echo "[1/2] Checking pre-trained models..."
-MODELS_OK=true
 
-# Check MTL (modern Chinese)
+# MTL (modern Chinese) — required
 if python scripts/setup_models.py --check --model MTL 2>/dev/null; then
     echo "  ✅ MTL (现代汉语) — found"
 else
@@ -29,13 +28,9 @@ else
     python scripts/setup_models.py --model MTL
 fi
 
-# Check LZH (classical Chinese)
-if python scripts/setup_models.py --check --model LZH 2>/dev/null; then
-    echo "  ✅ LZH (古汉语) — found"
-else
-    echo "  ⬇️  LZH (古汉语) — downloading (~300 MB)..."
-    python scripts/setup_models.py --model LZH
-fi
+# LZH (classical Chinese) — model not yet published in this HanLP version
+echo "  ℹ️  LZH (古汉语) — 模型暂未发布，检测后回退到现代模型"
+echo "     Per-sentence detection works; routing falls back to modern"
 
 echo "  Models cached at $HANLP_HOME"
 
