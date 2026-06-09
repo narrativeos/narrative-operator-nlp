@@ -127,9 +127,9 @@ class RelationExtractionRules:
         if a1 and a2:
             pairs.append((a1, a2, "RELATES_TO"))
         if a0 and loc:
-            pairs.append((a0, loc, "LOCATED_AT"))
+            pairs.append((a0, loc, "RELATES_TO"))
         if a1 and loc:
-            pairs.append((a1, loc, "LOCATED_AT"))
+            pairs.append((a1, loc, "RELATES_TO"))
 
         relations = []
         for subj, obj, predicate in pairs:
@@ -299,15 +299,7 @@ class RelationExtractionRules:
                     rels = self.extract_from_srl(f, tokens, text)
                     for rel in rels:
                         rel = self._entity_normalize(rel, entity_texts, strict=False)
-                        if not rel:
-                            continue
-                        # LOCATED_AT → entity attribute, not relation
-                        if rel.predicate == "LOCATED_AT":
-                            _attach_attribute(
-                                entities, rel.subject, rel.object,
-                                confidence=rel.confidence, source=rel.source,
-                            )
-                        else:
+                        if rel:
                             relations.append(rel)
 
         # ── Classical Chinese: 3-step pipeline ──
