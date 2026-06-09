@@ -703,7 +703,7 @@ function renderDiscover(data){
             convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 模型未加载（需 TensorFlow 环境）</span>';
         }
     } else {
-        convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 未安装（需 TensorFlow）</span>';
+        convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 模型格式不兼容（旧版 Keras 模型）</span>';
     }
 
     document.getElementById('discover').innerHTML=`

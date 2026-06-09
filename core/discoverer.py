@@ -16,11 +16,14 @@ Reference
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .schema import Token
@@ -411,6 +414,7 @@ def _get_convseg():
         return _convseg_model
     except Exception:
         _CONVSEG_AVAILABLE = False
+        logger.warning("ConvSeg model not available (TF/Keras compat): %s", exc)
         return None
 
 
