@@ -19,14 +19,25 @@ echo "============================================"
 # ── Model Check & Auto-Download ───────────────────────────────
 echo ""
 echo "[1/2] Checking pre-trained models..."
+MODELS_OK=true
+
+# Check MTL (modern Chinese)
 if python scripts/setup_models.py --check --model MTL 2>/dev/null; then
-    echo "  All required models found."
+    echo "  ✅ MTL (现代汉语) — found"
 else
-    echo ""
-    echo "  Downloading required models (~500 MB, first run only)..."
+    echo "  ⬇️  MTL (现代汉语) — downloading (~500 MB)..."
     python scripts/setup_models.py --model MTL
-    echo "  Models cached at $HANLP_HOME"
 fi
+
+# Check LZH (classical Chinese)
+if python scripts/setup_models.py --check --model LZH 2>/dev/null; then
+    echo "  ✅ LZH (古汉语) — found"
+else
+    echo "  ⬇️  LZH (古汉语) — downloading (~300 MB)..."
+    python scripts/setup_models.py --model LZH
+fi
+
+echo "  Models cached at $HANLP_HOME"
 
 # ── Launch Service ────────────────────────────────────────────
 echo ""
