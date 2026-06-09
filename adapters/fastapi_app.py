@@ -112,6 +112,11 @@ class AnalyzeRequest(BaseModel):
         default=False,
         description="Auto-apply discovered new words as dict_combine and re-analyze",
     )
+    language: str = Field(
+        default="auto",
+        description="Language mode: auto (per-sentence detection), modern (force modern), classical (force classical)",
+        examples=["auto", "modern", "classical"],
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -158,8 +163,12 @@ async def analyze_endpoint(request: AnalyzeRequest):
     try:
         user_dict = set(request.dict_combine) if request.dict_combine else set()
 
-        # Baseline analysis
-        doc = analyze(request.text, dict_combine=user_dict if user_dict else None)
+        # Baseline analysis (with language mode)
+        doc = analyze(
+            request.text,
+            dict_combine=user_dict if user_dict else None,
+            language=request.language,
+        )
 
         true_new_words: list[str] | None = None
 
@@ -169,7 +178,11 @@ async def analyze_endpoint(request: AnalyzeRequest):
             if true_new_words:
                 # Re-analyze with enhanced dict (user + discovered)
                 enhanced_dict = user_dict | set(true_new_words)
-                doc = analyze(request.text, dict_combine=enhanced_dict if enhanced_dict else None)
+                doc = analyze(
+                    request.text,
+                    dict_combine=enhanced_dict if enhanced_dict else None,
+                    language=request.language,
+                )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
 
@@ -373,6 +386,25 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .api-endpoint .expand:hover{background:#1a3a5c}
 .api-doc-intro{font-size:13px;color:#8b949e;margin-bottom:16px;line-height:1.6}
 .api-doc-intro code{background:#21262d;padding:1px 6px;border-radius:3px;font-size:12px;color:#7ee787}
+/* Language Selector Styles */
+.lang-selector{display:flex;gap:6px;margin-bottom:16px;align-items:center}
+.lang-selector label{font-size:12px;color:#8b949e}
+.lang-option{display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #30363d;border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s;background:#21262d;color:#c9d1d9}
+.lang-option:hover{border-color:#58a6ff}
+.lang-option.active{background:#1a3a5c;border-color:#58a6ff;color:#58a6ff}
+.lang-option input{display:none}
+.lang-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin:1px 2px}
+.lang-badge.modern{background:#1a3a1a;color:#7ee787}
+.lang-badge.classical{background:#3a2a1a;color:#e3b341}
+.lang-table{width:100%;border-collapse:collapse;font-size:12px}
+.lang-table th{text-align:left;padding:6px 8px;color:#8b949e;border-bottom:1px solid #30363d;font-weight:normal}
+.lang-table td{padding:6px 8px;border-bottom:1px solid #21262d}
+.lang-table .sent{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lang-table .classical{color:#e3b341}
+.lang-table .modern{color:#7ee787}
+.source-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.source-dot.hanlp_v2{background:#58a6ff}
+.source-dot.hanlp_lzh{background:#e3b341}
 </style>
 </head>
 <body>
@@ -396,10 +428,17 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="input-area" style="margin-bottom:16px">
 <input id="dictInput" value="碳钢 高强度 高韧性 立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
 </div>
+<div class="lang-selector">
+<label>📖 语言模式:</label>
+<label class="lang-option active" id="langAuto" onclick="setLanguage('auto')"><input type="radio" name="lang" value="auto" checked>🔄 自动识别</label>
+<label class="lang-option" id="langModern" onclick="setLanguage('modern')"><input type="radio" name="lang" value="modern">📄 现代汉语</label>
+<label class="lang-option" id="langClassical" onclick="setLanguage('classical')"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
+</div>
 <div style="margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">
 <span style="font-size:11px;color:#484f58;line-height:24px">示例:</span>
 <button class="sample-btn" onclick="setSample('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。')">材料+地点</button>
 <button class="sample-btn" onclick="setSample('阿婆主来到北京立方庭参观自然语义科技公司。')">组织机构</button>
+<button class="sample-btn" onclick="setSample('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。')">🏯 古汉语</button>
 <button class="sample-btn" onclick="setSample('2021年HanLPv2.1为生产环境带来次世代最先进的多语种NLP技术。')">多任务</button>
 </div>
 <div class="tabs">
@@ -408,6 +447,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('depsvg')">🧬 依存树 SVG</div>
 <div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
 <div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
+<div class="tab" onclick="switchTab('langdetect')">🏯 语言检测</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
 <div class="tab" onclick="switchTab('api')">📋 API 接口</div>
 </div>
@@ -416,10 +456,18 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div id="depsvg" class="panel"></div>
 <div id="discover" class="panel"></div>
 <div id="patterns" class="panel"></div>
+<div id="langdetect" class="panel"></div>
 <div id="json" class="panel"></div>
 <div id="api" class="panel"></div>
 </main>
 <script>
+let _currentLang='auto';
+function setLanguage(lang){
+    _currentLang=lang;
+    document.querySelectorAll('.lang-option').forEach(el=>el.classList.toggle('active', el.id==='lang'+lang.charAt(0).toUpperCase()+lang.slice(1)));
+    analyze();
+}
+
 async function analyze(){
     const text=document.getElementById('input').value.trim();
     if(!text) return;
@@ -428,10 +476,11 @@ async function analyze(){
     const mode=document.getElementById('discoverMode').value;
     const discover=mode==='discover';
     const enhance=mode==='enhance';
-    const body={text, dict_combine: dictCombine, discover, enhance};
+    const language=_currentLang;
+    const body={text, dict_combine: dictCombine, discover, enhance, language};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
-    ['nsp','pretty','depsvg','discover','patterns','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
+    ['nsp','pretty','depsvg','discover','patterns','langdetect','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
@@ -450,17 +499,32 @@ async function analyze(){
     else renderDiscover(r4);    if(!r1._error) renderJSON(r1);
     const patData=r1.content&&r1.content.patterns;
     if(patData&&patData.length) renderPatterns(patData); else document.getElementById('patterns').innerHTML='<div class="card"><h3>📊 句式模式</h3><span style="color:#484f58">无模式数据</span></div>';
+    renderLangDetect(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
 function renderNSP(data){
     if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
     const c=data.content;
+    const meta=data.meta||{};
     const trueNew=data.true_new_words||[];
+
+    // Language mode badge
+    const langMode=meta.language_mode||'auto';
+    const langBadge=langMode==='classical'?'<span class="lang-badge classical">🏯 古汉语</span>'
+        :langMode==='modern'?'<span class="lang-badge modern">📄 现代汉语</span>'
+        :'<span class="lang-badge" style="background:#1a1a3a;color:#79c0ff">🔄 自动识别</span>';
+
+    // Language stats
+    const langSents=meta.language_sentences||[];
+    const classicalCount=langSents.filter(s=>s.label==='classical').length;
+    const modernCount=langSents.filter(s=>s.label==='modern').length;
+
     const tokens=c.tokens.map(t=>{
         const pct=Math.round((t.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
-        return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}%">${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
+        const sourceDot=t.source==='hanlp_lzh'?'<span class="source-dot hanlp_lzh" title="古汉语模型"></span>':'<span class="source-dot hanlp_v2" title="现代汉语模型"></span>';
+        return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}% source:${t.source}">${sourceDot}${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
     }).join('');
 
     const entities=c.entities.map(e=>{
@@ -484,15 +548,21 @@ function renderNSP(data){
         newWordsHtml='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现真新词（所有候选词已在分词结果中）</span></div>';
     }
 
+    const langStats=langSents.length>0?`
+    <div class="stat">${langBadge}</div>
+    <div class="stat">🏯 <b>${classicalCount}</b> 古汉语句</div>
+    <div class="stat">📄 <b>${modernCount}</b> 现代语句</div>`:'';
+
     document.getElementById('nsp').innerHTML=`
     <div class="stats">
     <div class="stat"><b>${c.tokens.length}</b> tokens</div>
     <div class="stat"><b>${c.entities.length}</b> entities</div>
     <div class="stat"><b>${c.relations.length}</b> relations</div>
     <div class="stat">source: <b>${data.meta.source}</b></div>
+    ${langStats}
     </div>
     ${newWordsHtml}
-    <div class="card"><h3>📝 分词 & POS</h3><div style="line-height:2">${tokens}</div></div>
+    <div class="card"><h3>📝 分词 & POS <span style="font-size:11px;color:#484f58">●蓝=现代模型 · ●黄=古汉语模型</span></h3><div style="line-height:2">${tokens}</div></div>
     <div class="card"><h3>🏷️ 实体 Entities</h3><div>${entities}</div></div>
     <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>`;
 }
@@ -669,6 +739,57 @@ function renderPatterns(patterns){
     </div>`;
 }
 
+function renderLangDetect(data){
+    if(!data||!data.meta||!data.meta.language_sentences){
+        document.getElementById('langdetect').innerHTML='<div class="card"><span style="color:#484f58">无语言检测数据</span></div>';
+        return;
+    }
+    const sents=data.meta.language_sentences;
+    const mode=data.meta.language_mode||'auto';
+    const modeLabel=mode==='classical'?'🏯 古汉语 (强制)':mode==='modern'?'📄 现代汉语 (强制)':'🔄 自动识别';
+
+    const rows=sents.map((s,i)=>{
+        const label=s.label==='classical'?'🏯 古汉语':'📄 现代汉语';
+        const cls=s.label==='classical'?'classical':'modern';
+        const pct=Math.round(s.confidence*100);
+        const barWidth=Math.round(s.confidence*100);
+        const barColor=s.label==='classical'?'#e3b341':'#7ee787';
+        const sentShort=s.text.length>40?s.text.slice(0,38)+'…':s.text;
+        return `<tr>
+            <td>${i+1}</td>
+            <td class="sent" title="${esc(s.text)}">${esc(sentShort)}</td>
+            <td class="${cls}"><b>${label}</b></td>
+            <td>
+                <div style="background:#21262d;border-radius:4px;overflow:hidden;width:80px;display:inline-block;vertical-align:middle">
+                    <div style="width:${barWidth}%;height:12px;background:${barColor};border-radius:4px"></div>
+                </div>
+                <span style="font-size:11px;color:#484f58;margin-left:4px">${pct}%</span>
+            </td>
+            <td style="font-size:11px;color:#484f58">[${s.span[0]}:${s.span[1]}]</td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('langdetect').innerHTML=`
+    <div class="card">
+      <h3>🏯 语言检测 <small style="color:#484f58;font-weight:normal">${modeLabel}</small></h3>
+      <p style="font-size:12px;color:#8b949e;margin-bottom:12px">
+        基于多特征加权评分（虚词密度、人称代词、否定模式、句末语气词等）对每个句子进行文言/现代文判定。
+      </p>
+      <div style="overflow-x:auto">
+      <table class="lang-table">
+        <thead><tr>
+          <th>#</th>
+          <th>句子</th>
+          <th>判定结果</th>
+          <th>置信度</th>
+          <th>位置</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
 function renderJSON(data){
     document.getElementById('json').innerHTML=`<div class="card"><pre class="pretty">${escapeHtml(JSON.stringify(data,null,2))}</pre></div>`;
 }
@@ -699,9 +820,10 @@ function renderAPIDocs(){
                 {name:'dict_combine',type:'string[]',desc:'自定义词典 — 强制合并的分词单元',default:'[]',ex:'["碳钢","高强度"]'},
                 {name:'discover',type:'boolean',desc:'启用新词发现（PMI + ConvSeg 比对）',default:'false'},
                 {name:'enhance',type:'boolean',desc:'强化模式 — 自动应用发现的新词并重新分析',default:'false'},
+                {name:'language',type:'string',desc:'语言模式: auto(自动检测), modern(强制现代), classical(强制古汉语)',default:'"auto"',ex:'"classical"'},
             ],
             resp:'<pre class="pretty">{\\n  "meta": {"source": "hanlp_v2", "timestamp": "..."},\\n  "content": {\\n    "tokens": [...],\\n    "entities": [...],\\n    "relations": [...],\\n    "patterns": [...]\\n  },\\n  "true_new_words": [...] | null\\n}</pre>',
-            ex:'curl -X POST http://localhost:8000/analyze -H "Content-Type: application/json" -d \\'{"text":"碳钢是钢的一种，具有高强度。"}\\''},
+            ex:'curl -X POST http://localhost:8000/analyze -H "Content-Type: application/json" -d \\'{"text":"北冥有鱼，其名为鲲。","language":"classical"}\\''},
         {method:'POST',path:'/analyze/dep',badge:'post',summary:'依存句法分析 — 返回 token 列表 + 依存边',
             desc:'<p>专为前端 SVG 渲染优化的端点，返回扁平化的 token 列表和依存关系边。</p>',
             fields:[

@@ -14,7 +14,7 @@ from typing import Optional
 
 from .language_detector import classify, should_fallback, classical_confidence
 from .mapper import HanlpSchemaMapper
-from .schema import NarrativeContent, NarrativeDocument, NarrativeMeta, Token
+from .schema import NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +128,15 @@ def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
 
 
 def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
-                       ) -> tuple[list, list, list, bool]:
+                       ) -> tuple[list, list, list, list, bool]:
     try:
         raw = _get_classical_pipeline()(text)
     except (AttributeError, ImportError):
         logger.warning("Classical Chinese model not available. Skipping.")
-        return [], [], [], False
+        return [], [], [], [], False
     except Exception as exc:
         logger.warning("Classical pipeline failed: %s", exc)
-        return [], [], [], False
+        return [], [], [], [], False
     normalized = _normalize_lzh_keys(raw)
     doc = mapper.map(text, normalized, source="hanlp_lzh")
     _apply_offset(doc, offset)
@@ -188,9 +188,18 @@ def _normalize_lzh_keys(raw: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
-def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
+def analyze(text: str, dict_combine: Optional[set] = None,
+            language: str = "auto") -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
+
+    Args:
+        text: Raw Chinese text to analyze.
+        dict_combine: Optional set of words to force-combine during tokenization.
+        language: Language mode:
+            - "auto" (default): per-sentence detection with fallback
+            - "modern": force modern Chinese pipeline
+            - "classical": force classical Chinese pipeline
 
     Modern Chinese → MTL (ELECTRA-small)
     Classical Chinese → LZH (KYOTO-EVAHAN)
@@ -203,26 +212,48 @@ def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
 
     mapper = _get_mapper()
     sentences = _split_sentences(text)
+    language_sentences = []
 
-    # Group consecutive same-language sentences
-    segments: list[tuple[str, int, str, float]] = []
-    for sent_text, sent_offset in sentences:
-        lang, conf = classify(sent_text)
-        segments.append((sent_text, sent_offset, lang, conf))
+    if language == "auto":
+        # Group consecutive same-language sentences
+        segments: list[tuple[str, int, str, float]] = []
+        for sent_text, sent_offset in sentences:
+            lang, conf = classify(sent_text)
+            segments.append((sent_text, sent_offset, lang, conf))
+            language_sentences.append({
+                "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
+                "label": lang, "confidence": conf,
+            })
 
-    merged: list[tuple[str, int, str, float]] = []
-    for sent_text, offset, lang, conf in segments:
-        if merged and merged[-1][2] == lang:
-            prev_text, prev_offset, _, _ = merged[-1]
-            merged[-1] = (text[prev_offset:offset + len(sent_text)], prev_offset, lang, conf)
-        else:
-            merged.append((sent_text, offset, lang, conf))
+        merged: list[tuple[str, int, str, float]] = []
+        for sent_text, offset, lang, conf in segments:
+            if merged and merged[-1][2] == lang:
+                prev_text, prev_offset, _, _ = merged[-1]
+                merged[-1] = (text[prev_offset:offset + len(sent_text)], prev_offset, lang, conf)
+            else:
+                merged.append((sent_text, offset, lang, conf))
+    elif language == "classical":
+        lang = "classical"
+        merged = [(text, 0, lang, 1.0)]
+        for sent_text, sent_offset in sentences:
+            language_sentences.append({
+                "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
+                "label": lang, "confidence": 1.0,
+            })
+    else:  # "modern"
+        lang = "modern"
+        merged = [(text, 0, lang, 0.0)]
+        for sent_text, sent_offset in sentences:
+            language_sentences.append({
+                "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
+                "label": lang, "confidence": 0.0,
+            })
 
     # Process each segment
     all_tokens, all_entities, all_relations, all_patterns = [], [], [], []
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
-            tokens, entities, relations, patterns, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+            tokens, entities, relations, patterns, ok = _analyze_classical(seg_text, seg_offset, mapper)
             if not ok and should_fallback(conf):
                 logger.info("Classical→Modern fallback for: %s...", seg_text[:20])
                 tokens, entities, relations, patterns, _ = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
@@ -244,7 +275,12 @@ def analyze(text: str, dict_combine: Optional[set] = None) -> NarrativeDocument:
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
     return NarrativeDocument(
-        meta=NarrativeMeta(source=meta_source, text_length=len(text)),
+        meta=NarrativeMeta(
+            source=meta_source,
+            text_length=len(text),
+            language_mode=language,
+            language_sentences=[SentenceLanguage(**s) for s in language_sentences],
+        ),
         content=NarrativeContent(tokens=all_tokens, entities=all_entities,
                                  relations=all_relations, patterns=all_patterns, structural={}),
     )
