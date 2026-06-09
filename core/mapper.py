@@ -58,10 +58,12 @@ class HanlpSchemaMapper:
         )
 
     def _map_tokens(self, text: str, raw: dict) -> list[Token]:
-        tok_fine = raw.get("tok/fine", [])
-        # POS fallback chain: upos (universal) → ctb → pku → "X"
-        pos = (raw.get("pos/upos") or raw.get("pos/ctb") or raw.get("pos/pku") or [])
-        tok_conf = raw.get("tok/fine_conf") or raw.get("tok/coarse_conf")
+        tok_fine = raw.get("tok/fine") or raw.get("tok") or []
+        # POS fallback chain: upos (universal) → ctb → pku → bare pos → "X"
+        pos = (raw.get("pos/upos") or raw.get("pos/ctb") or raw.get("pos/pku")
+               or raw.get("pos") or [])
+        tok_conf = (raw.get("tok/fine_conf") or raw.get("tok/coarse_conf")
+                    or raw.get("tok_conf"))
         # Flatten if nested (batch-level list)
         if tok_conf and isinstance(tok_conf[0], list):
             tok_conf = tok_conf[0]

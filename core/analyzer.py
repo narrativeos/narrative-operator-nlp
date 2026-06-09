@@ -88,7 +88,10 @@ def _get_mapper() -> HanlpSchemaMapper:
 # Sentence Splitting
 # ---------------------------------------------------------------------------
 
-_SENT_SPLIT_RE = re.compile(r"(?<=[。！？；\n])\s*")
+_SENT_SPLIT_RE = re.compile(
+    r"(?<=[。！？；\n])\s*"           # Chinese punctuation
+    r"|(?<=[.!?])\s+(?=[A-Z])"       # English: period + space + capital letter
+)
 
 
 def _split_sentences(text: str) -> list[tuple[str, int]]:
@@ -116,8 +119,8 @@ def _assess_quality(tokens: list[Token], raw: dict) -> bool:
     """Heuristic quality check. Returns False if output looks like garbage."""
     if not tokens:
         return False
-    # >60% NR (proper noun) → model doesn't know these words
-    nr_count = sum(1 for t in tokens if t.pos == "NR")
+    # >60% NR/NNP (proper noun) → model doesn't know these words
+    nr_count = sum(1 for t in tokens if t.pos in ("NR", "NNP", "NNPS"))
     if nr_count > len(tokens) * 0.6:
         return False
     # >70% "root"/"dep" in dependency → model guessing

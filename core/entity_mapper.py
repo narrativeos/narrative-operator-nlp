@@ -16,6 +16,13 @@ _ONTONOTES_MAP = {"PERSON":"PERSON","NORP":"ORGANIZATION","FAC":"FACILITY","ORG"
     "GPE":"LOCATION","LOC":"LOCATION","PRODUCT":"PRODUCT","DATE":"DATE","TIME":"DATE",
     "PERCENT":"NUMBER","MONEY":"NUMBER","QUANTITY":"NUMBER","CARDINAL":"NUMBER",
     "ORDINAL":"NUMBER","LAW":"STANDARD","EVENT":"UNKNOWN","WORK_OF_ART":"UNKNOWN","LANGUAGE":"UNKNOWN"}
+# English NER (CoNLL-2003 / OntoNotes via bare "ner" key)
+_CONLL_MAP = {"PER":"PERSON","PERSON":"PERSON","LOC":"LOCATION","GPE":"LOCATION",
+    "ORG":"ORGANIZATION","ORGANIZATION":"ORGANIZATION","MISC":"UNKNOWN","DATE":"DATE",
+    "TIME":"DATE","MONEY":"NUMBER","PERCENT":"NUMBER","QUANTITY":"NUMBER",
+    "CARDINAL":"NUMBER","ORDINAL":"NUMBER","FAC":"FACILITY","PRODUCT":"PRODUCT",
+    "EVENT":"UNKNOWN","WORK_OF_ART":"UNKNOWN","LAW":"STANDARD","LANGUAGE":"UNKNOWN",
+    "NORP":"ORGANIZATION"}
 
 _MATERIAL = frozenset({
     # Metals & alloys
@@ -31,7 +38,13 @@ _PARAMETER = frozenset({"强度","硬度","韧性","密度","熔点","沸点","�
 
 
 class EntityMappingRules:
-    SOURCE_MAPS = {"ner/pku":_PKU_MAP,"ner/msra":_MSRA_MAP,"ner/ontonotes":_ONTONOTES_MAP}
+    SOURCE_MAPS = {
+        "ner/pku": _PKU_MAP,
+        "ner/msra": _MSRA_MAP,
+        "ner/ontonotes": _ONTONOTES_MAP,
+        "ner": _CONLL_MAP,              # English MODERNBERT (bare key)
+        "ner/conll2003": _CONLL_MAP,    # English fallback
+    }
 
     def __init__(self):
         self._counter = 0
@@ -62,7 +75,7 @@ class EntityMappingRules:
     def map_all(self, text: str, raw: dict, tokens: list[Token],
                 entity_dict: dict[str, str] | None = None) -> list[Entity]:
         entities = []
-        for ner_key in ["ner/pku","ner/msra","ner/ontonotes"]:
+        for ner_key in ["ner/pku","ner/msra","ner/ontonotes","ner","ner/conll2003"]:
             for raw_ent in raw.get(ner_key, []):
                 mapped = self.map(raw_ent, ner_key, tokens, text)
                 if mapped and not self._dup(mapped, entities):
@@ -76,7 +89,7 @@ class EntityMappingRules:
         # Classical Chinese fallback: if no NER entities found and no SRL,
         # use model-native signals: PROPN upos + xpos semantic parsing.
         has_ner = any(
-            raw.get(k) for k in ["ner/pku", "ner/msra", "ner/ontonotes"]
+            raw.get(k) for k in ["ner/pku", "ner/msra", "ner/ontonotes", "ner", "ner/conll2003"]
         )
         has_srl = bool(raw.get("srl"))
         if not has_ner and not has_srl:

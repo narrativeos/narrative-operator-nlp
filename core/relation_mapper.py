@@ -94,9 +94,15 @@ class RelationExtractionRules:
 
     def extract_from_srl(self, frame: list, tokens: list,
                          text: str = "") -> Optional[Relation]:
-        """Extract relation from SRL frame (ARG0, PRED, ARG1)."""
-        a0_text, a1_text = "", ""
-        a0_span, a1_span = (0, 0), (0, 0)
+        """Extract relation from SRL frame.
+
+        Handles multiple argument patterns:
+        - ARG0 + PRED + ARG1           → RELATES_TO (transitive)
+        - ARG1 + PRED + ARG2           → RELATES_TO (copular)
+        - ARG0 + PRED + ARGM-LOC       → LOCATED_AT
+        - ARG0 + PRED                  → RELATES_TO (intransitive, bare)
+        """
+        args: dict[str, tuple[str, tuple]] = {}
         pred_text = ""
 
         for item in frame:
@@ -110,31 +116,45 @@ class RelationExtractionRules:
                 ce = tokens[te - 1].span[1]
             else:
                 cs, ce = 0, 0
-            if "ARG0" in role:
-                a0_text, a0_span = itxt, (cs, ce)
-            elif "ARG1" in role:
-                a1_text, a1_span = itxt, (cs, ce)
-            elif role == "PRED":
+            if role == "PRED":
                 pred_text = itxt
+            elif role.startswith("ARG"):
+                args.setdefault(role.lower(), (itxt, (cs, ce)))
 
-        if not a0_text or not a1_text:
+        a0 = args.get("arg0")
+        a1 = args.get("arg1")
+        a2 = args.get("arg2")
+        loc = args.get("argm-loc")
+
+        # ── Choose subject/object pair ──
+        if a0 and a1:
+            subj, obj = a0, a1
+            predicate = "RELATES_TO"
+        elif a1 and a2:
+            subj, obj = a1, a2
+            predicate = "RELATES_TO"
+        elif a0 and loc:
+            subj, obj = a0, loc
+            predicate = "LOCATED_AT"
+        elif a0:
+            subj, obj = a0, (pred_text, a0[1]) if pred_text else a0
+            predicate = "RELATES_TO"
+        else:
             return None
 
-        pred_text = pred_text
-
-        evidence = _span_between(a0_span, a1_span, text)
+        evidence = _span_between(subj[1], obj[1], text)
         if not evidence:
-            evidence = f"{a0_text} {pred_text} {a1_text}"
+            evidence = f"{subj[0]} {pred_text} {obj[0]}"
 
         self._counter += 1
         return Relation(
             id=f"rel_{self._counter:03d}",
-            subject=a0_text.strip(),
-            predicate="RELATES_TO",
-            predicate_verb=pred_text,  # raw SRL predicate for downstream reasoning
-            object=a1_text.strip(),
+            subject=subj[0].strip(),
+            predicate=predicate,
+            predicate_verb=pred_text,
+            object=obj[0].strip(),
             evidence=evidence,
-            evidence_span=(a0_span[0], a1_span[1]),
+            evidence_span=(subj[1][0], obj[1][1]),
             confidence=0.60,
             source=f"srl/{pred_text}",
         )
@@ -286,7 +306,7 @@ class RelationExtractionRules:
                 if isinstance(f, list):
                     rel = self.extract_from_srl(f, tokens, text)
                     if rel:
-                        rel = self._entity_normalize(rel, entity_texts)
+                        rel = self._entity_normalize(rel, entity_texts, strict=False)
                         if rel:
                             relations.append(rel)
 
