@@ -1,10 +1,15 @@
 """
-Language Detector — Multi-Feature Confidence Scoring.
+Language Detector — Multi-Layer Confidence Scoring.
 
-Classifies Chinese text as modern or classical using a weighted
-multi-feature scoring approach. Returns confidence scores used by
-the two-stage pipeline in analyzer.py to decide which NLP model
-to apply first (and whether to fall back).
+Classifies Chinese text as modern or classical using a three-layer
+multi-feature scoring approach:
+
+  Layer 1 — Character-Level: 虚词/代词/语气词密度、句末词、否定/疑问
+  Layer 2 — Lexical/Grammatical: 古汉语搭配模式、词级特征、现代词汇惩罚
+  Layer 3 — Syntactic Sequence: 句型模板、韵律模式、标点使用特征
+
+Returns confidence scores used by the two-stage pipeline in analyzer.py
+to decide which NLP model to apply first (and whether to fall back).
 """
 
 from __future__ import annotations
@@ -12,124 +17,372 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-# ---------------------------------------------------------------------------
-# Feature Sets
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Layer 1 — Character-Level Feature Sets
+# ===========================================================================
 
-# Classical Chinese marker characters (虚词、助词、语气词)
-_CLASSICAL_CHARS: frozenset[str] = frozenset(
-    "之乎者也焉矣其乃若夫盖兮耳哉欤耶欤欤"
+# Classical function words (虚词) — comprehensive set
+_CLASSICAL_FUNCTION: frozenset[str] = frozenset(
+    "之乎者也焉矣其乃若夫盖兮耳哉欤耶于以而则且与所为所虽"
 )
 
-# Classical Chinese personal pronouns
+# Classical sentence-final particles (语气词)
+_CLASSICAL_FINAL: frozenset[str] = frozenset(
+    "也矣焉耳乎哉欤耶兮夫而已云尔盖诸"
+)
+
+# Classical personal pronouns (人称代词)
 _CLASSICAL_PRONOUNS: frozenset[str] = frozenset(
-    "吾余予汝尔卿寡人朕孤臣妾"
+    "吾余予汝尔卿寡人朕孤臣妾仆某"
 )
 
-# Classical Chinese negation patterns
-_CLASSICAL_NEGATION = re.compile(r"[不未弗毋勿非微]\w?")
+# Classical demonstratives / determiners (指示词)
+_CLASSICAL_DEMONSTRATIVES: frozenset[str] = frozenset(
+    "此是斯彼兹其厥"
+)
 
-# Classical copula / judgement pattern
-_CLASSICAL_COPULA = re.compile(r"者[^。！？\n]{1,20}也")
+# Classical copula / existential verbs (系词/存在词)
+_CLASSICAL_COPULA_CHARS: frozenset[str] = frozenset(
+    "为乃即系惟"
+)
 
-# Classical interrogative
-_CLASSICAL_INTERROG = re.compile(r"[何胡奚曷安焉恶孰]\w?")
+# Classical existential / possessive pattern markers
+_CLASSICAL_EXISTENTIAL: frozenset[str] = frozenset("有无存")
 
-# Modern Chinese markers (strong negative signal for classical)
-_MODERN_PARTICLES = frozenset("的了着们")
+# Classical negation characters (否定词)
+_CLASSICAL_NEGATION_CHARS: frozenset[str] = frozenset(
+    "不未弗毋勿非微莫罔无"
+)
+
+# Classical interrogative characters (疑问词)
+_CLASSICAL_INTERROG_CHARS: frozenset[str] = frozenset(
+    "何胡奚曷安焉恶孰谁盍讵岂那"
+)
+
+# Classical measure words (古典量词)
+_CLASSICAL_MEASURE: frozenset[str] = frozenset("里尺寸丈寻仞斗升石钧顷亩")
+
+# Classical honorific / self-deprecating
+_CLASSICAL_HONORIFIC: frozenset[str] = frozenset("陛下殿下阁下足下寡人臣妾")
+
+# Classical quoting verbs
+_CLASSICAL_QUOTE: frozenset[str] = frozenset("曰云谓")
+
+# Modern Chinese particles (现代助词) — strong negative signal
+_MODERN_PARTICLES: frozenset[str] = frozenset("的了着们过吗吧呢啊嘛")
+
+# Modern Chinese pronouns (现代人称代词)
+_MODERN_PRONOUNS: frozenset[str] = frozenset("我你他她它")
+
+# Modern Chinese copula
+_MODERN_COPULA: frozenset[str] = frozenset("是")
+
+# Modern Chinese measure words
+_MODERN_MEASURE: frozenset[str] = frozenset("个只条张把块本次")
+
+
+# ===========================================================================
+# Layer 2 — Lexical/Grammatical Patterns
+# ===========================================================================
+
+# Classical bigram patterns (strong classical indicators)
+_CLASSICAL_BIGRAMS: tuple[str, ...] = (
+    "其名", "名为", "谓之", "所谓", "是以", "何以", "然则",
+    "若夫", "至若", "且夫", "盖夫", "夫唯",
+    "故曰", "或曰", "子曰", "诗云", "书曰",
+    "者乎", "者欤", "者耶", "者邪", "者哉",
+    "之谓", "之为", "之至", "之大", "之多", "之远",
+    "不下", "不止", "不多", "不胜", "不啻",
+    "未有", "未尝", "未始", "未能",
+    "有以", "无以", "可以", "足以", "难以",
+    "之所以", "之所以然",
+    "向北", "以南", "之内", "之外",
+    "何如", "何若", "若何", "奈何",
+    "于是", "至于", "及至", "至于",
+    "此之", "彼之", "其之", "斯之",
+    "君子", "小人", "圣人", "贤人", "仁者",
+    "天下", "四海", "九州", "万民", "百姓",
+    "德行", "仁义", "礼乐", "忠信", "孝悌",
+    "天地", "阴阳", "万物", "大道",
+    "必先", "然后", "而后", "是以故",
+    "何谓", "安得", "可得", "岂不",
+    "不若", "莫若",
+)
+
+# Classical trigram patterns
+_CLASSICAL_TRIGRAMS: tuple[str, ...] = (
+    "不亦乐", "不亦说", "何以故", "何故也", "是以故",
+    "之谓也", "之为言", "之所以", "之所有",
+    "未有以", "无以异", "有以异", "不足以",
+    "未之有", "莫之能", "莫之敢",
+    "岂非以", "岂能以", "岂可不",
+    "之谓乎", "之谓欤", "之谓也",
+    "何难之", "何忧之", "何患之",
+    "何其大", "何其远", "何其盛",
+    "自古以", "由是以", "是故",
+    "不得已", "不可不", "不得不",
+    "如之何", "若之何", "奈之何",
+)
+
+# Modern Chinese word patterns (strong negative signal)
 _MODERN_WORDS: tuple[str, ...] = (
-    "我们", "你们", "他们", "她们", "这个", "那个", "哪个",
+    "我们", "你们", "他们", "她们", "它们",
+    "这个", "那个", "哪个", "这些", "那些",
     "因为", "所以", "而且", "但是", "虽然", "如果", "可以",
     "应该", "已经", "正在", "什么", "怎么", "为什么",
+    "非常", "比较", "特别", "尤其", "更加",
+    "通过", "根据", "按照", "对于", "关于",
+    "一个", "一种", "一样", "一起", "一些",
+    "进行", "实现", "发展", "建设", "提高",
 )
 
-# Classical sentence-ending particles
-_CLASSICAL_FINAL = frozenset("也矣焉耳乎哉欤耶")
-
-# Minimum sentence length to apply classification
-_MIN_SENTENCE_LENGTH = 3
+# Modern sentence-final particles (strong modern signal)
+_MODERN_FINAL: frozenset[str] = frozenset("吧吗呢嘛啊啦呀噢喽咯")
 
 
-# ---------------------------------------------------------------------------
-# Scoring
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Layer 3 — Syntactic Sequence Patterns
+# ===========================================================================
+
+# Classical sentence template patterns (regex)
+_CLASSICAL_TEMPLATES: list[re.Pattern] = [
+    # 者...也 copula pattern
+    re.compile(r"者[^。！？\n]{1,30}也"),
+    # Subject + 之 + Noun (possessive)
+    re.compile(r"[\u4e00-\u9fff]之[\u4e00-\u9fff]"),
+    # Verb + 于 + Noun (locative/dative) — exclude modern "位于"/"处于"
+    re.compile(r"(?:[^位处][\u4e00-\u9fff]|[\u4e00-\u9fff]{2})于[\u4e00-\u9fff]"),
+    # 以...为... pattern
+    re.compile(r"以[\u4e00-\u9fff]{1,4}为"),
+    # 何...之有 pattern
+    re.compile(r"何[\u4e00-\u9fff]{1,6}之有"),
+    # 不亦...乎 pattern
+    re.compile(r"不亦[\u4e00-\u9fff]{1,6}乎"),
+    # 岂...哉 pattern
+    re.compile(r"岂[\u4e00-\u9fff]{1,8}哉"),
+    # 非...而何 pattern
+    re.compile(r"非[\u4e00-\u9fff]{1,8}而何"),
+    # 莫...于 pattern
+    re.compile(r"莫[\u4e00-\u9fff]{1,6}于"),
+    # 未有...者
+    re.compile(r"未有[\u4e00-\u9fff]{1,12}者"),
+    # ...者，...也 (comma-separated copula)
+    re.compile(r"者[，,][^。！？\n]{1,30}也"),
+    # ...以为... (classical "take...as")
+    re.compile(r"[\u4e00-\u9fff]{1,6}以为"),
+    # 故...也 (therefore...)
+    re.compile(r"故[\u4e00-\u9fff]{1,20}也"),
+    # Subject+有+Noun (classical existential)
+    re.compile(r"[\u4e00-\u9fff]{1,4}有[\u4e00-\u9fff]{1,4}[，。；、]"),
+    # 可X可X pattern (classical antithesis)
+    re.compile(r"可[\u4e00-\u9fff]可[\u4e00-\u9fff]"),
+    # 非X非X pattern (classical antithesis)  
+    re.compile(r"非[\u4e00-\u9fff]非[\u4e00-\u9fff]"),
+    # Subject+以+V pattern (classical instrumental)
+    re.compile(r"[\u4e00-\u9fff]{1,4}以[\u4e00-\u9fff]{1,4}"),
+]
+
+# Modern text template patterns (negative signal)
+_MODERN_TEMPLATES: list[re.Pattern] = [
+    # 的+noun (modern possessive)
+    re.compile(r"的[\u4e00-\u9fff]"),
+    # 了+punctuation (modern perfective)
+    re.compile(r"了[，。！？\n]"),
+    # subject+们 (modern plural)
+    re.compile(r"[\u4e00-\u9fff]们"),
+    # 正在+verb (modern progressive)
+    re.compile(r"正在[\u4e00-\u9fff]"),
+    # numbers with units (modern measurement)
+    re.compile(r"\d+[个只条张块次]"),
+    # 是...的 (modern emphatic construction)
+    re.compile(r"是[\u4e00-\u9fff]{1,20}的"),
+    # 位于/处于 (modern locative verbs — not classical 于)
+    re.compile(r"[位处]于"),
+]
+
+# Classical rhythm patterns: 4-character blocks are highly characteristic
+# of classical Chinese prose
+_CLASSICAL_RHYTHM = re.compile(r"[\u4e00-\u9fff]{4}[，。；、]")
+
+# Presence of Arabic digits / Latin letters (strong modern signal)
+_MODERN_ALPHANUM = re.compile(r"[a-zA-Z0-9]")
+
+
+# ===========================================================================
+# Multi-Layer Scoring Engine
+# ===========================================================================
 
 def classical_confidence(text: str) -> float:
     """
-    Compute a confidence score [0.0, 1.0] that ``text`` is classical Chinese.
+    Compute a confidence score [0.0, 1.0] that ``text`` is classical Chinese,
+    using a three-layer multi-feature analysis.
 
     0.0 = definitively modern
     0.5 = ambiguous
     1.0 = definitively classical
 
-    The score is used to decide:
-    - Which model to try FIRST (modern if < 0.5, classical if >= 0.5)
-    - Whether to fall back to the other model on poor-quality output
+    Layer 1 (character):  虚词密度 / 句末词 / 人称 / 系词 / 否定/疑问  → max +0.52
+    Layer 2 (lexical):    古汉语搭配 / 词级模式 / 现代词汇惩罚          → max ±0.42
+    Layer 3 (syntactic):  句型模板 / 韵律 / 标点 / 敬语                → max ±0.32
     """
     text = text.strip()
     n = len(text)
-    if n < _MIN_SENTENCE_LENGTH:
-        return 0.0  # Too short to classify reliably
+    if n < 3:
+        return 0.0
+
+    # Strip punctuation for character-level analysis
+    text_no_punct = re.sub(r"[，。！？；、：\s]", "", text)
+    len_no_punct = len(text_no_punct)
+    if len_no_punct == 0:
+        return 0.0
 
     score = 0.0
 
-    # ---- Positive signals (classical) ----
+    # ================================================================
+    # Layer 1 — Character-Level Signals (max +0.52, -0.25)
+    # ================================================================
 
-    # 1. Classical marker density (weak: 0.0–0.30)
-    marker_count = sum(1 for c in text if c in _CLASSICAL_CHARS)
-    score += min(marker_count / max(n, 1) * 6, 0.30)
+    # 1a. Classical function word density (0.0–0.24)
+    func_count = sum(1 for c in text_no_punct if c in _CLASSICAL_FUNCTION)
+    func_density = func_count / max(len_no_punct, 1)
+    score += min(func_density * 5.0, 0.24)
 
-    # 2. Classical personal pronouns (strong: 0.0–0.15)
-    pronoun_hits = sum(1 for c in text if c in _CLASSICAL_PRONOUNS)
-    score += min(pronoun_hits * 0.08, 0.15)
+    # 1b. Classical sentence-final particles (0.0–0.10)
+    final_count = sum(1 for c in text_no_punct if c in _CLASSICAL_FINAL)
+    last_is_final = 1.0 if text_no_punct and text_no_punct[-1] in _CLASSICAL_FINAL else 0.0
+    score += min(final_count * 0.04 + last_is_final * 0.04, 0.10)
 
-    # 3. Classical negation pattern (medium: 0.0–0.15)
-    if _CLASSICAL_NEGATION.search(text):
-        score += 0.15
+    # 1c. Classical pronouns & demonstratives (0.0–0.10)
+    pronoun_count = sum(1 for c in text_no_punct if c in _CLASSICAL_PRONOUNS)
+    demonstr_count = sum(1 for c in text_no_punct if c in _CLASSICAL_DEMONSTRATIVES)
+    score += min(pronoun_count * 0.05 + demonstr_count * 0.04, 0.10)
 
-    # 4. 者...也 copula (very strong: 0.0–0.15)
-    if _CLASSICAL_COPULA.search(text):
-        score += 0.15
+    # 1d. Classical copula & existential verbs (0.0–0.06)
+    copula_count = sum(1 for c in text_no_punct if c in _CLASSICAL_COPULA_CHARS)
+    existential_count = sum(1 for c in text_no_punct if c in _CLASSICAL_EXISTENTIAL)
+    score += min(copula_count * 0.03 + existential_count * 0.03, 0.06)
 
-    # 5. Classical interrogatives (medium: 0.0–0.10)
-    interrog_hits = len(_CLASSICAL_INTERROG.findall(text))
-    score += min(interrog_hits * 0.08, 0.10)
+    # 1e. Classical quoting verbs (0.0–0.04)
+    quote_count = sum(1 for c in text_no_punct if c in _CLASSICAL_QUOTE)
+    score += min(quote_count * 0.04, 0.04)
 
-    # 6. Classical sentence-final particles (strong: 0.0–0.15)
-    if text and text[-1] in _CLASSICAL_FINAL:
-        score += 0.15
+    # --- Negative signals (modern character-level) ---
 
-    # 7. Short, dense sentences favor classical (weak: 0.0–0.05)
-    if n < 20 and marker_count >= 1:
-        score += 0.05
+    # 1f. Modern particle penalty (0.0–0.12)
+    modern_part_count = sum(1 for c in text_no_punct if c in _MODERN_PARTICLES)
+    score -= min(modern_part_count * 0.05, 0.12)
 
-    # 8. Classical quoting pattern: 曰 / 云 (medium: 0.0–0.10)
-    if "曰" in text or "云" in text:
-        score += 0.10
+    # 1g. Modern pronoun penalty (0.0–0.08)
+    modern_pronoun_count = sum(1 for c in text_no_punct if c in _MODERN_PRONOUNS)
+    score -= min(modern_pronoun_count * 0.04, 0.08)
 
-    # ---- Negative signals (modern) ----
+    # 1h. Modern copula penalty (0.0–0.05)
+    modern_copula_count = sum(1 for c in text_no_punct if c in _MODERN_COPULA)
+    score -= min(modern_copula_count * 0.05, 0.05)
 
-    # 8. Modern particles ("的","了","着","们")
-    modern_count = sum(1 for c in text if c in _MODERN_PARTICLES)
-    score -= min(modern_count * 0.04, 0.20)
-
-    # 9. Modern function words
-    word_penalty = 0.0
-    for w in _MODERN_WORDS:
-        if w in text:
-            word_penalty += 0.05
-    score -= min(word_penalty, 0.25)
-
-    # 10. 的 + noun pattern (strong modern signal)
-    if re.search(r"的[\u4e00-\u9fff]", text):
+    # 1i. Arabic digits / Latin letters (strong modern, -0.08)
+    if _MODERN_ALPHANUM.search(text):
         score -= 0.08
+
+    # ================================================================
+    # Layer 2 — Lexical/Grammatical Patterns (max +0.42, -0.22)
+    # ================================================================
+
+    # 2a. Classical bigram matches (0.0–0.15)
+    bigram_hits = sum(1 for bg in _CLASSICAL_BIGRAMS if bg in text)
+    score += min(bigram_hits * 0.03, 0.15)
+
+    # 2b. Classical trigram matches (0.0–0.10)
+    trigram_hits = sum(1 for tg in _CLASSICAL_TRIGRAMS if tg in text)
+    score += min(trigram_hits * 0.05, 0.10)
+
+    # 2c. Classical negation + final particle pairing (0.0–0.07)
+    negation_count = sum(1 for c in text_no_punct if c in _CLASSICAL_NEGATION_CHARS)
+    if negation_count > 0:
+        neg_bonus = negation_count * 0.02
+        if final_count > 0:
+            neg_bonus += 0.03
+        score += min(neg_bonus, 0.07)
+
+    # 2d. Classical interrogative (0.0–0.05)
+    interrog_count = sum(1 for c in text_no_punct if c in _CLASSICAL_INTERROG_CHARS)
+    score += min(interrog_count * 0.05, 0.05)
+
+    # 2e. Classical measure words (0.0–0.03)
+    classical_measure_count = sum(1 for c in text_no_punct if c in _CLASSICAL_MEASURE)
+    score += min(classical_measure_count * 0.03, 0.03)
+
+    # 2f. Short sentence classical density bonus (0.0–0.05)
+    if len_no_punct <= 15:
+        classical_char_count = (
+            func_count + final_count + pronoun_count + demonstr_count +
+            copula_count + existential_count + interrog_count
+        )
+        classical_density = classical_char_count / max(len_no_punct, 1)
+        if classical_density >= 0.10:
+            score += min(0.02 + classical_density * 0.15, 0.05)
+
+    # --- Negative signals (modern lexical) ---
+
+    # 2g. Modern word penalty (0.0–0.12)
+    modern_word_count = sum(1 for w in _MODERN_WORDS if w in text)
+    score -= min(modern_word_count * 0.04, 0.12)
+
+    # 2h. Modern sentence-final particle penalty (0.0–0.05)
+    modern_final_count = sum(1 for c in text_no_punct if c in _MODERN_FINAL)
+    score -= min(modern_final_count * 0.04, 0.05)
+
+    # 2i. Modern measure word penalty (0.0–0.03)
+    modern_measure_count = sum(1 for c in text_no_punct if c in _MODERN_MEASURE)
+    score -= min(modern_measure_count * 0.02, 0.03)
+
+    # ================================================================
+    # Layer 3 — Syntactic Sequence Analysis (max +0.32, -0.12)
+    # ================================================================
+
+    # 3a. Classical template matches (0.0–0.20)
+    template_hits = sum(1 for tmpl in _CLASSICAL_TEMPLATES if tmpl.search(text))
+    score += min(template_hits * 0.07, 0.20)
+
+    # 3b. Four-character rhythm blocks (0.0–0.10)
+    rhythm_blocks = len(_CLASSICAL_RHYTHM.findall(text))
+    rhythm_score = min(rhythm_blocks * 0.04, 0.06)
+    if len_no_punct <= 20 and rhythm_blocks >= 1:
+        rhythm_score += 0.04
+    score += min(rhythm_score, 0.10)
+
+    # 3c. Punctuation usage profile (0.0–0.04)
+    comma_count = text.count("，") + text.count(",")
+    period_count = text.count("。") + text.count(".")
+    if period_count > 0:
+        comma_to_period = comma_count / period_count
+        if comma_to_period < 1.5:
+            score += 0.02
+        if comma_to_period < 0.8:
+            score += 0.02
+
+    # 3d. Classical honorific pattern (0.0–0.02)
+    if any(h in text for h in _CLASSICAL_HONORIFIC):
+        score += 0.02
+
+    # --- Negative signals (modern syntactic) ---
+
+    # 3e. Modern template penalty (0.0–0.08)
+    modern_tmpl_hits = sum(1 for mt in _MODERN_TEMPLATES if mt.search(text))
+    score -= min(modern_tmpl_hits * 0.04, 0.08)
+
+    # 3f. Modern measure + copula co-occurrence (0.0–0.04)
+    if modern_measure_count > 0 and modern_copula_count > 0:
+        score -= 0.02
+    if modern_measure_count > 1:
+        score -= 0.02
 
     return max(0.0, min(1.0, score))
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Classification
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 LanguageClass = Literal["modern", "classical"]
 
@@ -141,18 +394,18 @@ def classify(text: str) -> tuple[LanguageClass, float]:
     The primary language determines which model to try FIRST.
     Confidence drives the fallback decision in the two-stage pipeline.
 
-    Thresholds:
-        confidence < 0.25  →  modern-first, no fallback
-        0.25 <= c < 0.45   →  modern-first, with fallback
-        0.45 <= c < 0.65   →  classical-first, with fallback
-        c >= 0.65          →  classical-first, no fallback
+    Thresholds (calibrated for 3-layer scoring):
+        confidence < 0.30  →  modern-first, no fallback
+        0.30 <= c < 0.42   →  modern-first, with fallback
+        0.42 <= c < 0.60   →  classical-first, with fallback
+        c >= 0.60          →  classical-first, no fallback
     """
     conf = classical_confidence(text)
-    if conf >= 0.40:
+    if conf >= 0.42:
         return ("classical", conf)
     return ("modern", conf)
 
 
 def should_fallback(confidence: float) -> bool:
     """Whether to try the alternative model on poor-quality output."""
-    return 0.25 <= confidence <= 0.65
+    return 0.30 <= confidence <= 0.60
