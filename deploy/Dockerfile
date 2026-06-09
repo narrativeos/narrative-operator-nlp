@@ -46,6 +46,9 @@ ENV HANLP_HOME=/root/.hanlp
 ENV TOKENIZERS_PARALLELISM=false
 ENV PYTORCH_ENABLE_MPS_FALLBACK=1
 ENV COPAW_HANLP_REQUIRE_LOCAL_MODELS=1
+# HuggingFace mirror (China mainland acceleration)
+ENV HF_ENDPOINT=https://hf-mirror.com
+ENV TRANSFORMERS_CACHE=/root/.cache/huggingface
 
 # Model cache volume (~2-3 GB for all models)
 VOLUME /root/.hanlp
