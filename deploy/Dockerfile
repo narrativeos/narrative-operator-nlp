@@ -5,8 +5,12 @@
 #
 # Build:
 #   docker build -t narrative-operator-nlp -f deploy/Dockerfile .
-# Run:
+#
+# Run (FastAPI + Demo 页面 + API 接口说明):
 #   docker run -p 8000:8000 -v hanlp-models:/root/.hanlp narrative-operator-nlp
+#
+# 访问交互式 Demo:  http://localhost:8000/demo
+# 访问 API 文档:     http://localhost:8000/docs
 # ───────────────────────────────────────────────────────────────
 
 FROM python:3.10-slim

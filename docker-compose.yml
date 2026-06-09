@@ -7,10 +7,30 @@
 #   docker compose up -d              # Start (FastAPI + gRPC in one container)
 #   docker compose up -d --build      # Rebuild and start
 #
+# Access:
+#   Demo 页面 (交互式可视化 + API 接口说明):
+#     http://localhost:8000/demo
+#   Swagger UI (自动生成 API 文档):
+#     http://localhost:8000/docs
+#   ReDoc:
+#     http://localhost:8000/redoc
+#   OpenAPI JSON Schema:
+#     http://localhost:8000/openapi.json
+#
+# Available Endpoints:
+#   GET  /              → 重定向到 /demo
+#   GET  /health        → 健康检查
+#   POST /analyze       → NLP 分析主端点 (NSP 标准化结果)
+#   POST /analyze/dep   → 依存句法分析 (SVG 渲染用)
+#   POST /analyze/discover → 新词发现 (PMI + ConvSeg)
+#   POST /analyze/pretty   → HanLP 原生可视化 (to_pretty)
+#
 # MCP (Model Context Protocol) uses stdio transport and is designed
 # for local subprocess invocation, not Docker networking.
 # For LLM/Agent integration in Docker, use the HTTP API instead:
-#   curl -X POST http://localhost:8000/analyze -d '{"text":"..."}'
+#   curl -X POST http://localhost:8000/analyze \
+#     -H "Content-Type: application/json" \
+#     -d '{"text":"碳钢是钢的一种，具有高强度。"}'
 # ───────────────────────────────────────────────────────────────
 
 volumes:
@@ -26,8 +46,10 @@ services:
     image: narrative-operator-nlp:latest
     container_name: narrative-nlp
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
-      - "${HTTP_PORT:-8000}:8000"       # FastAPI + Demo
+      - "${HTTP_PORT:-8000}:8000"       # FastAPI + Demo (含 API 接口说明)
     volumes:
       - hanlp-models:/root/.hanlp
     command: ["both"]                    # FastAPI foreground + gRPC background

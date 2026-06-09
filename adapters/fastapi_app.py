@@ -352,6 +352,27 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .tag.interrogative{background:#2a1a3a;color:#c084fc}
 .tag.exclamatory{background:#3a1a2a;color:#f472b6}
 .tag.imperative{background:#1a3a2a;color:#6ee7b7}
+/* API Documentation Styles */
+.api-endpoint{background:#21262d;border:1px solid #30363d;border-radius:6px;margin-bottom:16px;overflow:hidden}
+.api-endpoint .method{padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #30363d}
+.api-endpoint .method .badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:600;font-family:monospace}
+.api-endpoint .method .badge.get{background:#1a3a5c;color:#58a6ff}
+.api-endpoint .method .badge.post{background:#1a3a1a;color:#7ee787}
+.api-endpoint .method .path{font-family:monospace;font-size:14px;color:#c9d1d9}
+.api-endpoint .method .summary{font-size:13px;color:#8b949e;margin-left:auto}
+.api-endpoint .body{padding:12px 16px;display:none}
+.api-endpoint .body.open{display:block}
+.api-endpoint .body h4{font-size:12px;color:#58a6ff;margin:8px 0 4px}
+.api-endpoint .body h4:first-child{margin-top:0}
+.api-endpoint .body p, .api-endpoint .body li{font-size:12px;color:#c9d1d9;line-height:1.6}
+.api-endpoint .body .field{display:flex;gap:8px;padding:2px 0;font-size:12px}
+.api-endpoint .body .field .fname{color:#e3b341;font-family:monospace;min-width:100px}
+.api-endpoint .body .field .ftype{color:#79c0ff;font-family:monospace;min-width:60px}
+.api-endpoint .body .field .fdesc{color:#8b949e}
+.api-endpoint .expand{background:transparent;border:none;color:#58a6ff;cursor:pointer;font-size:12px;padding:4px 8px;border-radius:4px}
+.api-endpoint .expand:hover{background:#1a3a5c}
+.api-doc-intro{font-size:13px;color:#8b949e;margin-bottom:16px;line-height:1.6}
+.api-doc-intro code{background:#21262d;padding:1px 6px;border-radius:3px;font-size:12px;color:#7ee787}
 </style>
 </head>
 <body>
@@ -388,6 +409,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
 <div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
+<div class="tab" onclick="switchTab('api')">📋 API 接口</div>
 </div>
 <div id="nsp" class="panel active"></div>
 <div id="pretty" class="panel"></div>
@@ -395,6 +417,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div id="discover" class="panel"></div>
 <div id="patterns" class="panel"></div>
 <div id="json" class="panel"></div>
+<div id="api" class="panel"></div>
 </main>
 <script>
 async function analyze(){
@@ -655,11 +678,92 @@ function switchTab(id){
     document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
     document.querySelector(`.tab[onclick="switchTab('${id}')"]`).classList.add('active');
     document.getElementById(id).classList.add('active');
+    if(id==='api') renderAPIDocs();
 }
 
 function setSample(text){
     document.getElementById('input').value=text;
     analyze();
+}
+
+function renderAPIDocs(){
+    if(document.querySelector('#api .api-endpoint')) return; // already rendered
+    const endpoints=[
+        {method:'GET',path:'/',badge:'get',summary:'重定向到交互式 Demo 页面'},
+        {method:'GET',path:'/health',badge:'get',summary:'健康检查端点',desc:'<p>返回服务运行状态，用于 Docker 健康检查和监控。</p>',resp:'<pre class="pretty">{"status": "ok", "service": "narrative-operator-nlp"}</pre>',ex:'curl http://localhost:8000/health'},
+        {method:'POST',path:'/analyze',badge:'post',summary:'NLP 分析主端点 — 返回 NSP 标准化的叙事原子',
+            desc:'<p>对输入文本执行完整 NLP 流水线（分词、词性标注、命名实体识别、依存分析、关系抽取、句式模式分析），返回 NSP 标准化结果。</p>',
+            fields:[
+                {name:'text',type:'string',desc:'(必填) 待分析的中文文本',ex:'"碳钢是钢的一种，具有高强度和高韧性。"'},
+                {name:'source',type:'string',desc:'NLP 引擎标识',default:'"hanlp_v2"'},
+                {name:'dict_combine',type:'string[]',desc:'自定义词典 — 强制合并的分词单元',default:'[]',ex:'["碳钢","高强度"]'},
+                {name:'discover',type:'boolean',desc:'启用新词发现（PMI + ConvSeg 比对）',default:'false'},
+                {name:'enhance',type:'boolean',desc:'强化模式 — 自动应用发现的新词并重新分析',default:'false'},
+            ],
+            resp:'<pre class="pretty">{\\n  "meta": {"source": "hanlp_v2", "timestamp": "..."},\\n  "content": {\\n    "tokens": [...],\\n    "entities": [...],\\n    "relations": [...],\\n    "patterns": [...]\\n  },\\n  "true_new_words": [...] | null\\n}</pre>',
+            ex:'curl -X POST http://localhost:8000/analyze -H "Content-Type: application/json" -d \\'{"text":"碳钢是钢的一种，具有高强度。"}\\''},
+        {method:'POST',path:'/analyze/dep',badge:'post',summary:'依存句法分析 — 返回 token 列表 + 依存边',
+            desc:'<p>专为前端 SVG 渲染优化的端点，返回扁平化的 token 列表和依存关系边。</p>',
+            fields:[
+                {name:'text',type:'string',desc:'(必填) 待分析的中文文本'},
+                {name:'dict_combine',type:'string[]',desc:'自定义词典',default:'[]'},
+            ],
+            resp:'<pre class="pretty">{\\n  "tokens": [{"id": 0, "text": "碳钢", "pos": "NN"}, ...],\\n  "deps": [{"child": 0, "head": 1, "rel": "nsubj"}, ...],\\n  "text": "碳钢是钢的一种..."\\n}</pre>',
+            ex:'curl -X POST http://localhost:8000/analyze/dep -H "Content-Type: application/json" -d \\'{"text":"碳钢是钢的一种。"}\\''},
+        {method:'POST',path:'/analyze/discover',badge:'post',summary:'新词发现 — PMI + MTL 混合 + ConvSeg 比对',
+            desc:'<p>使用 PMI 逐点互信息、MTL 分词对比和 ConvSeg（PKU_NAME）三种引擎发现潜在的未登录词。</p>',
+            fields:[
+                {name:'text',type:'string',desc:'(必填) 待分析的中文文本'},
+                {name:'dict_combine',type:'string[]',desc:'自定义词典',default:'[]'},
+            ],
+            resp:'<pre class="pretty">{\\n  "candidates": [{"word": "高强度", "score": 8.5, "freq": 3}, ...],\\n  "convseg": {"candidates": ["立方庭", ...]}\\n}</pre>',
+            ex:'curl -X POST http://localhost:8000/analyze/discover -H "Content-Type: application/json" -d \\'{"text":"碳钢是钢的一种，具有高强度。"}\\''},
+        {method:'POST',path:'/analyze/pretty',badge:'post',summary:'HanLP 原生可视化 — 返回 pretty-print 文本',
+            desc:'<p>返回 HanLP Document 的 <code>to_pretty()</code> 文本输出，与 Jupyter Notebook 中的展示效果一致。</p>',
+            fields:[
+                {name:'text',type:'string',desc:'(必填) 待分析的中文文本'},
+                {name:'dict_combine',type:'string[]',desc:'自定义词典',default:'[]'},
+            ],
+            resp:'<pre class="pretty">  tok/fine: [碳钢, 是, 钢, 的, 一种, ，, 具有, 高强度, 和, 高韧性, 。]\\n  pos/ctb: [NN, VC, NN, DEG, CD, PU, VV, NN, CC, NN, PU]\\n  ...</pre>',
+            ex:'curl -X POST http://localhost:8000/analyze/pretty -H "Content-Type: application/json" -d \\'{"text":"碳钢是钢的一种。"}\\''},
+    ];
+    let html=`<div class="api-doc-intro">
+      <p>Narrative Operator NLP 提供以下 REST API 端点，所有请求均通过 <code>HTTP POST</code> 或 <code>GET</code> 访问。
+      自动生成的 API 文档请访问 <a href="/docs" style="color:#58a6ff">Swagger UI</a> 或 <a href="/redoc" style="color:#58a6ff">ReDoc</a>。</p>
+    </div>`;
+    endpoints.forEach((ep,i)=>{
+        let fieldsHtml='';
+        if(ep.fields){
+            fieldsHtml=`<h4>📥 请求参数</h4>`+ep.fields.map(f=>{
+                const extra=f.default!==undefined?` <span style="color:#484f58">默认: ${f.default}</span>`:'';
+                const ex=f.ex?`<br><span style="color:#484f58">示例: ${f.ex}</span>`:'';
+                return `<div class="field"><span class="fname">${f.name}</span><span class="ftype">${f.type}</span><span class="fdesc">${f.desc}${extra}${ex}</span></div>`;
+            }).join('');
+        }
+        const respHtml=ep.resp?`<h4>📤 响应示例</h4>${ep.resp}`:'';
+        const exHtml=ep.ex?`<h4>🔧 cURL 示例</h4><pre class="pretty" style="font-size:11px">${ep.ex}</pre>`:'';
+        html+=`<div class="api-endpoint">
+          <div class="method" onclick="toggleEndpoint(${i})">
+            <span class="badge ${ep.badge}">${ep.method}</span>
+            <span class="path">${ep.path}</span>
+            <span class="summary">${ep.summary}</span>
+            <span class="expand">▼</span>
+          </div>
+          <div class="body" id="api-body-${i}">
+            ${ep.desc||''}
+            ${fieldsHtml}
+            ${respHtml}
+            ${exHtml}
+          </div>
+        </div>`;
+    });
+    document.getElementById('api').innerHTML=html;
+}
+window.toggleEndpoint=function(i){
+    const body=document.getElementById('api-body-'+i);
+    body.classList.toggle('open');
+    const expand=body.parentElement.querySelector('.expand');
+    expand.textContent=body.classList.contains('open')?'▲':'▼';
 }
 
 function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}

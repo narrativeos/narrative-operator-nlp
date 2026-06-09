@@ -35,12 +35,18 @@ echo ""
 
 case "$MODE" in
     fastapi)
+        echo "  Demo 页面:    http://localhost:8000/demo"
+        echo "  Swagger UI:   http://localhost:8000/docs"
+        echo "  API 接口说明: Demo 页面 → 📋 API 接口 标签页"
         exec python adapters/fastapi_app.py
         ;;
     grpc)
         exec python adapters/grpc_server.py --socket "$GRPC_SOCKET"
         ;;
     both)
+        echo "  Demo 页面:    http://localhost:8000/demo"
+        echo "  Swagger UI:   http://localhost:8000/docs"
+        echo "  gRPC Socket:  $GRPC_SOCKET"
         python adapters/grpc_server.py --socket "$GRPC_SOCKET" &
         sleep 2
         python adapters/fastapi_app.py
