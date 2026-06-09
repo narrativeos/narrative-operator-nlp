@@ -690,20 +690,20 @@ function renderDiscover(data){
         return `<span class="discover-item" onclick="toggleDictWord(this,'${esc(c.word)}')" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span></span>`;
     }).join(''):'<span style="color:#484f58">-</span>';
 
-    // ConvSeg candidates (optional, requires TensorFlow)
+    // Coarse ELECTRA comparison (PyTorch, no TF needed)
     let convsegHtml='';
     if(convseg){
         if(convseg.candidates&&convseg.candidates.length){
             convsegHtml=convseg.candidates.map(w=>{
                 const inPmi=candidates.some(c=>c.word===w);
                 const style=inPmi?'background:#1a3a1a;border-color:#238636':'';
-                return `<span class="discover-item" style="${style}" onclick="toggleDictWord(this,'${esc(w)}')" title="点击添加到自定义词典">${esc(w)}<span class="score" style="color:#58a6ff">conv</span></span>`;
-            }).join('')||'<span style="color:#484f58">-</span>';
+                return `<span class=\"discover-item\" style=\"${style}\" onclick=\"toggleDictWord(this,'${esc(w)}')\" title=\"点击添加到自定义词典\">${esc(w)}<span class=\"score\" style=\"color:#58a6ff\">粗分</span></span>`;
+            }).join('')||'<span style=\"color:#484f58\">-</span>';
         } else {
-            convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 模型未加载（需 TensorFlow 环境）</span>';
+            convsegHtml='<span style=\"color:#484f58;font-size:11px\">粗分模型未加载</span>';
         }
     } else {
-        convsegHtml='<span style="color:#484f58;font-size:11px">ConvSeg 模型格式不兼容（旧版 Keras 模型）</span>';
+        convsegHtml='<span style=\"color:#484f58;font-size:11px\">粗分模型未安装</span>';
     }
 
     document.getElementById('discover').innerHTML=`
@@ -715,7 +715,7 @@ function renderDiscover(data){
           <div style="margin-bottom:8px">${pmiItems}</div>
         </div>
         <div>
-          <h4 style="font-size:13px;color:#58a6ff;margin-bottom:8px">🧠 ConvSeg (PKU_NAME)</h4>
+          <h4 style="font-size:13px;color:#58a6ff;margin-bottom:8px">🧠 粗分 ELECTRA 对比</h4>
           <div style="margin-bottom:8px">${convsegHtml}</div>
         </div>
       </div>

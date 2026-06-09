@@ -390,47 +390,39 @@ def discover_words(text: str, **kwargs) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# ConvSeg (PKU_NAME_MERGED_SIX_MONTHS_CONVSEG — optional TF model)
+# Coarse tokenizer (alternative comparison baseline, no TF needed)
 # ---------------------------------------------------------------------------
 
-_convseg_model: object | None = None
-_CONVSEG_AVAILABLE: bool | None = None  # tri-state: None=unchecked
+_coarse_tok: object | None = None
 
 
-def _get_convseg():
-    """Lazy-load ConvSeg model. Returns model or None if unavailable."""
-    global _convseg_model, _CONVSEG_AVAILABLE
-    if _CONVSEG_AVAILABLE is False:
-        return None
-    if _convseg_model is not None:
-        return _convseg_model
+def _get_coarse_tok():
+    """Lazy-load coarse ELECTRA tokenizer for comparison. Pure PyTorch."""
+    global _coarse_tok
+    if _coarse_tok is not None:
+        return _coarse_tok
     try:
-        import tensorflow  # noqa: F401
-        from transformers import TFAutoModel  # noqa: F401
         import hanlp
-        from hanlp.pretrained.tok import PKU_NAME_MERGED_SIX_MONTHS_CONVSEG
-        _convseg_model = hanlp.load(PKU_NAME_MERGED_SIX_MONTHS_CONVSEG, verbose=False)
-        _CONVSEG_AVAILABLE = True
-        return _convseg_model
-    except Exception:
-        _CONVSEG_AVAILABLE = False
-        logger.warning("ConvSeg model not available (TF/Keras compat): %s", exc)
+        _coarse_tok = hanlp.load(hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH, verbose=False)
+        return _coarse_tok
+    except Exception as exc:
+        logger.warning("Coarse tokenizer not available: %s", exc)
         return None
 
 
 def discover_convseg(text: str) -> dict | None:
-    """Run ConvSeg tokenizer directly and return comparison data.
+    """Run coarse tokenizer as comparison baseline.
 
     Returns dict with 'tokens' and 'candidates' (multi-char words),
-    or None if ConvSeg (TensorFlow) is unavailable.
+    or None if the model is unavailable.
     """
-    model = _get_convseg()
+    model = _get_coarse_tok()
     if model is None:
         return None
     tokens: list[str] = model(text)
     candidates = [t for t in tokens if len(t) >= 2]
     return {
-        "engine": "convseg_pku_merged",
+        "engine": "coarse_electra_small",
         "tokens": tokens,
         "candidates": candidates,
     }

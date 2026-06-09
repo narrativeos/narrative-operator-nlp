@@ -32,8 +32,7 @@ ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 # Layer 1: install heavy deps first for cache
 COPY setup.py hanlp/version.py ./
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir tensorflow transformers tf_keras
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Layer 2: copy app and install narrative extras
 COPY . .
@@ -49,8 +48,6 @@ ENV COPAW_HANLP_REQUIRE_LOCAL_MODELS=1
 # HuggingFace mirror (China mainland acceleration)
 ENV HF_ENDPOINT=https://hf-mirror.com
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface
-# TF 2.16+ compat: use legacy Keras for ConvSeg model
-ENV TF_USE_LEGACY_KERAS=1
 
 # Model cache volume (~2-3 GB for all models)
 VOLUME /root/.hanlp
