@@ -6,12 +6,7 @@ NLP operator for NarrativeOS — Protocol-First architecture with three standard
 
 `narrative-operator-nlp` provides NLP capabilities (tokenization, NER, dependency parsing, SRL, etc.) to the NarrativeOS ecosystem. It wraps [HanLP](https://github.com/hankcs/HanLP) as its underlying NLP engine and exposes analysis results through a unified **Narrative Schema Protocol (NSP)** format.
 
-## Architecture
 
-```
-┌─────────────────────────────────────────────────┐
-│                   External World                 │
-│  LLM / Agent / Dify / LangGraph / Studio UI      │
 ├─────────────────────────────────────────────────┤
 │  ① MCP (Model Context Protocol)                   │
 │     → Standard interface for LLM/Agent            │
@@ -112,6 +107,78 @@ python adapters/grpc_server.py
 ```
 
 ## Docker Deployment
+HanLP is the multilingual NLP library designed for researchers and enterprises, built on PyTorch and TensorFlow 2.x to advance state-of-the-art deep learning techniques in academia and industry. HanLP was designed from day one to be
+efficient, user-friendly and extendable.
+
+Thanks to open-access corpora like Universal Dependencies and OntoNotes, HanLP 2.1 now offers 10 joint tasks on [130
+languages](https://hanlp.hankcs.com/docs/api/hanlp/pretrained/mtl.html#hanlp.pretrained.mtl.UD_ONTONOTES_TOK_POS_LEM_FEA_NER_SRL_DEP_SDP_CON_MMINILMV2L6): tokenization, lemmatization, part-of-speech tagging, token feature extraction, dependency parsing,
+constituency parsing, semantic role labeling, semantic dependency parsing, abstract meaning representation (AMR)
+parsing.
+
+For end users, HanLP offers light-weighted RESTful APIs and native Python APIs.
+
+## RESTful APIs
+
+Tiny packages in several KBs for agile development and mobile applications. Although anonymous users are welcomed, an
+auth key is suggested
+and [a free one can be applied here](https://bbs.hankcs.com/t/apply-for-free-hanlp-restful-apis/3178) under
+the [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) license.
+
+<details>
+  <summary>Click to expand tutorials for RESTful APIs</summary>
+
+  ### Python
+
+  ```bash
+  pip install hanlp_restful
+  ```
+
+  Create a client with our API endpoint and your auth.
+
+  ```python
+  from hanlp_restful import HanLPClient
+  HanLP = HanLPClient('https://hanlp.hankcs.com/api', auth=None, language='mul') # Support en, ja, zh, mul
+  ```
+
+  ### Java
+
+  Insert the following dependency into your `pom.xml`.
+
+  ```xml
+  <dependency>
+    <groupId>com.hankcs.hanlp.restful</groupId>
+    <artifactId>hanlp-restful</artifactId>
+    <version>0.0.15</version>
+  </dependency>
+  ```
+
+  Create a client with our API endpoint and your auth.
+
+  ```java
+  HanLPClient HanLP = new HanLPClient("https://hanlp.hankcs.com/api", null, "mul"); // Support en, ja, zh, mul
+  ```
+
+  ### Quick Start
+
+  No matter which language you use, the same interface can be used to parse a document.
+
+  ```python
+  HanLP.parse(
+      "In 2021, HanLPv2.1 delivers state-of-the-art multilingual NLP techniques to production environments. 2021年、HanLPv2.1は次世代の最先端多言語NLP技術を本番環境に導入します。2021年 HanLPv2.1为生产环境带来次世代最先进的多语种NLP技术。")
+  ```
+
+  See [docs](https://hanlp.hankcs.com/docs/tutorial.html) for visualization, annotation guidelines and more details.
+
+</details>
+
+
+## Native APIs
+
+```bash
+pip install hanlp
+```
+
+HanLP requires Python 3.6 or higher. While GPU or TPU acceleration is recommended, it is not mandatory.
 
 ### Quick Start
 
@@ -120,8 +187,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Single container runs both FastAPI (HTTP) and gRPC (Unix Domain Socket).
-First run auto-downloads models (~500 MB) into a persistent volume.
+- In particular, the Python `HanLPClient` can also be used as a callable function following the same semantics.
+  See [docs](https://hanlp.hankcs.com/docs/tutorial.html) for visualization, annotation guidelines and more details.
+- To process English, Chinese or Japanese, HanLP provides mono-lingual models in each language which significantly outperform the
+  multilingual model. See [docs](https://hanlp.hankcs.com/docs/api/hanlp/pretrained/index.html) for the list of models.
 
 ### Configuration (.env)
 

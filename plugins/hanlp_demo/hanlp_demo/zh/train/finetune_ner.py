@@ -9,6 +9,7 @@ from tests import cdroot
 
 cdroot()
 
+# 0. Prepare your dataset for finetuning
 your_training_corpus = 'data/ner/finetune/word_to_iobes.tsv'
 your_development_corpus = your_training_corpus  # Use a different one in reality
 save_dir = 'data/ner/finetune/model'
@@ -25,23 +26,22 @@ IOBES\tO
 '''
         )
 
+# 1. Load a pretrained model for finetuning
 ner = TransformerNamedEntityRecognizer()
-if not os.path.exists(save_dir):
-    print('Start fine-tuning ')
-    ner.fit(
-        trn_data=your_training_corpus,
-        dev_data=your_development_corpus,
-        save_dir=save_dir,
-        epochs=50,  # Since the corpus is small, overfit it
-        finetune=hanlp.pretrained.ner.MSRA_NER_ELECTRA_SMALL_ZH,
-        # You MUST set the same parameters with the fine-tuning model:
-        average_subwords=True,
-        transformer='hfl/chinese-electra-180g-small-discriminator',
-    )
-else:
-    print('Load fine-tuned model')
-    ner = hanlp.load(save_dir)
+ner.load(hanlp.pretrained.ner.MSRA_NER_ELECTRA_SMALL_ZH)
 
+# 2. Override hyper-parameters
+ner.config['epochs'] = 50  # Since the corpus is small, overfit it
+
+# 3. Fit on your dataset
+ner.fit(
+    trn_data=your_training_corpus,
+    dev_data=your_development_corpus,
+    save_dir=save_dir,
+    **ner.config
+)
+
+# 4. Test it out on your data points
 HanLP = hanlp.pipeline()\
     .append(hanlp.load(hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH), output_key='tok')\
     .append(ner, output_key='ner')
