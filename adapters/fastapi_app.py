@@ -406,15 +406,18 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .lang-badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin:1px 2px}
 .lang-badge.modern{background:#1a3a1a;color:#7ee787}
 .lang-badge.classical{background:#3a2a1a;color:#e3b341}
+.lang-badge.english{background:#1a1a3a;color:#79c0ff}
 .lang-table{width:100%;border-collapse:collapse;font-size:12px}
 .lang-table th{text-align:left;padding:6px 8px;color:#8b949e;border-bottom:1px solid #30363d;font-weight:normal}
 .lang-table td{padding:6px 8px;border-bottom:1px solid #21262d}
 .lang-table .sent{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lang-table .classical{color:#e3b341}
 .lang-table .modern{color:#7ee787}
+.lang-table .english{color:#79c0ff}
 .source-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
 .source-dot.hanlp_v2{background:#58a6ff}
 .source-dot.hanlp_lzh{background:#e3b341}
+.source-dot.en_modernbert{background:#79c0ff}
 /* Model Status Indicators */
 .model-status{display:flex;gap:8px;margin:8px 0 12px;flex-wrap:wrap}
 .model-status .stat-item{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;font-size:11px;background:#161b22;border:1px solid #30363d}
@@ -456,9 +459,9 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
   <span class="lang-tag classical">🏯 古汉语</span>
   <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('The cat sat on the mat. This is a simple test sentence.','english')">
+<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. Microsoft is based in Redmond.','english')">
   <span class="lang-tag english">🇬🇧 英文</span>
-  <span class="preview">The cat sat on the mat. This is a simple test sentence.</span>
+  <span class="preview">Apple was founded by Steve Jobs in California. Microsoft is based in Redmond.</span>
 </div>
 </div>
 <div class="input-area">
@@ -554,17 +557,21 @@ function renderNSP(data){
     const langMode=meta.language_mode||'auto';
     const langBadge=langMode==='classical'?'<span class="lang-badge classical">🏯 古汉语</span>'
         :langMode==='modern'?'<span class="lang-badge modern">📄 现代汉语</span>'
+        :langMode==='english'?'<span class="lang-badge english">🇬🇧 English</span>'
         :'<span class="lang-badge" style="background:#1a1a3a;color:#79c0ff">🔄 自动识别</span>';
 
     // Language stats
     const langSents=c.sentences||[];
     const classicalCount=langSents.filter(s=>s.label==='classical').length;
     const modernCount=langSents.filter(s=>s.label==='modern').length;
+    const englishCount=langSents.filter(s=>s.label==='english').length;
 
     const tokens=c.tokens.map(t=>{
         const pct=Math.round((t.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
-        const sourceDot=t.source==='hanlp_lzh'?'<span class="source-dot hanlp_lzh" title="古汉语模型"></span>':'<span class="source-dot hanlp_v2" title="现代汉语模型"></span>';
+        const sourceDot=t.source==='hanlp_lzh'?'<span class="source-dot hanlp_lzh" title="古汉语模型"></span>'
+            :t.source==='en_modernbert'?'<span class="source-dot en_modernbert" title="英文模型"></span>'
+            :'<span class="source-dot hanlp_v2" title="现代汉语模型"></span>';
         return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}% source:${t.source}">${sourceDot}${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
     }).join('');
 
@@ -592,7 +599,8 @@ function renderNSP(data){
     const langStats=langSents.length>0?`
     <div class="stat">${langBadge}</div>
     <div class="stat">🏯 <b>${classicalCount}</b> 古汉语句</div>
-    <div class="stat">📄 <b>${modernCount}</b> 现代语句</div>`:'';
+    <div class="stat">📄 <b>${modernCount}</b> 现代语句</div>
+    <div class="stat">🇬🇧 <b>${englishCount}</b> 英文句</div>`:'';
 
     document.getElementById('nsp').innerHTML=`
     <div class="stats">
@@ -603,7 +611,7 @@ function renderNSP(data){
     ${langStats}
     </div>
     ${newWordsHtml}
-    <div class="card"><h3>📝 分词 & POS <span style="font-size:11px;color:#484f58">●蓝=现代模型 · ●黄=古汉语模型</span></h3><div style="line-height:2">${tokens}</div></div>
+    <div class="card"><h3>📝 分词 & POS <span style="font-size:11px;color:#484f58">●蓝=现代 · ●黄=古汉语 · ●浅蓝=英文</span></h3><div style="line-height:2">${tokens}</div></div>
     <div class="card"><h3>🏷️ 实体 Entities</h3><div>${entities}</div></div>
     <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>`;
 }
@@ -787,14 +795,14 @@ function renderLangDetect(data){
     }
     const sents=data.content.sentences;
     const mode=data.meta.language_mode||'auto';
-    const modeLabel=mode==='classical'?'🏯 古汉语 (强制)':mode==='modern'?'📄 现代汉语 (强制)':'🔄 自动识别';
+    const modeLabel=mode==='classical'?'🏯 古汉语 (强制)':mode==='modern'?'📄 现代汉语 (强制)':mode==='english'?'🇬🇧 English (强制)':'🔄 自动识别';
 
     const rows=sents.map((s,i)=>{
-        const label=s.label==='classical'?'🏯 古汉语':'📄 现代汉语';
-        const cls=s.label==='classical'?'classical':'modern';
+        const label=s.label==='classical'?'🏯 古汉语':s.label==='english'?'🇬🇧 English':'📄 现代汉语';
+        const cls=s.label==='classical'?'classical':s.label==='english'?'english':'modern';
         const pct=Math.round(s.confidence*100);
         const barWidth=Math.round(s.confidence*100);
-        const barColor=s.label==='classical'?'#e3b341':'#7ee787';
+        const barColor=s.label==='classical'?'#e3b341':s.label==='english'?'#79c0ff':'#7ee787';
         const sentShort=s.text.length>40?s.text.slice(0,38)+'…':s.text;
         return `<tr>
             <td>${i+1}</td>
