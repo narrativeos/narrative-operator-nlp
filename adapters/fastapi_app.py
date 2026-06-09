@@ -999,6 +999,15 @@ function _renderResults(data){
     renderLangDetect(data);
 }
 </script>
+<footer style="margin-top:40px;padding:16px 20px;border-top:1px solid #21262d;text-align:center;font-size:11px;color:#484f58">
+  <p style="margin:0 0 6px">Narrative Operator NLP · Apache 2.0</p>
+  <p style="margin:0">
+    Powered by <a href="https://github.com/hankcs/HanLP" style="color:#58a6ff" target="_blank">HanLP</a> (Apache 2.0) ·
+    <a href="https://github.com/google-research/electra" style="color:#58a6ff" target="_blank">ELECTRA</a> (Apache 2.0) ·
+    <a href="https://github.com/AnswerDotAI/ModernBERT" style="color:#58a6ff" target="_blank">ModernBERT</a> (Apache 2.0) ·
+    <a href="https://github.com/koheiw/kyoto-eva" style="color:#58a6ff" target="_blank">KYOTO-EVAHAN</a> (CC BY 4.0)
+  </p>
+</footer>
 </body>
 </html>"""
 

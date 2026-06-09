@@ -239,4 +239,28 @@ Open `http://localhost:8000/demo` for interactive visualization.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details. HanLP is also licensed under Apache 2.0.
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
+
+### Third-Party Components
+
+| Component | License | Usage |
+|-----------|---------|-------|
+| [HanLP](https://github.com/hankcs/HanLP) | Apache 2.0 | NLP engine |
+| ELECTRA-small (Chinese MTL) | Apache 2.0 | Modern Chinese pipeline |
+| [ModernBERT](https://github.com/AnswerDotAI/ModernBERT) (Answer.AI) | Apache 2.0 | English pipeline |
+| KYOTO-EVAHAN (LZH) | CC BY 4.0 | Classical Chinese pipeline |
+
+### Citation
+
+If you use HanLP in your research, please cite:
+
+```bibtex
+@inproceedings{he-choi-2021-stem,
+    title = "The Stem Cell Hypothesis: Dilemma behind Multi-Task Learning with Transformer Encoders",
+    author = "He, Han and Choi, Jinho D.",
+    booktitle = "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing",
+    year = "2021",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2021.emnlp-main.451",
+}
+```
