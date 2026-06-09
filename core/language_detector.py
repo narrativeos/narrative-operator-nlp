@@ -455,11 +455,11 @@ def classify(text: str) -> tuple[LanguageClass, float]:
     Conservative principle: when modern and classical signals coexist,
     default to modern. Only pure classical sentences route to LZH model.
 
-    Thresholds (calibrated for 3-layer scoring + mixed penalty):
-        confidence < 0.35  →  modern-first, no fallback
-        0.35 <= c < 0.48   →  modern-first, with fallback
-        0.48 <= c < 0.65   →  classical-first, with fallback
-        c >= 0.65          →  classical-first, no fallback
+    Thresholds:
+        confidence < 0.35  →  modern
+        0.35 <= c < 0.48   →  modern
+        0.48 <= c < 0.65   →  classical
+        c >= 0.65          →  classical
     """
     conf = classical_confidence(text)
 
@@ -470,8 +470,3 @@ def classify(text: str) -> tuple[LanguageClass, float]:
     if conf >= 0.48:
         return ("classical", conf)
     return ("modern", conf)
-
-
-def should_fallback(confidence: float) -> bool:
-    """Whether to try the alternative model on poor-quality output."""
-    return 0.35 <= confidence <= 0.65

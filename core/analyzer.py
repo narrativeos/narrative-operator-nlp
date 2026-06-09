@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Optional
 
-from .language_detector import classify, should_fallback, classical_confidence
+from .language_detector import classify, classical_confidence
 from .mapper import HanlpSchemaMapper
 from .schema import NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 
@@ -276,14 +276,18 @@ def analyze(text: str, dict_combine: Optional[set] = None,
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
             tokens, entities, relations, patterns, ok = _analyze_classical(seg_text, seg_offset, mapper)
-            if not ok and should_fallback(conf):
-                logger.info("Classical→Modern fallback for: %s...", seg_text[:20])
-                tokens, entities, relations, patterns, _ = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+            if not ok:
+                logger.warning(
+                    "Classical segment not analyzed (model unavailable): %s...",
+                    seg_text[:20],
+                )
         else:
             tokens, entities, relations, patterns, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
-            if not ok and should_fallback(conf):
-                logger.info("Modern→Classical fallback for: %s...", seg_text[:20])
-                tokens, entities, relations, patterns, _ = _analyze_classical(seg_text, seg_offset, mapper)
+            if not ok:
+                logger.warning(
+                    "Modern segment not analyzed: %s...",
+                    seg_text[:20],
+                )
         all_tokens.extend(tokens)
         all_entities.extend(entities)
         all_relations.extend(relations)
