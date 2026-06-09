@@ -38,13 +38,32 @@ def _get_modern_pipeline():
     return _modern_pipeline
 
 
+_LZH_MODEL_URL = (
+    "https://file.hankcs.com/hanlp/mtl/"
+    "kyoto_evahan_tok_lem_pos_udep_bert-ancient-chinese_lr_1_aug_dict_20250112_154422.zip"
+)
+
+
 def _get_classical_pipeline():
     global _classical_pipeline
     if _classical_pipeline is None:
         import hanlp
-        _classical_pipeline = hanlp.load(
-            hanlp.pretrained.mtl.KYOTO_EVAHAN_TOK_LEM_POS_UDEP_LZH
-        )
+        try:
+            # Try the published pretrained constant first (future HanLP versions)
+            _classical_pipeline = hanlp.load(
+                hanlp.pretrained.mtl.KYOTO_EVAHAN_TOK_LEM_POS_UDEP_LZH
+            )
+        except AttributeError:
+            # Fallback: load by direct URL (current HanLP version)
+            try:
+                _classical_pipeline = hanlp.load(_LZH_MODEL_URL)
+            except Exception as exc:
+                logger.warning(
+                    "Classical Chinese model (LZH) not available: %s. "
+                    "Install with: python scripts/setup_models.py --model LZH",
+                    exc,
+                )
+                return None
         logger.info("Classical Chinese HanLP pipeline loaded (KYOTO-EVAHAN).")
     return _classical_pipeline
 
@@ -130,8 +149,11 @@ def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
 def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper
                        ) -> tuple[list, list, list, list, bool]:
     try:
-        raw = _get_classical_pipeline()(text)
-    except (AttributeError, ImportError):
+        pipeline = _get_classical_pipeline()
+        if pipeline is None:
+            raise RuntimeError("Classical pipeline not loaded")
+        raw = pipeline(text)
+    except (AttributeError, ImportError, RuntimeError):
         logger.warning("Classical Chinese model not available. Skipping.")
         return [], [], [], [], False
     except Exception as exc:
