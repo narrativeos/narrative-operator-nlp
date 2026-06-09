@@ -134,6 +134,8 @@ _MODERN_WORDS: tuple[str, ...] = (
     "通过", "根据", "按照", "对于", "关于",
     "一个", "一种", "一样", "一起", "一些",
     "进行", "实现", "发展", "建设", "提高",
+    "记载", "认为", "研究", "表明", "分析",
+    "所谓", "其中", "例如", "包括",
 )
 
 # Modern sentence-final particles (strong modern signal)
@@ -258,7 +260,9 @@ def classical_confidence(text: str) -> float:
     score += min(pronoun_count * 0.05 + demonstr_count * 0.04, 0.10)
 
     # 1d. Classical copula & existential verbs (0.0–0.06)
-    copula_count = sum(1 for c in text_no_punct if c in _CLASSICAL_COPULA_CHARS)
+    copula_count = sum(1 for c in text_no_punct
+                       if c in _CLASSICAL_COPULA_CHARS
+                       and not (c == "是" and ("于是" in text or "是故" in text)))
     existential_count = sum(1 for c in text_no_punct if c in _CLASSICAL_EXISTENTIAL)
     score += min(copula_count * 0.03 + existential_count * 0.03, 0.06)
 
@@ -283,6 +287,10 @@ def classical_confidence(text: str) -> float:
     # 1i. Arabic digits / Latin letters (strong modern, -0.08)
     if _MODERN_ALPHANUM.search(text):
         score -= 0.08
+
+    # 1j. Modern punctuation markers: 《》 (book titles, strong modern signal)
+    if "《" in text or "》" in text:
+        score -= 0.06
 
     # ================================================================
     # Layer 2 — Lexical/Grammatical Patterns (max +0.42, -0.22)
@@ -381,6 +389,59 @@ def classical_confidence(text: str) -> float:
 
 
 # ===========================================================================
+# Mixed-Signal Penalty
+# ===========================================================================
+
+def _apply_mixed_penalty(score: float, text: str, text_no_punct: str) -> float:
+    """
+    If a sentence has both classical and modern signals, it is likely
+    a modern sentence that happens to contain classical-style words
+    (e.g., 北京立方庭位于海淀区 where 位于 looks classical but isn't).
+
+    This penalty ensures that mixed sentences default to modern unless
+    classical signals are overwhelmingly dominant.
+    """
+    # Count classical signal types present
+    classical_present = 0
+    if any(c in _CLASSICAL_FUNCTION for c in text_no_punct):
+        classical_present += 1
+    if any(c in _CLASSICAL_FINAL for c in text_no_punct):
+        classical_present += 1
+    if any(c in _CLASSICAL_PRONOUNS for c in text_no_punct):
+        classical_present += 1
+    if any(c in _CLASSICAL_DEMONSTRATIVES for c in text_no_punct):
+        classical_present += 1
+    if any(c in _CLASSICAL_COPULA_CHARS for c in text_no_punct):
+        classical_present += 1
+
+    # Count modern signal types present (with classical exception for 于是/是故)
+    modern_present = 0
+    if any(c in _MODERN_PARTICLES for c in text_no_punct):
+        modern_present += 1
+    if any(c in _MODERN_PRONOUNS for c in text_no_punct):
+        modern_present += 1
+    # "是" only counts as modern if NOT in classical compound "于是"/"是故"
+    if any(c in _MODERN_COPULA for c in text_no_punct):
+        if "于是" not in text_no_punct and "是故" not in text_no_punct:
+            modern_present += 1
+    # Modern book-title brackets (《》, strong modern signal)
+    if "《" in text or "》" in text:
+        modern_present += 1
+    # Modern words found in the text
+    if any(w in text for w in _MODERN_WORDS):
+        modern_present += 1
+
+    if modern_present >= 1 and classical_present >= 1:
+        # Mixed signals — penalize proportionally to modern signal strength
+        # More modern signals = stronger penalty
+        if modern_present >= 2:
+            return score * 0.5  # Strong modern presence: halve the score
+        return score * 0.65  # Single modern signal: reduce significantly
+
+    return score
+
+
+# ===========================================================================
 # Classification
 # ===========================================================================
 
@@ -391,21 +452,26 @@ def classify(text: str) -> tuple[LanguageClass, float]:
     """
     Classify text and return (primary_language, confidence).
 
-    The primary language determines which model to try FIRST.
-    Confidence drives the fallback decision in the two-stage pipeline.
+    Conservative principle: when modern and classical signals coexist,
+    default to modern. Only pure classical sentences route to LZH model.
 
-    Thresholds (calibrated for 3-layer scoring):
-        confidence < 0.30  →  modern-first, no fallback
-        0.30 <= c < 0.42   →  modern-first, with fallback
-        0.42 <= c < 0.60   →  classical-first, with fallback
-        c >= 0.60          →  classical-first, no fallback
+    Thresholds (calibrated for 3-layer scoring + mixed penalty):
+        confidence < 0.35  →  modern-first, no fallback
+        0.35 <= c < 0.48   →  modern-first, with fallback
+        0.48 <= c < 0.65   →  classical-first, with fallback
+        c >= 0.65          →  classical-first, no fallback
     """
     conf = classical_confidence(text)
-    if conf >= 0.42:
+
+    # Strip punctuation and apply mixed-signal penalty
+    text_no_punct = re.sub(r"[，。！？；、：\s]", "", text.strip())
+    conf = _apply_mixed_penalty(conf, text, text_no_punct)  # pass both
+
+    if conf >= 0.48:
         return ("classical", conf)
     return ("modern", conf)
 
 
 def should_fallback(confidence: float) -> bool:
     """Whether to try the alternative model on poor-quality output."""
-    return 0.30 <= confidence <= 0.60
+    return 0.35 <= confidence <= 0.65
