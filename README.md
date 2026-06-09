@@ -239,7 +239,7 @@ Open `http://localhost:8000/demo` for interactive visualization.
 
 ## License
 
-This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Copyright (c) 2025 北京九录科技有限公司. Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 ### Third-Party Components
 

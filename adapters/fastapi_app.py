@@ -81,6 +81,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    license_info={"name": "Apache 2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0"},
 )
 
 
@@ -1000,7 +1001,7 @@ function _renderResults(data){
 }
 </script>
 <footer style="margin-top:40px;padding:16px 20px;border-top:1px solid #21262d;text-align:center;font-size:11px;color:#484f58">
-  <p style="margin:0 0 6px">Narrative Operator NLP · Apache 2.0</p>
+  <p style="margin:0 0 6px">Narrative Operator NLP · © 2025 北京九录科技有限公司 · Apache 2.0</p>
   <p style="margin:0">
     Powered by <a href="https://github.com/hankcs/HanLP" style="color:#58a6ff" target="_blank">HanLP</a> (Apache 2.0) ·
     <a href="https://github.com/google-research/electra" style="color:#58a6ff" target="_blank">ELECTRA</a> (Apache 2.0) ·
