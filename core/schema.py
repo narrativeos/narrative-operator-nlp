@@ -123,6 +123,45 @@ class EntityAttribute(BaseModel):
     value: str = Field(default="", description="Attribute value, e.g. '高'")
     predicate_verb: str = Field(default="", description="Original SRL predicate, e.g. '具有'")
     confidence: float = Field(default=0.80, ge=0.0, le=1.0)
+    source_relation_id: Optional[str] = Field(
+        default=None,
+        description="Source relation ID for traceability back to the original relation"
+    )
+
+
+# ── Relation Modifier ──
+
+class RelationModifier(BaseModel):
+    """A modifier/qualifier on a relation (e.g. degree, negation, scope).
+
+    Extracted from the evidence text using built-in or custom dictionaries.
+    The matched_dict field indicates the source for transparency.
+    """
+    text: str = Field(..., min_length=1, description="Modifier surface text, e.g. '非常', 'not'")
+    type: str = Field(
+        ...,
+        description="Modifier type: degree|scope|negation|quantity|condition|temporal|comparison|emphasis"
+    )
+    span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+    matched_dict: str = Field(
+        default="builtin",
+        description="Dictionary source: builtin (built-in) or custom (user-provided)"
+    )
+
+    @field_validator("span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def type_valid(cls, v: str) -> str:
+        valid_types = {"degree", "scope", "negation", "quantity", "condition", "temporal", "comparison", "emphasis"}
+        if v not in valid_types:
+            raise ValueError(f"Unknown modifier type: {v}. Must be one of {sorted(valid_types)}")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +218,10 @@ class Relation(BaseModel):
     evidence_span: tuple[int, int] = Field(..., description="Character offset of evidence in original text")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score [0, 1]")
     source: str = Field(default="", description="Extraction source, e.g. dep/nsubj")
+    modifiers: list["RelationModifier"] = Field(
+        default_factory=list,
+        description="Relation modifiers/qualifiers (degree, negation, scope, etc.)"
+    )
 
     @field_validator("evidence_span")
     @classmethod
