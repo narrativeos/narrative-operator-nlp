@@ -48,26 +48,31 @@ def _load_default_parameter_keywords() -> frozenset:
 
 
 # Minimum score threshold for discovered words to become entities
-# PMI-based scores: 3.0+ is strong, 2.0+ is moderate
 _DISCOVER_ENTITY_THRESHOLD = 3.0
+
+
+def _spans_overlap(
+    span: tuple[int, int],
+    existing: set[tuple[int, int]],
+) -> bool:
+    """Check if a span overlaps with any existing span."""
+    s, e = span
+    for es, ee in existing:
+        if s < ee and e > es:
+            return True
+    return False
 
 
 class EntityMappingRules:
     """Orchestrates entity extraction from HanLP output.
 
-    Three-layer pipeline:
+    Five-layer pipeline:
       1. NER models (PERSON/LOCATION/ORGANIZATION/FACILITY)
       2. New word discovery (UNKNOWN — optional, user-controlled)
-      3. User custom dictionary (optional, passed via entity_categories)
-
-    Usage:
-        rules = EntityMappingRules()
-        entities = rules.map_all(text, raw, tokens)
-
-        # With custom dictionary:
-        rules = EntityMappingRules(entity_categories={
-            "MATERIAL": ["石墨烯"],
-        })
+      3a. Built-in keywords (material/standard/parameter)
+      3b. Numeric entities (dates/amounts/percentages)
+      3c. POS-based fallback (NNP/PROPN for modern Chinese)
+      3d. Classical Chinese fallback (when no NER/SRL)
     """
 
     def __init__(
@@ -75,7 +80,6 @@ class EntityMappingRules:
         config_dir: Optional[str] = None,
         entity_categories: Optional[dict[str, list[str]]] = None,
     ):
-        # Each component loads its own config file from the config directory
         if config_dir is None:
             config_dir = str(Path(__file__).parent.parent / "config")
 
@@ -84,7 +88,6 @@ class EntityMappingRules:
         self._merger = EntityMerger._from_dir(config_dir)
         self._id_gen = EntityIdGenerator()
 
-        # Layer 3: Inject user-defined custom keywords
         if entity_categories:
             self._keyword_extractor.add_keywords(entity_categories)
             logger.info(
@@ -92,7 +95,6 @@ class EntityMappingRules:
                 len(entity_categories),
             )
 
-        # Sync _PARAMETER for backward compatibility with mapper.py
         _load_default_parameter_keywords()
 
     @property
@@ -108,14 +110,12 @@ class EntityMappingRules:
         return self._merger
 
     def reset(self):
-        """Reset per-request state. Must be called before each new analysis."""
         self._id_gen.reset()
 
     # ── Public API (backward compatible) ──
 
     def map(self, raw_tuple: tuple, source: str, tokens: list[Token],
             text: str = "") -> Optional[Entity]:
-        """Map a single NER tuple to an Entity."""
         if len(raw_tuple) < 4:
             return None
 
@@ -157,27 +157,6 @@ class EntityMappingRules:
         entity_dict: dict[str, str] | None = None,
         auto_discover_entities: bool = False,
     ) -> list[Entity]:
-        """Extract all entities from HanLP output.
-
-        Pipeline:
-          Layer 1: NER models → known categories
-          Layer 2: New word discovery → UNKNOWN (optional, user-controlled)
-          Layer 3: Built-in keywords (material/standard/parameter)
-          Layer 3: User custom dictionary (if provided via __init__)
-          Merge: same-category merge → cross-category merge → dedup → sort
-
-        Args:
-            text: Original text.
-            raw: HanLP output dict.
-            tokens: Token list.
-            entity_dict: Optional user-provided entity dictionary (backward compat).
-            auto_discover_entities: If True, run new word discovery (PMI+MTL)
-                and promote high-score candidates to UNKNOWN entities.
-                Default False — discovery is opt-in so users control recall/precision.
-
-        Returns:
-            Sorted list of Entity objects.
-        """
         entities: list[Entity] = []
 
         # ── Layer 1: NER models ──
@@ -187,24 +166,28 @@ class EntityMappingRules:
                 if mapped and not EntityDeduplicator.is_duplicate(mapped, entities):
                     entities.append(mapped)
 
-        # ── Layer 2: New word discovery (optional, user-controlled) ──
+        # ── Layer 2: New word discovery ──
         if auto_discover_entities:
             discover_entities = self._extract_from_discover(tokens, entities, text)
             entities.extend(discover_entities)
 
-        # ── Layer 3a: Built-in keyword extraction (material/standard/parameter) ──
+        # ── Layer 3a: Built-in keyword extraction ──
         keyword_entities = self._keyword_extractor.extract(
             tokens, entities, text, self._id_gen
         )
         entities.extend(keyword_entities)
 
-        # ── Layer 3b: Numeric entity extraction (dates, amounts, percentages) ──
+        # ── Layer 3b: Numeric entity extraction ──
         from .numeric_extractor import extract_numeric_entities
         entity_spans = {(e.span[0], e.span[1]) for e in entities}
         numeric_entities = extract_numeric_entities(text, entity_spans, self._id_gen)
         entities.extend(numeric_entities)
 
-        # ── Layer 3c: Classical Chinese fallback (when no NER/SRL) ──
+        # ── Layer 3c: POS-based fallback for modern Chinese ──
+        pos_entities = self._extract_pos_based_entities(tokens, entities, text)
+        entities.extend(pos_entities)
+
+        # ── Layer 3d: Classical Chinese fallback (when no NER/SRL) ──
         has_ner = any(
             raw.get(k) for k in self._label_mapper.ner_sources
         )
@@ -238,16 +221,6 @@ class EntityMappingRules:
         existing_entities: list[Entity],
         text: str,
     ) -> list[Entity]:
-        """Extract entities from new word discovery (PMI+MTL).
-
-        Runs the discoverer module, filters candidates by score threshold,
-        and promotes high-score candidates to UNKNOWN entities.
-
-        This is the industry-standard approach for unsupervised entity
-        discovery, replacing the previous POS-based extraction.
-
-        All extracted entities have category=UNKNOWN and source="discover".
-        """
         from .discoverer import discover as run_discover
 
         result: list[Entity] = []
@@ -265,7 +238,6 @@ class EntityMappingRules:
             )
 
             for c in candidates.candidates:
-                # Find the word in text to get span
                 idx = text.find(c.word)
                 if idx < 0:
                     continue
@@ -277,8 +249,6 @@ class EntityMappingRules:
                 if ent_id is None:
                     continue
 
-                # Convert PMI score to confidence [0, 1]
-                # PMI scores typically range 0-10; normalize to 0.5-0.85
                 confidence = min(0.85, 0.5 + c.score * 0.05)
 
                 result.append(Entity(
@@ -316,6 +286,108 @@ class EntityMappingRules:
                 return idx, idx + len(ent_text)
         return 0, len(ent_text)
 
+    # ── POS-based entity extraction (modern Chinese fallback) ──
+
+    def _extract_pos_based_entities(
+        self,
+        tokens: list[Token],
+        existing_entities: list[Entity],
+        text: str,
+    ) -> list[Entity]:
+        """Extract entities from POS tags when NER misses them."""
+        result: list[Entity] = []
+        entity_spans = {(e.span[0], e.span[1]) for e in existing_entities}
+
+        NON_ENTITY_WORDS = {
+            "的", "了", "在", "是", "我", "有", "和", "就",
+            "不", "人", "都", "把", "被", "对", "从", "到",
+        }
+
+        ORG_SUFFIXES = {"公司", "集团", "有限", "股份", "中心", "院", "所",
+                       "大学", "学院", "学校", "医院", "银行", "部", "局",
+                       "委员会", "协会", "学会", "会", "社", "馆"}
+        LOC_SUFFIXES = {"省", "市", "区", "县", "路", "街", "镇", "村",
+                       "国", "州", "岛", "山", "河", "湖", "海", "港"}
+        PRODUCT_SUFFIXES = {"手机", "电脑", "汽车", "系统", "平台", "软件",
+                          "服务", "产品", "技术", "芯片"}
+
+        i = 0
+        while i < len(tokens):
+            t = tokens[i]
+
+            span_key = (t.span[0], t.span[1])
+            if span_key in entity_spans:
+                i += 1
+                continue
+
+            if t.pos not in ("NNP", "PROPN", "NR"):
+                i += 1
+                continue
+
+            if len(t.text) < 2:
+                i += 1
+                continue
+
+            merged_text = t.text
+            merged_end = t.span[1]
+            j = i + 1
+            while j < len(tokens):
+                nxt = tokens[j]
+                if nxt.pos in ("NNP", "PROPN", "NR") and nxt.span[0] == merged_end:
+                    if nxt.text in NON_ENTITY_WORDS:
+                        break
+                    merged_text += nxt.text
+                    merged_end = nxt.span[1]
+                    j += 1
+                else:
+                    break
+
+            merged_span = (t.span[0], merged_end)
+            if _spans_overlap(merged_span, entity_spans):
+                i = j
+                continue
+
+            category = self._guess_entity_category(merged_text, ORG_SUFFIXES,
+                                                    LOC_SUFFIXES, PRODUCT_SUFFIXES)
+
+            ent_id = self._id_gen.generate(merged_text, merged_span, category)
+            if ent_id is None:
+                i = j
+                continue
+
+            result.append(Entity(
+                id=ent_id,
+                text=merged_text,
+                category=category,
+                span=merged_span,
+                normalized=merged_text,
+                source="pos/nnp",
+                confidence=0.55,
+            ))
+            entity_spans.add(merged_span)
+            i = j
+
+        result.sort(key=lambda e: e.span[0])
+        return result
+
+    @staticmethod
+    def _guess_entity_category(
+        text: str,
+        org_suffixes: set[str],
+        loc_suffixes: set[str],
+        product_suffixes: set[str],
+    ) -> str:
+        for suffix in sorted(org_suffixes, key=len, reverse=True):
+            if text.endswith(suffix):
+                return "ORGANIZATION"
+        for suffix in sorted(loc_suffixes, key=len, reverse=True):
+            if text.endswith(suffix):
+                return "LOCATION"
+        for suffix in sorted(product_suffixes, key=len, reverse=True):
+            if text.endswith(suffix):
+                return "PRODUCT"
+        return "UNKNOWN"
+
     # ── Classical Chinese entity extraction ──
 
     def _map_classical_entities(
@@ -325,12 +397,10 @@ class EntityMappingRules:
         raw: dict | None = None,
         entity_dict: dict[str, str] | None = None,
     ) -> list[Entity]:
-        """Extract entities from classical Chinese using model-native signals."""
         entities: list[Entity] = []
         entity_spans: set[tuple[int, int]] = set()
         xpos_tags: list[str] = (raw or {}).get("pos/xpos", [])
 
-        # Strategy 1: User-provided entity dictionary
         if entity_dict:
             sorted_dict = sorted(entity_dict.items(), key=lambda x: -len(x[0]))
             for term, cat in sorted_dict:
@@ -357,7 +427,6 @@ class EntityMappingRules:
                             entity_spans.add(span_key)
                     start = idx + 1
 
-        # Strategy 2: PROPN/NR
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
@@ -381,7 +450,6 @@ class EntityMappingRules:
                     ))
                     entity_spans.add(span_key)
 
-        # Strategy 3: xpos-only
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
@@ -416,7 +484,6 @@ class EntityMappingRules:
 
     @staticmethod
     def _parse_xpos_category(xpos: str) -> Optional[str]:
-        """Parse LZH xpos semantic categories into NSP entity categories."""
         if not xpos or "," not in xpos:
             return None
         parts = xpos.split(",")
