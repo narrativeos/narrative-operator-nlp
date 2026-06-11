@@ -128,17 +128,17 @@ class CorefResolver:
 
         Args:
             text: Original text.
-            entities: Recognized entities.
+            entities: Recognized entities (may be empty if NER fails).
             tokens: Tokenized tokens.
             language: Language mode: modern|classical|english.
 
         Returns:
             CorefResult with resolved chains.
-        """
-        if not entities:
-            return CorefResult(language=language)
 
-        # Step 1: Build mention candidates (entities + pronouns)
+        Note: Even when NER produces no entities, this resolver still works
+        by extracting noun phrases from POS tags as mention candidates.
+        """
+        # Step 1: Build mention candidates (entities + pronouns + noun phrases)
         mentions = self._build_mentions(text, entities, tokens, language)
         if not mentions:
             return CorefResult(language=language)
@@ -161,11 +161,16 @@ class CorefResolver:
         tokens: list[Token],
         language: str,
     ) -> list[Mention]:
-        """Build mention candidates from entities and pronouns."""
+        """Build mention candidates from entities, pronouns, and noun phrases.
+
+        Key insight: even when NER produces no entities, we can still extract
+        noun phrases from POS tags as mention candidates. This allows coreference
+        resolution to work independently of NER quality.
+        """
         mentions: list[Mention] = []
         pronoun_dict = self._get_pronoun_dict(language)
 
-        # Add entity mentions
+        # ── 1. Entity mentions (from NER) ──
         for ent in entities:
             mentions.append(Mention(
                 text=ent.text,
@@ -175,11 +180,31 @@ class CorefResolver:
                 is_principal=True,
             ))
 
-        # Add pronoun mentions
+        # ── 2. Noun phrase mentions (from POS tags, independent of NER) ──
+        # This is the key fix: extract noun phrases even when NER fails
+        noun_mention_spans = self._extract_noun_phrases(tokens, language)
+        for np_text, np_span in noun_mention_spans:
+            # Skip if already covered by an entity
+            if self._is_covered_by_entity(np_span, entities):
+                continue
+            # Skip if it's a pronoun (handled separately)
+            if np_text in pronoun_dict:
+                continue
+            mentions.append(Mention(
+                text=np_text,
+                span=np_span,
+                mention_type="nominal",
+                entity_id=None,
+                is_principal=False,
+            ))
+
+        # ── 3. Pronoun mentions ──
         for tok in tokens:
             if tok.text in pronoun_dict:
-                # Check if this pronoun is already covered by an entity
+                # Check if this pronoun is already covered by an entity or noun phrase
                 if self._is_covered_by_entity(tok.span, entities):
+                    continue
+                if any(tok.span[0] >= np[1][0] and tok.span[1] <= np[1][1] for np in noun_mention_spans):
                     continue
                 mentions.append(Mention(
                     text=tok.text,
@@ -189,13 +214,74 @@ class CorefResolver:
                     is_principal=False,
                 ))
 
-        # Add demonstrative + noun mentions (该/此/本 + N)
+        # ── 4. Demonstrative + noun mentions (该/此/本 + N) ──
         if language in ("modern", "classical"):
             mentions.extend(self._find_demonstrative_mentions(text, tokens, entities))
 
         # Sort by span
         mentions.sort(key=lambda m: m.span[0])
         return mentions
+
+    def _extract_noun_phrases(
+        self,
+        tokens: list[Token],
+        language: str,
+    ) -> list[tuple[str, tuple[int, int]]]:
+        """Extract noun phrases from POS tags.
+
+        Returns a list of (text, span) tuples for multi-word noun phrases
+        and significant single-word nouns.
+
+        Strategy:
+        - Chinese: consecutive NR/NN tokens, or NR alone
+        - English: consecutive NOUN/PROPN tokens, or PROPN alone
+        """
+        phrases: list[tuple[str, tuple[int, int]]] = []
+        if not tokens:
+            return phrases
+
+        if language == "english":
+            # English: PROPN sequences are entity-like mentions
+            noun_poses = {"PROPN", "NOUN", "NNP", "NN"}
+            i = 0
+            while i < len(tokens):
+                if tokens[i].pos in noun_poses:
+                    start = i
+                    # Extend while consecutive nouns
+                    while i < len(tokens) and tokens[i].pos in noun_poses:
+                        i += 1
+                    # Only keep if: PROPN (always) or multi-word or significant NN
+                    chunk_tokens = tokens[start:i]
+                    has_proper = any(t.pos in ("PROPN", "NNP") for t in chunk_tokens)
+                    is_multi = len(chunk_tokens) >= 2
+                    if has_proper or is_multi:
+                        text = "".join(t.text for t in chunk_tokens)
+                        span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
+                        phrases.append((text, span))
+                else:
+                    i += 1
+        else:
+            # Chinese: NR (proper noun) or NN sequences
+            noun_poses = {"NR", "NN", "NT"}
+            i = 0
+            while i < len(tokens):
+                if tokens[i].pos in noun_poses:
+                    start = i
+                    # Extend while consecutive nouns
+                    while i < len(tokens) and tokens[i].pos in noun_poses:
+                        i += 1
+                    chunk_tokens = tokens[start:i]
+                    has_proper = any(t.pos == "NR" for t in chunk_tokens)
+                    is_multi = len(chunk_tokens) >= 2
+                    # Always extract proper nouns, or multi-word noun phrases
+                    if has_proper or is_multi:
+                        text = "".join(t.text for t in chunk_tokens)
+                        span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
+                        phrases.append((text, span))
+                else:
+                    i += 1
+
+        return phrases
 
     def _get_pronoun_dict(self, language: str) -> dict[str, dict]:
         """Get pronoun dictionary for the given language."""
@@ -246,17 +332,18 @@ class CorefResolver:
         """Cluster mentions into coreference chains.
 
         Algorithm:
-        1. Group by exact text match (same-name entities)
-        2. Resolve pronouns to nearest compatible entity
-        3. Merge small clusters
+        1. Group by exact text match (same-name entities AND nominals)
+        2. Resolve pronouns to nearest compatible anchor (entity or nominal)
+        3. Resolve nominal mentions to nearest compatible anchor
         """
         clusters: list[list[Mention]] = []
         used = set()
 
-        # Step 1: Group entities by text (same-name)
+        # Step 1: Group by exact text match (entities AND nominals)
+        # This is key: even without NER, repeated noun phrases form clusters
         text_groups: dict[str, list[Mention]] = {}
         for m in mentions:
-            if m.mention_type == "entity":
+            if m.mention_type in ("entity", "nominal"):
                 text_groups.setdefault(m.text, []).append(m)
 
         for text, group in text_groups.items():
@@ -265,7 +352,15 @@ class CorefResolver:
                 for m in group:
                     used.add(id(m))
 
-        # Step 2: Resolve pronouns
+        # Also add single nominals as singleton clusters (they can attract pronouns)
+        for text, group in text_groups.items():
+            if len(group) == 1:
+                m = group[0]
+                if m.mention_type == "nominal" and id(m) not in used:
+                    clusters.append([m])
+                    used.add(id(m))
+
+        # Step 2: Resolve pronouns to nearest compatible anchor
         for m in mentions:
             if m.mention_type == "pronoun" and id(m) not in used:
                 target = self._resolve_pronoun(m, mentions, clusters, language)
@@ -277,7 +372,7 @@ class CorefResolver:
                     clusters.append([m])
                     used.add(id(m))
 
-            # Step 3: Resolve nominal mentions
+            # Step 3: Resolve nominal mentions to nearest compatible anchor
             elif m.mention_type == "nominal" and id(m) not in used:
                 target = self._resolve_nominal(m, mentions, clusters)
                 if target is not None:
@@ -295,16 +390,16 @@ class CorefResolver:
         clusters: list[list[Mention]],
         language: str,
     ) -> Optional[list[Mention]]:
-        """Resolve a pronoun to the nearest compatible entity cluster."""
+        """Resolve a pronoun to the nearest compatible anchor (entity or nominal)."""
         pronoun_features = self._get_pronoun_features(pronoun.text, language)
 
         best_cluster = None
         best_distance = float("inf")
 
         for cluster in clusters:
-            # Find the nearest entity in the cluster that appears before the pronoun
+            # Find the nearest anchor (entity or nominal) before the pronoun
             for m in cluster:
-                if m.span[1] <= pronoun.span[0] and m.mention_type == "entity":
+                if m.span[1] <= pronoun.span[0] and m.mention_type in ("entity", "nominal"):
                     distance = pronoun.span[0] - m.span[1]
                     if distance < best_distance:
                         # Check compatibility
@@ -320,7 +415,10 @@ class CorefResolver:
         all_mentions: list[Mention],
         clusters: list[list[Mention]],
     ) -> Optional[list[Mention]]:
-        """Resolve a nominal mention (该/此 + N) to the nearest compatible cluster."""
+        """Resolve a nominal mention (该/此 + N) to the nearest compatible cluster.
+
+        Matches by: text containment, suffix matching, or partial overlap.
+        """
         # Extract the noun part (after the demonstrative prefix)
         noun_text = nominal.text[1:] if len(nominal.text) > 1 else nominal.text
 
@@ -329,9 +427,9 @@ class CorefResolver:
 
         for cluster in clusters:
             for m in cluster:
-                if m.span[1] <= nominal.span[0] and m.mention_type == "entity":
-                    # Check if the entity text matches or contains the noun
-                    if noun_text in m.text or m.text.endswith(noun_text):
+                if m.span[1] <= nominal.span[0] and m.mention_type in ("entity", "nominal"):
+                    # Check if the anchor text matches or contains the noun
+                    if noun_text in m.text or m.text.endswith(noun_text) or m.text in noun_text:
                         distance = nominal.span[0] - m.span[1]
                         if distance < best_distance:
                             best_distance = distance
