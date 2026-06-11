@@ -352,11 +352,23 @@ class CorefResolver:
                 for m in group:
                     used.add(id(m))
 
-        # Also add single nominals as singleton clusters (they can attract pronouns)
+        # Also add single entities AND nominals as singleton clusters
+        # Entities are needed as anchors for nominal/pronoun resolution
+        # Nominals can attract pronouns and other nominals
+        # HOWEVER: demonstrative nominals (该/此/本 + N) should NOT be added
+        # as final singletons here — they need to be resolved in Step 3
+        DEMO_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
         for text, group in text_groups.items():
             if len(group) == 1:
                 m = group[0]
-                if m.mention_type == "nominal" and id(m) not in used:
+                if m.mention_type in ("entity", "nominal") and id(m) not in used:
+                    # Skip demonstrative nominals — they will be resolved in Step 3
+                    if m.mention_type == "nominal":
+                        is_demonstrative = any(
+                            m.text.startswith(p) for p in DEMO_PREFIXES
+                        )
+                        if is_demonstrative:
+                            continue
                     clusters.append([m])
                     used.add(id(m))
 

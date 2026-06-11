@@ -262,34 +262,108 @@ def _resolve_coreferences(
 def _normalize_relations_by_coref(
     relations: list,
     coreferences: list[CoreferenceChain],
+    entities: list,
 ) -> None:
     """Use coreference chains to normalize relation endpoints.
 
-    For each relation, if subject_raw or object_raw is a non-principal
-    mention in a coreference chain, replace subject/object with the
-    chain's representative (canonical entity).
+    Two-level resolution:
+    1. Exact match: relation subject/object matches a coref mention directly
+    2. Prefix match: relation subject starts with a coref mention
+       (e.g., "该公司总部" starts with "该公司")
 
-    This ensures that '该公司→位于→加州' becomes '苹果公司→位于→加州'
-    when '该公司' and '苹果公司' are in the same coreference chain.
+    For coref chains whose representative is a demonstrative+noun
+    (该公司/此产品), resolve to the actual entity by finding the
+    entity whose text is contained in or matches the noun part.
     """
+    # Demonstrative prefixes
+    DEMO_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
+
     # Build mention→chain lookup
     mention_to_chain: dict[str, CoreferenceChain] = {}
     for chain in coreferences:
-        representative = chain.representative
         for mention in chain.mentions:
             mention_to_chain[mention.text] = chain
 
-    for rel in relations:
-        # Normalize subject via coref
-        subj_chain = mention_to_chain.get(rel.subject_raw)
-        if subj_chain and subj_chain.representative != rel.subject_raw:
-            rel.subject = subj_chain.representative
-            # Keep subject_raw as the original mention for traceability
+    # Build entity text set for resolution
+    entity_texts = {e.text for e in entities}
 
-        # Normalize object via coref
-        obj_chain = mention_to_chain.get(rel.object_raw)
-        if obj_chain and obj_chain.representative != rel.object_raw:
-            rel.object = obj_chain.representative
+    # Helper: resolve chain representative to actual entity
+    def resolve_representative(chain: CoreferenceChain) -> str:
+        rep = chain.representative
+        # If representative starts with a demonstrative prefix, strip it
+        for prefix in DEMO_PREFIXES:
+            if rep.startswith(prefix):
+                noun_part = rep[len(prefix):]
+                # Find entity that contains or equals this noun part
+                for et in entity_texts:
+                    if noun_part in et or et == noun_part:
+                        return et
+                # Fallback: use noun part itself
+                return noun_part
+        # Check if representative itself is an entity
+        if rep in entity_texts:
+            return rep
+        return rep
+
+    # Also build entity text set for normalization
+    for rel in relations:
+        # Normalize subject
+        matched_chain = None
+
+        # Level 1: exact match
+        if rel.subject_raw in mention_to_chain:
+            matched_chain = mention_to_chain[rel.subject_raw]
+        else:
+            # Level 2: prefix match — find longest mention that's a prefix
+            best_prefix = ""
+            for mention_text, chain in mention_to_chain.items():
+                if rel.subject_raw.startswith(mention_text) and len(mention_text) > len(best_prefix):
+                    best_prefix = mention_text
+                    matched_chain = chain
+
+        if matched_chain:
+            resolved = resolve_representative(matched_chain)
+            if resolved != rel.subject_raw:
+                rel.subject = resolved
+
+        # Level 3: entity text normalization — find entity that contains subject
+        best_entity_match = None
+        best_entity_len = 0
+        for et in entity_texts:
+            if rel.subject in et or rel.subject_raw in et:
+                if len(et) > best_entity_len:
+                    best_entity_len = len(et)
+                    best_entity_match = et
+        if best_entity_match and best_entity_match != rel.subject:
+            rel.subject = best_entity_match
+
+        # Normalize object
+        matched_chain = None
+
+        if rel.object_raw in mention_to_chain:
+            matched_chain = mention_to_chain[rel.object_raw]
+        else:
+            best_prefix = ""
+            for mention_text, chain in mention_to_chain.items():
+                if rel.object_raw.startswith(mention_text) and len(mention_text) > len(best_prefix):
+                    best_prefix = mention_text
+                    matched_chain = chain
+
+        if matched_chain:
+            resolved = resolve_representative(matched_chain)
+            if resolved != rel.object_raw:
+                rel.object = resolved
+
+        # Level 3: entity text normalization — find entity that contains object
+        best_entity_match = None
+        best_entity_len = 0
+        for et in entity_texts:
+            if rel.object in et or rel.object_raw in et:
+                if len(et) > best_entity_len:
+                    best_entity_len = len(et)
+                    best_entity_match = et
+        if best_entity_match and best_entity_match != rel.object:
+            rel.object = best_entity_match
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +533,7 @@ def analyze(
 
     # ── Coref-Relation Integration ──
     # Use coreference chains to further normalize relation endpoints
-    _normalize_relations_by_coref(all_relations, all_coreferences)
+    _normalize_relations_by_coref(all_relations, all_coreferences, all_entities)
 
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"

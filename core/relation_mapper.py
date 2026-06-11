@@ -689,8 +689,9 @@ class RelationExtractionRules:
                 hit_count += 1
                 continue
 
-            matches = [e for e in entity_texts if e in text]
-            if len(matches) == 1:
+            matches = sorted([e for e in entity_texts if e in text], key=len, reverse=True)
+            if matches:
+                # Use the longest matching entity
                 setattr(rel, attr, matches[0])
                 hit_count += 1
                 continue
