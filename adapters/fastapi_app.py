@@ -405,6 +405,24 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .tag.interrogative{background:#2a1a3a;color:#c084fc}
 .tag.exclamatory{background:#3a1a2a;color:#f472b6}
 .tag.imperative{background:#1a3a2a;color:#6ee7b7}
+/* Coreference Styles */
+.coref-chain{background:#21262d;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
+.coref-chain .chain-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.coref-chain .chain-id{font-size:11px;color:#484f58;font-family:monospace}
+.coref-chain .rep{font-size:14px;color:#58a6ff;font-weight:600}
+.coref-chain .quality{font-size:10px;padding:1px 6px;border-radius:3px}
+.coref-chain .quality.high{background:#1a3a1a;color:#7ee787}
+.coref-chain .quality.medium{background:#3a3a1a;color:#e3b341}
+.coref-chain .quality.low{background:#3a1a1a;color:#f85149}
+.coref-chain .quality.degraded{background:#3a2a1a;color:#e3b341}
+.coref-chain .mentions{display:flex;flex-wrap:wrap;gap:4px}
+.coref-chain .mention{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:#0d1117;border-radius:4px;font-size:12px}
+.coref-chain .mention.principal{border:1px solid #58a6ff;color:#58a6ff}
+.coref-chain .mention.pronoun{border:1px solid #e3b341;color:#e3b341}
+.coref-chain .mention.nominal{border:1px solid #a5b4fc;color:#a5b4fc}
+.coref-chain .mention.entity{border:1px solid #7ee787;color:#7ee787}
+.coref-chain .mention .span-info{font-size:9px;color:#484f58}
+.coref-empty{text-align:center;padding:20px;color:#484f58}
 /* API Documentation Styles */
 .api-endpoint{background:#21262d;border:1px solid #30363d;border-radius:6px;margin-bottom:16px;overflow:hidden}
 .api-endpoint .method{padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #30363d}
@@ -481,17 +499,36 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
 </div>
 <div class="sample-cards" id="sampleCards">
+<!-- 现代汉语 -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('张三来到北京，他在清华大学攻读博士学位。该校位于海淀区，是中国最著名的大学之一。','modern')">
+  <span class="lang-tag">📄 现代-指代</span>
+  <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区……</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('苹果公司推出了iPhone，这款手机采用了最新的芯片技术。该公司总部位于加州库比蒂诺。','modern')">
+  <span class="lang-tag">📄 现代-指代</span>
+  <span class="preview">苹果公司推出了iPhone，这款手机采用了最新的芯片技术……</span>
+</div>
 <div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
-  <span class="lang-tag">📄 现代</span>
+  <span class="lang-tag">📄 现代-基础</span>
   <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。','classical')">
-  <span class="lang-tag classical">🏯 古汉语</span>
-  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。</span>
+<!-- 古汉语 -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。','classical')">
+  <span class="lang-tag classical">🏯 古汉语-指代</span>
+  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. Microsoft is based in Redmond.','english')">
-  <span class="lang-tag english">🇬🇧 英文</span>
-  <span class="preview">Apple was founded by Steve Jobs in California. Microsoft is based in Redmond.</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。','classical')">
+  <span class="lang-tag classical">🏯 古汉语-指代</span>
+  <span class="preview">沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。</span>
+</div>
+<!-- 英文 -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. He later started Pixar, which became a major animation studio.','english')">
+  <span class="lang-tag english">🇬🇧 英文-指代</span>
+  <span class="preview">Apple was founded by Steve Jobs in California. He later started Pixar……</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('Microsoft is based in Redmond. The company was founded by Bill Gates and Paul Allen.','english')">
+  <span class="lang-tag english">🇬🇧 英文-指代</span>
+  <span class="preview">Microsoft is based in Redmond. The company was founded by Bill Gates……</span>
 </div>
 </div>
 <div class="input-area">
@@ -521,6 +558,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('depsvg')">🧬 依存树 SVG</div>
 <div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
 <div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
+<div class="tab" onclick="switchTab('coref')">🔗 指代消解</div>
 <div class="tab" onclick="switchTab('langdetect')">🏯 语言检测</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
 <div class="tab" onclick="switchTab('api')">📋 API 接口</div>
@@ -530,6 +568,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div id="depsvg" class="panel"></div>
 <div id="discover" class="panel"></div>
 <div id="patterns" class="panel"></div>
+<div id="coref" class="panel"></div>
 <div id="langdetect" class="panel"></div>
 <div id="json" class="panel"></div>
 <div id="api" class="panel"></div>
@@ -574,6 +613,7 @@ async function analyze(){
     const patData=r1.content&&r1.content.patterns;
     if(patData&&patData.length) renderPatterns(patData); else document.getElementById('patterns').innerHTML='<div class="card"><h3>📊 句式模式</h3><span style="color:#484f58">无模式数据</span></div>';
     renderLangDetect(r1);
+    renderCoref(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
@@ -873,6 +913,31 @@ function renderLangDetect(data){
       </table>
       </div>
     </div>`;
+}
+
+function renderCoref(data){
+    if(!data||!data.content){ document.getElementById('coref').innerHTML='<div class="card"><span style="color:#484f58">无指代数据</span></div>'; return; }
+    const chains=data.content.coreferences||[];
+    if(!chains||!chains.length){
+        document.getElementById('coref').innerHTML='<div class="card"><h3>🔗 指代消解</h3><div class="coref-empty">未检测到指代链（可能是简单文本或无指代关系）</div></div>';
+        return;
+    }
+    const html=chains.map(chain=>{
+        const mentions=chain.mentions.map(m=>{
+            const cls=m.is_principal?'principal':m.mention_type;
+            return `<span class="mention ${cls}" title="type:${m.mention_type} span:[${m.span}]">${esc(m.text)}<span class="span-info">[${m.span[0]}-${m.span[1]}]</span></span>`;
+        }).join('');
+        return `<div class="coref-chain">
+            <div class="chain-header">
+                <span class="chain-id">${esc(chain.chain_id)}</span>
+                <span class="rep">${esc(chain.representative)}</span>
+                <span class="quality ${chain.quality_flag}">${chain.quality_flag}</span>
+                <span style="font-size:10px;color:#484f58">conf:${(chain.confidence*100).toFixed(0)}% ${chain.language}</span>
+            </div>
+            <div class="mentions">${mentions}</div>
+        </div>`;
+    }).join('');
+    document.getElementById('coref').innerHTML=`<div class="card"><h3>🔗 指代消解 <small style="color:#484f58;font-weight:normal">${chains.length} 条指代链</small></h3>${html}</div>`;
 }
 
 function renderJSON(data){
