@@ -107,6 +107,10 @@ class EntityMappingRules:
     def merger(self) -> EntityMerger:
         return self._merger
 
+    def reset(self):
+        """Reset per-request state. Must be called before each new analysis."""
+        self._id_gen.reset()
+
     # ── Public API (backward compatible) ──
 
     def map(self, raw_tuple: tuple, source: str, tokens: list[Token],

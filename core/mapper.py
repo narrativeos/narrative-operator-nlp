@@ -41,6 +41,10 @@ class HanlpSchemaMapper:
         entity_categories: dict[str, list[str]] | None = None,
         auto_discover_entities: bool = False,
     ) -> NarrativeDocument:
+        # Reset per-request state to avoid cross-request pollution
+        # (this mapper is a global singleton, so state must be request-local)
+        self.entity_rules.reset()
+        self.relation_rules.reset()
         tokens = self._map_tokens(text, raw)
         entities = self._map_entities(
             text, raw, tokens, entity_dict, entity_categories,

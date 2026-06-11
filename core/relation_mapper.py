@@ -90,6 +90,10 @@ class RelationExtractionRules:
     def __init__(self):
         self._counter = 0
 
+    def reset(self):
+        """Reset per-request state. Must be called before each new analysis."""
+        self._counter = 0
+
     # ── SRL Extraction (primary) ──
 
     def extract_from_srl(self, frame: list, tokens: list,
