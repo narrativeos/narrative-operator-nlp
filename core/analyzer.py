@@ -16,6 +16,8 @@ from .language_detector import detect_language, classical_confidence, LanguageCl
 from .mapper import HanlpSchemaMapper
 from .schema import CoreferenceChain, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 from .coref_resolver import CorefResolver
+from .modifier_extractor import ModifierExtractor
+from .relation_classifier import RelationClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +545,16 @@ def analyze(
     # ── Coref-Relation Integration ──
     # Use coreference chains to further normalize relation endpoints
     _normalize_relations_by_coref(all_relations, all_coreferences, all_entities)
+
+    # ── Modifier Extraction ──
+    # Extract relation modifiers (degree, negation, scope, etc.)
+    modifier_extractor = ModifierExtractor()
+    modifier_extractor.extract_batch(text, all_relations)
+
+    # ── Relation Classification ──
+    # Classify relations into entity relations vs entity attributes
+    classifier = RelationClassifier()
+    classifier.classify(all_relations, all_entities)
 
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
