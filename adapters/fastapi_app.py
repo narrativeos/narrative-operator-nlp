@@ -125,6 +125,28 @@ class AnalyzeRequest(BaseModel):
                     "No hardcoded dictionaries — the caller supplies this.",
         examples=[{"北冥": "LOCATION", "鲲": "PERSON"}],
     )
+    entity_categories: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Domain-specific keyword injection. The caller supplies domain "
+                    "keywords at runtime — no hardcoded domain knowledge in the tool. "
+                    "Format: {category: [keyword1, keyword2, ...]}. "
+                    "Categories in EntityCategory.ALL are used as-is; unknown categories "
+                    "are mapped to UNKNOWN. "
+                    "Example: {'MATERIAL': ['石墨烯'], 'DISEASE': ['乳腺癌', '肿瘤']}. "
+                    "Note: DISEASE/ANATOMY/FINDING etc. are not in the default schema — "
+                    "use existing categories (PERSON/ORGANIZATION/LOCATION/FACILITY/PRODUCT/"
+                    "MATERIAL/STANDARD/UNKNOWN) or your custom names (mapped to UNKNOWN).",
+        examples=[{"MATERIAL": ["石墨烯"], "UNKNOWN": ["乳腺癌", "肿块"]}],
+    )
+    auto_discover_entities: bool = Field(
+        default=False,
+        description="If True, run new word discovery (PMI+MTL hybrid) and promote "
+                    "high-score candidates to UNKNOWN entities. Uses statistical "
+                    "methods (PMI mutual information + left/right entropy) for "
+                    "unsupervised entity discovery. Default False — opt-in so users "
+                    "control the recall/precision tradeoff. "
+                    "Score threshold: 3.0+ (PMI). Source field: 'discover'.",
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -171,6 +193,9 @@ async def analyze_endpoint(request: AnalyzeRequest):
     try:
         user_dict = set(request.dict_combine) if request.dict_combine else set()
         user_entity_dict = request.entity_dict if request.entity_dict else None
+        user_entity_categories = (
+            request.entity_categories if request.entity_categories else None
+        )
 
         # Baseline analysis (with language mode)
         doc = analyze(
@@ -178,6 +203,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
             dict_combine=user_dict if user_dict else None,
             language=request.language,
             entity_dict=user_entity_dict,
+            entity_categories=user_entity_categories,
+            auto_discover_entities=request.auto_discover_entities,
         )
 
         true_new_words: list[str] | None = None
@@ -193,6 +220,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     dict_combine=enhanced_dict if enhanced_dict else None,
                     language=request.language,
                     entity_dict=user_entity_dict,
+                    entity_categories=user_entity_categories,
+                    auto_discover_entities=request.auto_discover_entities,
                 )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)

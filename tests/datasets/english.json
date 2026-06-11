@@ -1,0 +1,44 @@
+{
+    "name": "English",
+    "lang": "en",
+    "cases": [
+        {
+            "name": "Tech Companies",
+            "text": "Apple was founded by Steve Jobs in California. Microsoft is based in Redmond.",
+            "raw": {
+                "tok/fine": ["Apple", "was", "founded", "by", "Steve", "Jobs", "in", "California", ".", "Microsoft", "is", "based", "in", "Redmond", "."],
+                "pos/ctb": ["NNP", "VBD", "VBN", "IN", "NNP", "NNP", "IN", "NNP", ".", "NNP", "VBZ", "VBN", "IN", "NNP", "."],
+                "ner/ontonotes": [["Apple", "ORG", 0, 1], ["Steve Jobs", "PERSON", 4, 6], ["California", "GPE", 7, 8], ["Microsoft", "ORG", 9, 10], ["Redmond", "GPE", 13, 14]],
+                "dep": [[3,"nsubjpass"],[3,"aux"],[0,"root"],[3,"agent"],[6,"compound"],[3,"nmod"],[3,"prep"],[8,"pobj"],[3,"punct"],[12,"nsubj"],[12,"aux"],[3,"conj"],[12,"prep"],[14,"pobj"],[12,"punct"]],
+                "srl": [[["Apple","ARG0",0,1],["founded","PRED",2,3],["Steve Jobs","ARG1",4,6]],[["Microsoft","ARG0",9,10],["based","PRED",11,12],["Redmond","ARG1",13,14]]]
+            },
+            "expected": {
+                "min_entities": 5,
+                "entity_texts": ["Apple", "Steve Jobs", "California", "Microsoft", "Redmond"],
+                "entity_categories": {
+                    "Apple": "ORGANIZATION",
+                    "Steve Jobs": "PERSON",
+                    "California": "LOCATION",
+                    "Microsoft": "ORGANIZATION",
+                    "Redmond": "LOCATION"
+                },
+                "min_relations": 2
+            }
+        },
+        {
+            "name": "Simple Sentence",
+            "text": "The cat sat on the mat.",
+            "raw": {
+                "tok/fine": ["The", "cat", "sat", "on", "the", "mat", "."],
+                "pos/ctb": ["DT", "NN", "VBD", "IN", "DT", "NN", "."],
+                "ner/ontonotes": [],
+                "dep": [[2,"det"],[0,"root"],[2,"nmod"],[4,"det"],[2,"punct"]],
+                "srl": [[["The cat","ARG0",0,2],["sat","PRED",2,3]]]
+            },
+            "expected": {
+                "min_entities": 0,
+                "min_relations": 0
+            }
+        }
+    ]
+}

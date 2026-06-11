@@ -1,17 +1,20 @@
 """
 New Word Discovery — Hybrid PMI + MTL Comparison.
 
-Two strategies combined:
-1. PMI + Left/Right Entropy (statistical, needs enough text).
+Three strategies combined:
+1. PMI + LLR + Left/Right Entropy (statistical, needs enough text).
 2. MTL diff: compare MTL tokenizer output against known patterns —
    sequences of low-confidence / unknown-character tokens are candidates.
+3. Internal cohesion test: check if characters within a candidate are
+   tightly bound (low internal entropy = high cohesion).
 
 Works on both single sentences (MTL diff) and longer texts (PMI).
 
-Reference
----------
+References
+----------
 - Sun Maosong et al., "Chinese New Word Identification: A Statistical Approach"
 - HanLP 1.x ``com.hankcs.hanlp.mining.word.NewWordDiscover``
+- Duan et al., "New Word Discovery with Log-Likelihood Ratio Test"
 """
 
 from __future__ import annotations
@@ -40,8 +43,10 @@ class Candidate:
     word: str
     score: float
     pmi: float
+    llr: float
     left_entropy: float
     right_entropy: float
+    cohesion: float
     frequency: int
 
     def to_dict(self) -> dict:
@@ -49,8 +54,10 @@ class Candidate:
             "word": self.word,
             "score": round(self.score, 4),
             "pmi": round(self.pmi, 4),
+            "llr": round(self.llr, 4),
             "left_entropy": round(self.left_entropy, 4),
             "right_entropy": round(self.right_entropy, 4),
+            "cohesion": round(self.cohesion, 4),
             "frequency": self.frequency,
         }
 
@@ -85,17 +92,22 @@ _PUNCT_RE = re.compile(r"[，、：""''（）《》【】\s]")
 def discover(
     text: str,
     min_len: int = 2,
-    max_len: int = 4,
+    max_len: int = 6,
     min_freq: int = 2,
     min_score: float = 0.5,
     max_candidates: int = 50,
     mtl_tokens: Optional[list] = None,
 ) -> DiscoverResult:
     """
-    Discover new words using hybrid PMI + MTL comparison.
+    Discover new words using hybrid PMI + LLR + MTL comparison.
 
     - Short texts (< 100 cleaned chars): MTL hybrid is primary, PMI supplementary.
-    - Longer texts: both PMI and MTL contribute.
+    - Longer texts: both PMI + LLR and MTL contribute.
+
+    Adaptive parameters:
+    - min_freq: auto-adjusted based on text length
+    - entropy threshold: auto-adjusted based on text length
+    - n-gram range: 2-6 characters (extended from 2-4)
 
     Parameters
     ----------
@@ -104,9 +116,9 @@ def discover(
     min_len : int
         Minimum n-gram length.
     max_len : int
-        Maximum n-gram length.
+        Maximum n-gram length (default 6, extended from 4).
     min_freq : int
-        Minimum occurrence count for PMI candidates.
+        Minimum occurrence count for PMI candidates (auto-adjusted).
     min_score : float
         Minimum combined score threshold.
     max_candidates : int
@@ -131,33 +143,65 @@ def discover(
     total_chars = sum(len(s) for s in cleaned)
     candidates: list[Candidate] = []
 
+    # ---- Adaptive parameters based on text length ----
+    adaptive_min_freq = _adaptive_min_freq(total_chars, min_freq)
+    adaptive_min_score = _adaptive_min_score(total_chars, min_score)
+
     # ---- MTL Hybrid (primary for short texts) ----
     if mtl_tokens:
         candidates.extend(_discover_from_mtl(mtl_tokens, cleaned))
 
-    # ---- PMI (supplementary, only when enough statistics) ----
-    if total_chars >= 50:
+    # ---- PMI + LLR (supplementary, only when enough statistics) ----
+    if total_chars >= 30:  # lowered from 50 for better short-text support
         ngram_counts: dict[int, Counter] = {}
         for n in range(min_len, max_len + 1):
             ngram_counts[n] = Counter()
             for sent in cleaned:
                 ngram_counts[n].update(_count_ngrams(sent, n))
 
-        effective_min_freq = max(2, min(min_freq, len(cleaned)))
+        # Build char-level counts for LLR
+        char_counts = Counter()
+        for sent in cleaned:
+            char_counts.update(sent)
+
         existing = {c.word for c in candidates}
 
         for n in range(min_len, max_len + 1):
             for ngram, freq in ngram_counts[n].items():
-                if freq < effective_min_freq or ngram in existing:
+                if freq < adaptive_min_freq or ngram in existing:
                     continue
+
+                # PMI
                 pmi_val = _compute_pmi(ngram, freq, ngram_counts, total_chars)
+
+                # LLR (Log-Likelihood Ratio)
+                llr_val = _compute_llr(ngram, freq, char_counts, total_chars)
+
+                # Entropy
                 le = _compute_entropy_multisentence(ngram, cleaned, "left")
-                re = _compute_entropy_multisentence(ngram, cleaned, "right")
-                score = pmi_val + min(le, re)
-                if score >= min_score:
+                re_val = _compute_entropy_multisentence(ngram, cleaned, "right")
+
+                # Cohesion (internal binding strength)
+                cohesion = _compute_cohesion(ngram, ngram_counts, total_chars)
+
+                # Combined score: weighted sum
+                score = (
+                    pmi_val * 0.3 +
+                    llr_val * 0.3 +
+                    min(le, re_val) * 0.2 +
+                    cohesion * 0.2
+                )
+
+                if score >= adaptive_min_score:
                     candidates.append(Candidate(
-                        word=ngram, score=score, pmi=pmi_val,
-                        left_entropy=le, right_entropy=re, frequency=freq,
+                        word=ngram,
+                        score=score,
+                        pmi=pmi_val,
+                        llr=llr_val,
+                        left_entropy=le,
+                        right_entropy=re_val,
+                        cohesion=cohesion,
+                        frequency=freq,
                     ))
 
     # ---- Sort & Filter ----
@@ -169,6 +213,144 @@ def discover(
         text_length=total_chars,
         total_ngrams=0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Adaptive Parameters
+# ---------------------------------------------------------------------------
+
+def _adaptive_min_freq(total_chars: int, default_min_freq: int) -> int:
+    """Adapt min_freq based on text length.
+
+    Short texts (< 50 chars): min_freq = 1
+    Medium texts (50-200 chars): min_freq = max(1, default/2)
+    Long texts (> 200 chars): min_freq = default
+    """
+    if total_chars < 50:
+        return 1
+    if total_chars < 200:
+        return max(1, default_min_freq // 2)
+    return default_min_freq
+
+
+def _adaptive_min_score(total_chars: int, default_min_score: float) -> float:
+    """Adapt min_score based on text length.
+
+    Short texts: lower threshold (0.3) to allow more candidates
+    Long texts: use default threshold
+    """
+    if total_chars < 50:
+        return min(default_min_score, 0.3)
+    if total_chars < 100:
+        return default_min_score * 0.6
+    return default_min_score
+
+
+# ---------------------------------------------------------------------------
+# LLR (Log-Likelihood Ratio) Test
+# ---------------------------------------------------------------------------
+
+def _compute_llr(
+    ngram: str,
+    freq: int,
+    char_counts: Counter,
+    total_chars: int,
+) -> float:
+    """Compute log-likelihood ratio for an n-gram.
+
+    LLR tests whether the characters in the n-gram co-occur more often
+    than expected by chance. Higher LLR = stronger evidence of a word.
+
+    Formula: LLR = 2 * sum(observed * log(observed/expected))
+    """
+    n = len(ngram)
+    if n == 1 or total_chars < n:
+        return 0.0
+
+    # Count individual characters in the n-gram
+    ngram_char_counts = Counter(ngram)
+
+    # Expected frequency: product of individual char probabilities * total
+    # For each character, compute its standalone probability
+    expected_freq = 1.0
+    for ch, ch_freq in ngram_char_counts.items():
+        ch_prob = char_counts.get(ch, 0) / max(total_chars, 1)
+        expected_freq *= ch_prob ** ch_freq
+
+    expected_count = expected_freq * max(total_chars - n + 1, 1)
+
+    if expected_count < 0.001:
+        return 0.0
+
+    # LLR = 2 * (observed * log(obs/expected) + (total-obs) * log(...))
+    total_ngrams = max(total_chars - n + 1, 1)
+    obs = freq
+    exp = expected_count
+
+    if obs == 0 or exp == 0:
+        return 0.0
+
+    # Simplified LLR (one-sided)
+    llr = obs * math.log2(obs / exp)
+    return llr
+
+
+# ---------------------------------------------------------------------------
+# Cohesion (Internal Binding Strength)
+# ---------------------------------------------------------------------------
+
+def _compute_cohesion(
+    ngram: str,
+    ngram_counts: dict[int, Counter],
+    total_chars: int,
+) -> float:
+    """Compute internal cohesion of an n-gram.
+
+    Cohesion measures how tightly the characters within a candidate word
+    are bound together. A true word has high internal cohesion — its
+    sub-parts don't appear independently very often.
+
+    Formula: cohesion = PMI of internal splits / number of splits
+    Normalized to [0, 1] range via sigmoid-like function.
+    """
+    n = len(ngram)
+    if n <= 1:
+        return 1.0
+
+    pmis = []
+    for split in range(1, n):
+        left = ngram[:split]
+        right = ngram[split:]
+
+        lf = ngram_counts.get(len(left), Counter()).get(left, 0)
+        rf = ngram_counts.get(len(right), Counter()).get(right, 0)
+        joint = ngram_counts.get(n, Counter()).get(ngram, 0)
+
+        if lf == 0 or rf == 0 or joint == 0:
+            pmis.append(0)
+            continue
+
+        p_joint = joint / max(total_chars - n + 1, 1)
+        p_left = lf / max(total_chars - len(left) + 1, 1)
+        p_right = rf / max(total_chars - len(right) + 1, 1)
+
+        if p_left * p_right > 0:
+            pmi = math.log2(p_joint / (p_left * p_right))
+        else:
+            pmi = 0
+
+        pmis.append(pmi)
+
+    avg_pmi = sum(pmis) / len(pmis) if pmis else 0
+
+    # Normalize to [0, 1] via sigmoid: 1 / (1 + exp(-avg_pmi))
+    # This maps PMI (-inf to +inf) to (0, 1)
+    try:
+        cohesion = 1.0 / (1.0 + math.exp(-avg_pmi))
+    except OverflowError:
+        cohesion = 1.0 if avg_pmi > 0 else 0.0
+
+    return cohesion
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +503,8 @@ def _discover_from_mtl(tokens: list, sentences: list[str]) -> list[Candidate]:
                 freq = all_text.count(t.text)
                 candidates.append(Candidate(
                     word=t.text, score=5.0 + (0.5 if freq >= 2 else 0),
-                    pmi=0, left_entropy=0, right_entropy=0, frequency=freq,
+                    pmi=0, llr=0, left_entropy=0, right_entropy=0,
+                    cohesion=1.0, frequency=freq,
                 ))
             i += 1
             continue
@@ -333,7 +516,7 @@ def _discover_from_mtl(tokens: list, sentences: list[str]) -> list[Candidate]:
                 and pos_tag in _MERGE_POS):
             run_text = t.text
             j = i + 1
-            while j < len(tokens) and j - i < 3:  # max 3-char merge
+            while j < len(tokens) and j - i < 4:  # extended from 3 to 4
                 nt = tokens[j]
                 nt_pos = getattr(nt, "pos", "")
                 if (len(nt.text) == 1
@@ -347,12 +530,13 @@ def _discover_from_mtl(tokens: list, sentences: list[str]) -> list[Candidate]:
             if len(run_text) >= 2:
                 freq = all_text.count(run_text)
                 le = _compute_entropy_multisentence(run_text, sentences, "left")
-                re = _compute_entropy_multisentence(run_text, sentences, "right")
+                re_val = _compute_entropy_multisentence(run_text, sentences, "right")
                 # Score: merge length * 1.5 + entropy bonus
-                score = (j - i) * 1.5 + min(le, re) + (0.5 if freq >= 2 else 0)
+                score = (j - i) * 1.5 + min(le, re_val) + (0.5 if freq >= 2 else 0)
                 candidates.append(Candidate(
-                    word=run_text, score=score, pmi=j - i,
-                    left_entropy=le, right_entropy=re, frequency=freq,
+                    word=run_text, score=score, pmi=j - i, llr=0,
+                    left_entropy=le, right_entropy=re_val,
+                    cohesion=0.8, frequency=freq,
                 ))
             i = j
         else:

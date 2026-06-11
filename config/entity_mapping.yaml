@@ -1,0 +1,111 @@
+# NER Label Mapping Configuration
+# Maps NER model labels to NSP standard entity categories.
+#
+# Format:
+#   source_maps:
+#     <ner_key>:
+#       <model_label>: <NSP_CATEGORY>
+#
+# NSP Categories:
+#   PERSON, ORGANIZATION, LOCATION, FACILITY, PRODUCT,
+#   DATE, NUMBER, MATERIAL, STANDARD, PARAMETER, UNKNOWN
+
+source_maps:
+
+  # PKU NER (Chinese)
+  ner/pku:
+    nr: PERSON
+    ns: LOCATION
+    nt: ORGANIZATION
+    nz: PRODUCT
+
+  # MSRA NER (Chinese)
+  ner/msra:
+    PERSON: PERSON
+    LOCATION: LOCATION
+    ORGANIZATION: ORGANIZATION
+    DATE: DATE
+
+  # OntoNotes NER (Chinese/English)
+  ner/ontonotes:
+    PERSON: PERSON
+    NORP: ORGANIZATION
+    FAC: FACILITY
+    ORG: ORGANIZATION
+    GPE: LOCATION
+    LOC: LOCATION
+    PRODUCT: PRODUCT
+    DATE: DATE
+    TIME: DATE
+    PERCENT: NUMBER
+    MONEY: NUMBER
+    QUANTITY: NUMBER
+    CARDINAL: NUMBER
+    ORDINAL: NUMBER
+    LAW: STANDARD
+    EVENT: UNKNOWN
+    WORK_OF_ART: UNKNOWN
+    LANGUAGE: UNKNOWN
+
+  # English NER (CoNLL-2003 / bare "ner" key)
+  ner:
+    PER: PERSON
+    PERSON: PERSON
+    LOC: LOCATION
+    GPE: LOCATION
+    ORG: ORGANIZATION
+    ORGANIZATION: ORGANIZATION
+    MISC: UNKNOWN
+    DATE: DATE
+    TIME: DATE
+    MONEY: NUMBER
+    PERCENT: NUMBER
+    QUANTITY: NUMBER
+    CARDINAL: NUMBER
+    ORDINAL: NUMBER
+    FAC: FACILITY
+    PRODUCT: PRODUCT
+    EVENT: UNKNOWN
+    WORK_OF_ART: UNKNOWN
+    LAW: STANDARD
+    LANGUAGE: UNKNOWN
+    NORP: ORGANIZATION
+
+  # English fallback
+  ner/conll2003:
+    PER: PERSON
+    PERSON: PERSON
+    LOC: LOCATION
+    GPE: LOCATION
+    ORG: ORGANIZATION
+    ORGANIZATION: ORGANIZATION
+    MISC: UNKNOWN
+    DATE: DATE
+    TIME: DATE
+    MONEY: NUMBER
+    PERCENT: NUMBER
+    QUANTITY: NUMBER
+    CARDINAL: NUMBER
+    ORDINAL: NUMBER
+    FAC: FACILITY
+    PRODUCT: PRODUCT
+    EVENT: UNKNOWN
+    WORK_OF_ART: UNKNOWN
+    LAW: STANDARD
+    LANGUAGE: UNKNOWN
+    NORP: ORGANIZATION
+
+# NER sources to check, in priority order
+ner_sources:
+  - ner/pku
+  - ner/msra
+  - ner/ontonotes
+  - ner
+  - ner/conll2003
+
+# Custom mappings (merged with source_maps at runtime)
+# Example:
+# custom_maps:
+#   ner/pku:
+#     my_custom_label: PERSON
+custom_maps: {}

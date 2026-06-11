@@ -1,0 +1,82 @@
+# Entity Merge Rules Configuration
+# Rules for merging adjacent entities of different categories.
+#
+# Format:
+#   merge_rules:
+#     - from: [CATEGORY_A, CATEGORY_B]
+#       to: RESULT_CATEGORY
+#       priority: number (lower = higher priority)
+#
+# The merge only happens when two adjacent entities (no gap) match the
+# "from" pattern. The resulting entity takes the "to" category.
+
+merge_rules:
+  # Organization name patterns
+  # 地名 + 组织 → 组织 (e.g., 北京 + 大学 → 北京大学)
+  - from:
+      - LOCATION
+      - ORGANIZATION
+    to: ORGANIZATION
+    priority: 10
+
+  # 组织 + 组织 → 组织 (e.g., 中国科学院 + 自动化研究所)
+  - from:
+      - ORGANIZATION
+      - ORGANIZATION
+    to: ORGANIZATION
+    priority: 10
+
+  # Material compound patterns
+  # 材料 + 材料 → 材料 (e.g., 碳 + 钢 → 碳钢)
+  - from:
+      - MATERIAL
+      - MATERIAL
+    to: MATERIAL
+    priority: 20
+
+  # Location compound patterns
+  # 地名 + 地名 → 地名 (e.g., 华东 + 地区)
+  - from:
+      - LOCATION
+      - LOCATION
+    to: LOCATION
+    priority: 20
+
+  # Facility patterns
+  # 地名 + 设施 → 设施 (e.g., 北京 + 机场)
+  - from:
+      - LOCATION
+      - FACILITY
+    to: FACILITY
+    priority: 15
+
+  # Product patterns
+  # 组织 + 产品 → 产品 (e.g., 华为 + 手机)
+  - from:
+      - ORGANIZATION
+      - PRODUCT
+    to: PRODUCT
+    priority: 25
+
+# Determiner merge configuration
+det_merge:
+  enabled: true
+  # Chinese determiners that should be merged with the following entity
+  det_words:
+    - 其
+    - 该
+    - 此
+    - 彼
+    - 上述
+    - 下列
+
+# Confidence calibration
+confidence_calibration:
+  # Fixed confidence for keyword-based entities (lowered from 1.0)
+  keyword: 0.95
+  # Fixed confidence for classical PROPN-based entities
+  classical_propn: 0.80
+  # Fixed confidence for classical xpos-based entities
+  classical_xpos: 0.65
+  # NER model confidence is used as-is (from softmax)
+  ner_model: 1.0

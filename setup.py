@@ -79,6 +79,7 @@ setup(
         'hanlp-common>=0.0.23',
         'hanlp-trie>=0.0.4',
         'hanlp-downloader',
+        'pyyaml>=5.0',  # Required for config-driven entity extraction
         *EXTRAS,
     ],
     extras_require=extras_require,

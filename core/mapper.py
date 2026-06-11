@@ -32,10 +32,20 @@ class HanlpSchemaMapper:
         self.entity_rules = EntityMappingRules()
         self.relation_rules = RelationExtractionRules()
 
-    def map(self, text: str, raw: dict, source: str = "hanlp_v2",
-            entity_dict: dict[str, str] | None = None) -> NarrativeDocument:
+    def map(
+        self,
+        text: str,
+        raw: dict,
+        source: str = "hanlp_v2",
+        entity_dict: dict[str, str] | None = None,
+        entity_categories: dict[str, list[str]] | None = None,
+        auto_discover_entities: bool = False,
+    ) -> NarrativeDocument:
         tokens = self._map_tokens(text, raw)
-        entities = self._map_entities(text, raw, tokens, entity_dict)
+        entities = self._map_entities(
+            text, raw, tokens, entity_dict, entity_categories,
+            auto_discover_entities,
+        )
         self._assign_attributes(text, raw, tokens, entities)
         # PARAMETERs are properties, not standalone entities
         entities = [e for e in entities if e.category != "PARAMETER"]
@@ -83,9 +93,21 @@ class HanlpSchemaMapper:
             tokens.append(Token(id=i, text=token_text, pos=token_pos, span=(start, end), confidence=conf))
         return tokens
 
-    def _map_entities(self, text: str, raw: dict, tokens: list[Token],
-                      entity_dict: dict[str, str] | None = None) -> list:
-        return self.entity_rules.map_all(text, raw, tokens, entity_dict)
+    def _map_entities(
+        self,
+        text: str,
+        raw: dict,
+        tokens: list[Token],
+        entity_dict: dict[str, str] | None = None,
+        entity_categories: dict[str, list[str]] | None = None,
+        auto_discover_entities: bool = False,
+    ) -> list:
+        # Inject user-defined keywords into the keyword extractor
+        if entity_categories:
+            self.entity_rules.keyword_extractor.add_keywords(entity_categories)
+        return self.entity_rules.map_all(
+            text, raw, tokens, entity_dict, auto_discover_entities,
+        )
 
     def _map_relations(self, text: str, raw: dict, tokens: list[Token],
                        entities: list) -> list:

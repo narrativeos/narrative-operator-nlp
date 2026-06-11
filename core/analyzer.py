@@ -138,9 +138,14 @@ def _assess_quality(tokens: list[Token], raw: dict) -> bool:
 # Per-Segment Analysis
 # ---------------------------------------------------------------------------
 
-def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
-                    dict_combine: Optional[set] = None
-                    ) -> tuple[list, list, list, list, bool]:
+def _analyze_modern(
+    text: str,
+    offset: int,
+    mapper: HanlpSchemaMapper,
+    dict_combine: Optional[set] = None,
+    entity_categories: dict[str, list[str]] | None = None,
+    auto_discover_entities: bool = False,
+) -> tuple[list, list, list, list, bool]:
     try:
         pipeline = _get_modern_pipeline()
         if dict_combine:
@@ -152,15 +157,24 @@ def _analyze_modern(text: str, offset: int, mapper: HanlpSchemaMapper,
     except Exception as exc:
         logger.warning("Modern pipeline failed: %s", exc)
         return [], [], [], [], False
-    doc = mapper.map(text, raw, source="hanlp_v2")
+    doc = mapper.map(
+        text, raw, source="hanlp_v2",
+        entity_categories=entity_categories,
+        auto_discover_entities=auto_discover_entities,
+    )
     _apply_offset(doc, offset)
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
             doc.content.patterns, _assess_quality(doc.content.tokens, raw))
 
 
-def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper,
-                       entity_dict: dict[str, str] | None = None
-                       ) -> tuple[list, list, list, list, bool]:
+def _analyze_classical(
+    text: str,
+    offset: int,
+    mapper: HanlpSchemaMapper,
+    entity_dict: dict[str, str] | None = None,
+    entity_categories: dict[str, list[str]] | None = None,
+    auto_discover_entities: bool = False,
+) -> tuple[list, list, list, list, bool]:
     try:
         pipeline = _get_classical_pipeline()
         if pipeline is None:
@@ -173,7 +187,12 @@ def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper,
         logger.warning("Classical pipeline failed: %s", exc)
         return [], [], [], [], False
     normalized = _normalize_lzh_keys(raw)
-    doc = mapper.map(text, normalized, source="hanlp_lzh", entity_dict=entity_dict)
+    doc = mapper.map(
+        text, normalized, source="hanlp_lzh",
+        entity_dict=entity_dict,
+        entity_categories=entity_categories,
+        auto_discover_entities=auto_discover_entities,
+    )
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "hanlp_lzh"
@@ -181,8 +200,13 @@ def _analyze_classical(text: str, offset: int, mapper: HanlpSchemaMapper,
             doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
 
 
-def _analyze_english(text: str, offset: int, mapper: HanlpSchemaMapper
-                     ) -> tuple[list, list, list, list, bool]:
+def _analyze_english(
+    text: str,
+    offset: int,
+    mapper: HanlpSchemaMapper,
+    entity_categories: dict[str, list[str]] | None = None,
+    auto_discover_entities: bool = False,
+) -> tuple[list, list, list, list, bool]:
     try:
         pipeline = _get_english_pipeline()
         if pipeline is None:
@@ -195,7 +219,11 @@ def _analyze_english(text: str, offset: int, mapper: HanlpSchemaMapper
         logger.warning("English pipeline failed: %s", exc)
         return [], [], [], [], False
     # English model uses standard UD keys, map directly
-    doc = mapper.map(text, raw, source="en_modernbert")
+    doc = mapper.map(
+        text, raw, source="en_modernbert",
+        entity_categories=entity_categories,
+        auto_discover_entities=auto_discover_entities,
+    )
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "en_modernbert"
@@ -245,9 +273,14 @@ def _normalize_lzh_keys(raw: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
-def analyze(text: str, dict_combine: Optional[set] = None,
-            language: str = "auto",
-            entity_dict: dict[str, str] | None = None) -> NarrativeDocument:
+def analyze(
+    text: str,
+    dict_combine: Optional[set] = None,
+    language: str = "auto",
+    entity_dict: dict[str, str] | None = None,
+    entity_categories: dict[str, list[str]] | None = None,
+    auto_discover_entities: bool = False,
+) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
 
@@ -263,6 +296,13 @@ def analyze(text: str, dict_combine: Optional[set] = None,
             Chinese entity recognition. No hardcoded dictionaries — the
             caller (API / frontend) supplies this.
             Example: ``{"北冥": "LOCATION", "鲲": "PERSON"}``.
+        entity_categories: Optional ``{category: [keyword1, keyword2, ...]}``
+            for domain-specific keyword injection. The caller supplies domain
+            keywords at runtime — no hardcoded domain knowledge in the tool.
+            Example: ``{"DISEASE": ["乳腺癌", "肿瘤"], "ANATOMY": ["乳腺"]}``.
+            Keywords with categories not in EntityCategory.ALL are mapped to UNKNOWN.
+        auto_discover_entities: If True, run new word discovery (PMI+MTL)
+            and promote high-score candidates to UNKNOWN entities. Default False.
 
     Modern Chinese  → MTL (ELECTRA-small)
     Classical Chinese → LZH (KYOTO-EVAHAN)
@@ -325,7 +365,8 @@ def analyze(text: str, dict_combine: Optional[set] = None,
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
             tokens, entities, relations, patterns, ok = _analyze_classical(
-                seg_text, seg_offset, mapper, entity_dict,
+                seg_text, seg_offset, mapper, entity_dict, entity_categories,
+                auto_discover_entities,
             )
             if not ok:
                 logger.warning(
@@ -333,14 +374,20 @@ def analyze(text: str, dict_combine: Optional[set] = None,
                     seg_text[:20],
                 )
         elif lang == "english":
-            tokens, entities, relations, patterns, ok = _analyze_english(seg_text, seg_offset, mapper)
+            tokens, entities, relations, patterns, ok = _analyze_english(
+                seg_text, seg_offset, mapper, entity_categories,
+                auto_discover_entities,
+            )
             if not ok:
                 logger.warning(
                     "English segment not analyzed (model unavailable): %s...",
                     seg_text[:20],
                 )
         else:
-            tokens, entities, relations, patterns, ok = _analyze_modern(seg_text, seg_offset, mapper, dict_combine)
+            tokens, entities, relations, patterns, ok = _analyze_modern(
+                seg_text, seg_offset, mapper, dict_combine, entity_categories,
+                auto_discover_entities,
+            )
             if not ok:
                 logger.warning(
                     "Modern segment not analyzed: %s...",

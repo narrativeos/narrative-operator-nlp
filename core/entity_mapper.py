@@ -1,195 +1,327 @@
 """
-Entity Mapping Rules — NER Unification Layer.
+Entity Mapping — Orchestrator for entity extraction.
 
-HanLP MTL NER output: list of (text, label, tok_start, tok_end) tuples.
-tok_start/tok_end are token-level indices into tok/fine.
-We convert them to character offsets using the token list.
+Three-layer extraction pipeline:
+  Layer 1: NER models (PKU/MSRA/OntoNotes) → PERSON/LOCATION/ORGANIZATION
+  Layer 2: New word discovery (PMI+MTL) → UNKNOWN (optional, user-controlled)
+  Layer 3: User custom dictionary → user-defined categories (optional)
+
+Then: merge → deduplicate → sort.
+
+This module is a thin orchestrator that delegates to specialized components.
 """
 
 from __future__ import annotations
+
+import logging
+from pathlib import Path
 from typing import Optional
+
 from .schema import Entity, EntityCategory, Token
+from .ner_label_mapper import NerLabelMapper
+from .keyword_extractor import KeywordExtractor
+from .entity_merger import EntityMerger
+from .entity_deduplicator import EntityDeduplicator
+from .entity_id_generator import EntityIdGenerator
 
-_PKU_MAP = {"nr":"PERSON","ns":"LOCATION","nt":"ORGANIZATION","nz":"PRODUCT"}
-_MSRA_MAP = {"PERSON":"PERSON","LOCATION":"LOCATION","ORGANIZATION":"ORGANIZATION","DATE":"DATE"}
-_ONTONOTES_MAP = {"PERSON":"PERSON","NORP":"ORGANIZATION","FAC":"FACILITY","ORG":"ORGANIZATION",
-    "GPE":"LOCATION","LOC":"LOCATION","PRODUCT":"PRODUCT","DATE":"DATE","TIME":"DATE",
-    "PERCENT":"NUMBER","MONEY":"NUMBER","QUANTITY":"NUMBER","CARDINAL":"NUMBER",
-    "ORDINAL":"NUMBER","LAW":"STANDARD","EVENT":"UNKNOWN","WORK_OF_ART":"UNKNOWN","LANGUAGE":"UNKNOWN"}
-# English NER (CoNLL-2003 / OntoNotes via bare "ner" key)
-_CONLL_MAP = {"PER":"PERSON","PERSON":"PERSON","LOC":"LOCATION","GPE":"LOCATION",
-    "ORG":"ORGANIZATION","ORGANIZATION":"ORGANIZATION","MISC":"UNKNOWN","DATE":"DATE",
-    "TIME":"DATE","MONEY":"NUMBER","PERCENT":"NUMBER","QUANTITY":"NUMBER",
-    "CARDINAL":"NUMBER","ORDINAL":"NUMBER","FAC":"FACILITY","PRODUCT":"PRODUCT",
-    "EVENT":"UNKNOWN","WORK_OF_ART":"UNKNOWN","LAW":"STANDARD","LANGUAGE":"UNKNOWN",
-    "NORP":"ORGANIZATION"}
+logger = logging.getLogger(__name__)
 
-_MATERIAL = frozenset({
-    # Metals & alloys
-    "钢","铁","铜","铝","钛","锌","镍","铬","锰","锡","铅","镁","钨","钴",
-    "合金","不锈钢","碳钢","铸铁","铝合金","钛合金","镁合金","铜合金",
-    # Non-metals
-    "塑料","橡胶","陶瓷","玻璃","纤维","复合材料","碳纤维",
-    # Elements (single-char, for compound detection)
-    "碳","硅","硼","硫","磷",
-})
-_STANDARD = frozenset({"GB","GB/T","ISO","ASTM","DIN","JIS","EN","标准","规范"})
-_PARAMETER = frozenset({"强度","硬度","韧性","密度","熔点","沸点","抗拉强度","屈服强度","延伸率"})
+# Backward compatibility: mapper.py imports _PARAMETER from this module.
+_PARAMETER: frozenset = frozenset()
+
+
+def _load_default_parameter_keywords() -> frozenset:
+    """Load parameter keywords from the default config for backward compat."""
+    global _PARAMETER
+    if _PARAMETER:
+        return _PARAMETER
+    try:
+        import yaml
+        config_path = Path(__file__).parent.parent / "config" / "domain_keywords.yaml"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            _PARAMETER = frozenset(config.get("parameter", []))
+    except Exception:
+        pass
+    return _PARAMETER
+
+
+# Minimum score threshold for discovered words to become entities
+# PMI-based scores: 3.0+ is strong, 2.0+ is moderate
+_DISCOVER_ENTITY_THRESHOLD = 3.0
 
 
 class EntityMappingRules:
-    SOURCE_MAPS = {
-        "ner/pku": _PKU_MAP,
-        "ner/msra": _MSRA_MAP,
-        "ner/ontonotes": _ONTONOTES_MAP,
-        "ner": _CONLL_MAP,              # English MODERNBERT (bare key)
-        "ner/conll2003": _CONLL_MAP,    # English fallback
-    }
+    """Orchestrates entity extraction from HanLP output.
 
-    def __init__(self):
-        self._counter = 0
+    Three-layer pipeline:
+      1. NER models (PERSON/LOCATION/ORGANIZATION/FACILITY)
+      2. New word discovery (UNKNOWN — optional, user-controlled)
+      3. User custom dictionary (optional, passed via entity_categories)
 
-    def map(self, raw_tuple: tuple, source: str, tokens: list[Token], text: str = "") -> Optional[Entity]:
+    Usage:
+        rules = EntityMappingRules()
+        entities = rules.map_all(text, raw, tokens)
+
+        # With custom dictionary:
+        rules = EntityMappingRules(entity_categories={
+            "MATERIAL": ["石墨烯"],
+        })
+    """
+
+    def __init__(
+        self,
+        config_dir: Optional[str] = None,
+        entity_categories: Optional[dict[str, list[str]]] = None,
+    ):
+        # Each component loads its own config file from the config directory
+        if config_dir is None:
+            config_dir = str(Path(__file__).parent.parent / "config")
+
+        self._label_mapper = NerLabelMapper._from_dir(config_dir)
+        self._keyword_extractor = KeywordExtractor._from_dir(config_dir)
+        self._merger = EntityMerger._from_dir(config_dir)
+        self._id_gen = EntityIdGenerator()
+
+        # Layer 3: Inject user-defined custom keywords
+        if entity_categories:
+            self._keyword_extractor.add_keywords(entity_categories)
+            logger.info(
+                "Injected %d custom keyword categories",
+                len(entity_categories),
+            )
+
+        # Sync _PARAMETER for backward compatibility with mapper.py
+        _load_default_parameter_keywords()
+
+    @property
+    def label_mapper(self) -> NerLabelMapper:
+        return self._label_mapper
+
+    @property
+    def keyword_extractor(self) -> KeywordExtractor:
+        return self._keyword_extractor
+
+    @property
+    def merger(self) -> EntityMerger:
+        return self._merger
+
+    # ── Public API (backward compatible) ──
+
+    def map(self, raw_tuple: tuple, source: str, tokens: list[Token],
+            text: str = "") -> Optional[Entity]:
+        """Map a single NER tuple to an Entity."""
         if len(raw_tuple) < 4:
             return None
+
         ent_text = str(raw_tuple[0]).strip()
         label = str(raw_tuple[1]).strip()
         tok_s, tok_e = int(raw_tuple[2]), int(raw_tuple[3])
         confidence = float(raw_tuple[4]) if len(raw_tuple) >= 5 else 1.0
+
         if not ent_text or not label:
             return None
-        category = self.SOURCE_MAPS.get(source, {}).get(label) or self._keyword(ent_text)
+
+        category = self._label_mapper.map_label(label, source)
+        if category is None:
+            category = self._keyword_extractor._keyword_category(ent_text)
         if category is None:
             return None
-        if 0 <= tok_s < len(tokens) and 0 < tok_e <= len(tokens):
-            cs, ce = tokens[tok_s].span[0], tokens[tok_e - 1].span[1]
-        elif text and ent_text:
-            idx = text.find(ent_text)
-            cs, ce = (idx, idx + len(ent_text)) if idx >= 0 else (0, len(ent_text))
-        else:
-            cs, ce = 0, len(ent_text)
-        self._counter += 1
-        return Entity(id=f"ent_{self._counter:03d}", text=ent_text, category=category,
-                      span=(cs, ce), normalized=ent_text, source=source, confidence=confidence)
 
-    def map_all(self, text: str, raw: dict, tokens: list[Token],
-                entity_dict: dict[str, str] | None = None) -> list[Entity]:
-        entities = []
-        for ner_key in ["ner/pku","ner/msra","ner/ontonotes","ner","ner/conll2003"]:
+        cs, ce = self._resolve_span(ent_text, tok_s, tok_e, tokens, text)
+
+        ent_id = self._id_gen.generate(ent_text, (cs, ce), category)
+        if ent_id is None:
+            return None
+
+        return Entity(
+            id=ent_id,
+            text=ent_text,
+            category=category,
+            span=(cs, ce),
+            normalized=ent_text,
+            source=source,
+            confidence=confidence,
+        )
+
+    def map_all(
+        self,
+        text: str,
+        raw: dict,
+        tokens: list[Token],
+        entity_dict: dict[str, str] | None = None,
+        auto_discover_entities: bool = False,
+    ) -> list[Entity]:
+        """Extract all entities from HanLP output.
+
+        Pipeline:
+          Layer 1: NER models → known categories
+          Layer 2: New word discovery → UNKNOWN (optional, user-controlled)
+          Layer 3: Built-in keywords (material/standard/parameter)
+          Layer 3: User custom dictionary (if provided via __init__)
+          Merge: same-category merge → cross-category merge → dedup → sort
+
+        Args:
+            text: Original text.
+            raw: HanLP output dict.
+            tokens: Token list.
+            entity_dict: Optional user-provided entity dictionary (backward compat).
+            auto_discover_entities: If True, run new word discovery (PMI+MTL)
+                and promote high-score candidates to UNKNOWN entities.
+                Default False — discovery is opt-in so users control recall/precision.
+
+        Returns:
+            Sorted list of Entity objects.
+        """
+        entities: list[Entity] = []
+
+        # ── Layer 1: NER models ──
+        for ner_key in self._label_mapper.ner_sources:
             for raw_ent in raw.get(ner_key, []):
                 mapped = self.map(raw_ent, ner_key, tokens, text)
-                if mapped and not self._dup(mapped, entities):
+                if mapped and not EntityDeduplicator.is_duplicate(mapped, entities):
                     entities.append(mapped)
 
-        # Post-processing
-        entities.sort(key=lambda e: e.span[0])
-        entities = self._merge_adjacent(entities)
-        entities = self._discover_keyword_entities(entities, tokens, text)
+        # ── Layer 2: New word discovery (optional, user-controlled) ──
+        if auto_discover_entities:
+            discover_entities = self._extract_from_discover(tokens, entities, text)
+            entities.extend(discover_entities)
 
-        # Classical Chinese fallback: if no NER entities found and no SRL,
-        # use model-native signals: PROPN upos + xpos semantic parsing.
+        # ── Layer 3a: Built-in keyword extraction (material/standard/parameter) ──
+        keyword_entities = self._keyword_extractor.extract(
+            tokens, entities, text, self._id_gen
+        )
+        entities.extend(keyword_entities)
+
+        # ── Layer 3b: Classical Chinese fallback (when no NER/SRL) ──
         has_ner = any(
-            raw.get(k) for k in ["ner/pku", "ner/msra", "ner/ontonotes", "ner", "ner/conll2003"]
+            raw.get(k) for k in self._label_mapper.ner_sources
         )
         has_srl = bool(raw.get("srl"))
         if not has_ner and not has_srl:
-            classical_entities = self.map_classical_entities(
+            classical_entities = self._map_classical_entities(
                 tokens, text, raw, entity_dict,
             )
             for ce in classical_entities:
-                if not self._dup(ce, entities):
+                if not EntityDeduplicator.is_duplicate(ce, entities):
                     entities.append(ce)
 
+        # ── Merge & Dedup ──
         entities.sort(key=lambda e: e.span[0])
+        entities = self._merger.merge_same_category(entities)
+        entities.sort(key=lambda e: e.span[0])
+        entities = self._merger.merge_cross_category(entities)
+
+        if not has_ner and not has_srl:
+            entities = self._merger.merge_det_entities(entities, tokens, raw)
+
+        entities = EntityDeduplicator.deduplicate(entities)
+
         return entities
 
-    @staticmethod
-    def _keyword(text: str) -> Optional[str]:
-        # Modern domain keywords only (no classical dictionaries)
-        if text in _MATERIAL: return "MATERIAL"
-        if text in _STANDARD: return "STANDARD"
-        if text in _PARAMETER: return "PARAMETER"
-        if len(text) >= 3:
-            for kw in _PARAMETER:
-                if text.endswith(kw) and len(kw) >= 2:
-                    return "PARAMETER"
-        return None
+    # ── Layer 2: New word discovery → entities ──
 
-    # ── xpos semantic tag parser ──
+    def _extract_from_discover(
+        self,
+        tokens: list[Token],
+        existing_entities: list[Entity],
+        text: str,
+    ) -> list[Entity]:
+        """Extract entities from new word discovery (PMI+MTL).
 
-    @staticmethod
-    def _parse_xpos_category(xpos: str) -> Optional[str]:
-        """Parse LZH xpos semantic categories into NSP entity categories.
+        Runs the discoverer module, filters candidates by score threshold,
+        and promotes high-score candidates to UNKNOWN entities.
 
-        LZH xpos format (UniDic-based): ``<pos>,<品詞>,<サブカテゴリ>,<詳細>``.
+        This is the industry-standard approach for unsupervised entity
+        discovery, replacing the previous POS-based extraction.
 
-        Entity-relevant patterns (only for ``名詞``, skip ``代名詞``/pronouns):
-          - n,名詞,*,地名        → LOCATION   (place name)
-          - n,名詞,人,名         → PERSON     (person name)
-          - n,名詞,*,組織        → ORGANIZATION
-          - n,名詞,*,作品        → PRODUCT
-          - n,名詞,固有名詞,...  → UNKNOWN    (proper noun, too general)
-          - n,名詞,主体,...      → UNKNOWN    (concrete entity: 魚, 鳥, …)
-
-        Pronouns (代名詞) and other non-nominal tags are skipped to
-        avoid false positives like ``其`` (n,代名詞,人称,起格).
+        All extracted entities have category=UNKNOWN and source="discover".
         """
-        if not xpos or "," not in xpos:
-            return None
-        parts = xpos.split(",")
-        if len(parts) < 2:
-            return None
-        pos_class = parts[1].strip()
-        if pos_class != "名詞":
-            return None
-        rest = ",".join(parts[2:]) if len(parts) > 2 else ""
-        if "地名" in rest:
-            return "LOCATION"
-        if "地形" in rest:
-            return "LOCATION"
-        if "人" in rest and "名" in rest:
-            return "PERSON"
-        if "組織" in rest:
-            return "ORGANIZATION"
-        if "作品" in rest:
-            return "PRODUCT"
-        if "固有名詞" in rest:
-            return "LOCATION"  # proper noun, default to LOCATION
-        # Concrete entities: 固定物 (mountains, rivers, buildings),
-        # 主体 (animals: 魚, 鳥), 動物, 植物
-        if "固定物" in rest:
-            return "LOCATION"  # mountains, buildings → LOCATION
-        if "主体" in rest or "動物" in rest or "植物" in rest:
-            return "UNKNOWN"
-        return None
+        from .discoverer import discover as run_discover
 
-    def map_classical_entities(
-        self, tokens: list[Token], text: str, raw: dict | None = None,
+        result: list[Entity] = []
+        entity_spans = {(e.span[0], e.span[1]) for e in existing_entities}
+
+        try:
+            candidates = run_discover(
+                text,
+                min_len=2,
+                max_len=4,
+                min_freq=1,
+                min_score=_DISCOVER_ENTITY_THRESHOLD,
+                max_candidates=30,
+                mtl_tokens=tokens,
+            )
+
+            for c in candidates.candidates:
+                # Find the word in text to get span
+                idx = text.find(c.word)
+                if idx < 0:
+                    continue
+                span = (idx, idx + len(c.word))
+                if span in entity_spans:
+                    continue
+
+                ent_id = self._id_gen.generate(c.word, span, "UNKNOWN")
+                if ent_id is None:
+                    continue
+
+                # Convert PMI score to confidence [0, 1]
+                # PMI scores typically range 0-10; normalize to 0.5-0.85
+                confidence = min(0.85, 0.5 + c.score * 0.05)
+
+                result.append(Entity(
+                    id=ent_id,
+                    text=c.word,
+                    category="UNKNOWN",
+                    span=span,
+                    normalized=c.word,
+                    source="discover",
+                    confidence=confidence,
+                ))
+                entity_spans.add(span)
+
+        except Exception as exc:
+            logger.warning("New word discovery failed: %s", exc)
+
+        result.sort(key=lambda e: e.span[0])
+        return result
+
+    # ── Helper methods ──
+
+    @staticmethod
+    def _resolve_span(
+        ent_text: str,
+        tok_s: int,
+        tok_e: int,
+        tokens: list[Token],
+        text: str,
+    ) -> tuple[int, int]:
+        if 0 <= tok_s < len(tokens) and 0 < tok_e <= len(tokens):
+            return tokens[tok_s].span[0], tokens[tok_e - 1].span[1]
+        if text and ent_text:
+            idx = text.find(ent_text)
+            if idx >= 0:
+                return idx, idx + len(ent_text)
+        return 0, len(ent_text)
+
+    # ── Classical Chinese entity extraction ──
+
+    def _map_classical_entities(
+        self,
+        tokens: list[Token],
+        text: str,
+        raw: dict | None = None,
         entity_dict: dict[str, str] | None = None,
     ) -> list[Entity]:
-        """Extract entities from classical Chinese using model-native signals.
-
-        Zero hardcoded entity dictionaries. Three strategies:
-
-        1. (Optional) User-provided ``entity_dict`` full-text span matching.
-        2. PROPN upos tokens — proper nouns are entity candidates;
-           xpos semantic tags (地名→LOCATION, 人,名→PERSON) provide category.
-        3. xpos-only — non-PROPN nouns whose xpos carries a semantic hint.
-
-        Args:
-            tokens: Token list with upos tags.
-            text: Original text for span computation.
-            raw: Full HanLP output dict (needs ``pos/xpos``).
-            entity_dict: Optional ``{term: NSP_category}`` mapping supplied
-                         by the caller (API / frontend).
-        """
+        """Extract entities from classical Chinese using model-native signals."""
         entities: list[Entity] = []
         entity_spans: set[tuple[int, int]] = set()
-        xpos_tags: list[str] = raw.get("pos/xpos", []) if raw else []
+        xpos_tags: list[str] = (raw or {}).get("pos/xpos", [])
 
-        # ── Strategy 1 (optional): user-provided entity dictionary ──
+        # Strategy 1: User-provided entity dictionary
         if entity_dict:
-            # Sort longest-first to prefer longer matches
             sorted_dict = sorted(entity_dict.items(), key=lambda x: -len(x[0]))
             for term, cat in sorted_dict:
                 if cat not in EntityCategory.ALL:
@@ -201,40 +333,45 @@ class EntityMappingRules:
                         break
                     span_key = (idx, idx + len(term))
                     if span_key not in entity_spans:
-                        self._counter += 1
-                        entities.append(Entity(
-                            id=f"ent_{self._counter:03d}",
-                            text=term, category=cat,
-                            span=(idx, idx + len(term)),
-                            normalized=term, source="entity_dict",
-                            confidence=0.95,
-                        ))
-                        entity_spans.add(span_key)
+                        ent_id = self._id_gen.generate(term, span_key, cat)
+                        if ent_id:
+                            entities.append(Entity(
+                                id=ent_id,
+                                text=term,
+                                category=cat,
+                                span=span_key,
+                                normalized=term,
+                                source="entity_dict",
+                                confidence=0.95,
+                            ))
+                            entity_spans.add(span_key)
                     start = idx + 1
 
-        # ── Strategy 2: PROPN upos (proper nouns) ──
+        # Strategy 2: PROPN/NR
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
                 continue
             if t.pos in ("PROPN", "NR"):
-                # Try xpos semantic tag first
                 xpos = xpos_tags[i] if i < len(xpos_tags) else ""
                 xcat = self._parse_xpos_category(xpos) if xpos else None
                 cat = xcat or ("LOCATION" if len(t.text) >= 2 else None)
                 if cat is None:
                     continue
-                self._counter += 1
-                entities.append(Entity(
-                    id=f"ent_{self._counter:03d}",
-                    text=t.text, category=cat, span=t.span,
-                    normalized=t.text,
-                    source=f"classical_{'xpos' if xcat else 'propn'}",
-                    confidence=0.80,
-                ))
-                entity_spans.add(span_key)
+                ent_id = self._id_gen.generate(t.text, t.span, cat)
+                if ent_id:
+                    entities.append(Entity(
+                        id=ent_id,
+                        text=t.text,
+                        category=cat,
+                        span=t.span,
+                        normalized=t.text,
+                        source=f"classical_{'xpos' if xcat else 'propn'}",
+                        confidence=0.80,
+                    ))
+                    entity_spans.add(span_key)
 
-        # ── Strategy 3: xpos-only (semantic tags on non-PROPN nouns) ──
+        # Strategy 3: xpos-only
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
@@ -243,172 +380,54 @@ class EntityMappingRules:
             if not xpos:
                 continue
             xcat = self._parse_xpos_category(xpos)
-            # Exclude classifiers / measure words (助数詞, 度量衡: 里, 个, 匹, …)
             if "助数詞" in xpos or "度量衡" in xpos:
                 continue
-            # Fallback: NOUN tokens without clear xpos category still
-            # get UNKNOWN (e.g. 鹏 mis-tagged as verb by LZH).
             if xcat is None and t.pos == "NOUN":
                 xcat = "UNKNOWN"
             if xcat is None:
                 continue
-            self._counter += 1
-            entities.append(Entity(
-                id=f"ent_{self._counter:03d}",
-                text=t.text, category=xcat, span=t.span,
-                normalized=t.text, source="classical_xpos",
-                confidence=0.65,
-            ))
-            entity_spans.add(span_key)
-
-        # Adjacent merge
-        entities.sort(key=lambda e: e.span[0])
-        entities = self._merge_adjacent(entities)
-
-        # ── Det-compound merge (其 + 名 → 其名) ──
-        entities = self._merge_det_entities(entities, tokens, raw)
-
-        return entities
-
-    def _merge_det_entities(
-        self, entities: list[Entity], tokens: list[Token], raw: dict | None,
-    ) -> list[Entity]:
-        """Merge det children into their entity head (其+名→其名)."""
-        dep = raw.get("dep", []) if raw else []
-        if not dep:
-            return entities
-
-        # Build entity index by token index
-        ent_by_idx: dict[int, Entity] = {}
-        for e in entities:
-            for i, t in enumerate(tokens):
-                if t.span == e.span and t.text == e.text:
-                    ent_by_idx[i] = e
-                    break
-
-        merged: list[Entity] = []
-        merged_indices: set[int] = set()
-
-        for i, e in enumerate(entities):
-            # Find which token index this entity corresponds to
-            e_idx = None
-            for idx, ent in ent_by_idx.items():
-                if ent is e:
-                    e_idx = idx
-                    break
-            if e_idx is None or e_idx in merged_indices:
-                continue
-
-            # Collect det children that point to this entity's token
-            det_children: list[int] = []
-            for ci, d in enumerate(dep):
-                if not isinstance(d, (list, tuple)) or len(d) < 2:
-                    continue
-                if int(d[0]) - 1 == e_idx and str(d[1]).strip().lower() == "det":
-                    det_children.append(ci)
-
-            if not det_children:
-                merged.append(e)
-                continue
-
-            # Merge: det child + entity → compound
-            all_idx = sorted([e_idx] + det_children)
-            merged_text = "".join(tokens[i].text for i in all_idx)
-            merged_span = (
-                tokens[all_idx[0]].span[0],
-                tokens[all_idx[-1]].span[1],
-            )
-            merged.append(Entity(
-                id=e.id,
-                text=merged_text,
-                category=e.category,
-                span=merged_span,
-                normalized=merged_text,
-                source=e.source,
-                confidence=e.confidence,
-            ))
-            merged_indices.add(e_idx)
-            merged_indices.update(det_children)
-
-        return merged
-
-    @staticmethod
-    def _dup(candidate: Entity, existing: list[Entity]) -> bool:
-        for e in existing:
-            if e.text == candidate.text and candidate.span[0] < e.span[1] and candidate.span[1] > e.span[0]:
-                return True
-        return False
-
-    # ---- Post-processing ----
-
-    @staticmethod
-    def _merge_adjacent(entities: list[Entity]) -> list[Entity]:
-        """Merge adjacent same-category entities into compound entities.
-
-        '北京'(LOC) + '立方庭'(LOC) → '北京立方庭'(LOC)
-        '碳'(MATERIAL) + '钢'(MATERIAL) → '碳钢'(MATERIAL)
-        """
-        if len(entities) < 2:
-            return entities
-        merged = []
-        i = 0
-        while i < len(entities):
-            cur = entities[i]
-            j = i + 1
-            while j < len(entities):
-                nxt = entities[j]
-                if (cur.category == nxt.category
-                        and cur.span[1] == nxt.span[0]):
-                    cur = Entity(
-                        id=cur.id,
-                        text=cur.text + nxt.text,
-                        category=cur.category,
-                        span=(cur.span[0], nxt.span[1]),
-                        normalized=cur.normalized + nxt.normalized,
-                        source=cur.source,
-                        confidence=min(cur.confidence, nxt.confidence),
-                    )
-                    j += 1
-                else:
-                    break
-            merged.append(cur)
-            i = j
-        return merged
-
-    def _discover_keyword_entities(
-        self, entities: list[Entity], tokens: list[Token], text: str
-    ) -> list[Entity]:
-        """Scan tokens for domain keywords not caught by NER.
-
-        Multi-char tokens matching _MATERIAL/_STANDARD/_PARAMETER → entities.
-        Single-char tokens only matched against _MATERIAL (e.g., 钢, 铁, 铜).
-        """
-        result = list(entities)
-        entity_spans = {(e.span[0], e.span[1]) for e in entities}
-
-        for t in tokens:
-            span_key = (t.span[0], t.span[1])
-            if span_key in entity_spans:
-                continue
-            # Single-char: only match materials (钢, 铁, 铜, 铝...)
-            if len(t.text) == 1 and t.text in _MATERIAL:
-                cat = "MATERIAL"
-            elif len(t.text) >= 2:
-                cat = self._keyword(t.text)
-            else:
-                continue
-            if cat and cat != "UNKNOWN":
-                self._counter += 1
-                result.append(Entity(
-                    id=f"ent_{self._counter:03d}",
+            ent_id = self._id_gen.generate(t.text, t.span, xcat)
+            if ent_id:
+                entities.append(Entity(
+                    id=ent_id,
                     text=t.text,
-                    category=cat,
+                    category=xcat,
                     span=t.span,
                     normalized=t.text,
-                    source="keyword",
-                    confidence=1.0,
+                    source="classical_xpos",
+                    confidence=0.65,
                 ))
                 entity_spans.add(span_key)
 
-        result.sort(key=lambda e: e.span[0])
-        return result
+        entities.sort(key=lambda e: e.span[0])
+        entities = self._merger.merge_same_category(entities)
+
+        return entities
+
+    @staticmethod
+    def _parse_xpos_category(xpos: str) -> Optional[str]:
+        """Parse LZH xpos semantic categories into NSP entity categories."""
+        if not xpos or "," not in xpos:
+            return None
+        parts = xpos.split(",")
+        if len(parts) < 2:
+            return None
+        pos_class = parts[1].strip()
+        if pos_class != "名詞":
+            return None
+        rest = ",".join(parts[2:]) if len(parts) > 2 else ""
+        if "地名" in rest or "地形" in rest:
+            return "LOCATION"
+        if "人" in rest and "名" in rest:
+            return "PERSON"
+        if "組織" in rest:
+            return "ORGANIZATION"
+        if "作品" in rest:
+            return "PRODUCT"
+        if "固有名詞" in rest:
+            return "LOCATION"
+        if "固定物" in rest:
+            return "LOCATION"
+        if "主体" in rest or "動物" in rest or "植物" in rest:
+            return "UNKNOWN"
+        return None

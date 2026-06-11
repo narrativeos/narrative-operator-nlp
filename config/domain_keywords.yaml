@@ -1,0 +1,86 @@
+# Domain Keywords Configuration
+# Keywords that are not caught by NER models but should be recognized as entities.
+#
+# Format:
+#   <category>:
+#     - keyword
+#
+# NSP Categories for keywords:
+#   MATERIAL, STANDARD, PARAMETER
+#
+# NOTE: This file contains ONLY built-in generic keywords.
+# Domain-specific keywords (medical, legal, financial, etc.) should be
+# provided via the entity_categories parameter in the API call.
+
+# Materials (metals, alloys, non-metals, elements)
+material:
+  # Metals & alloys
+  - 钢
+  - 铁
+  - 铜
+  - 铝
+  - 钛
+  - 锌
+  - 镍
+  - 铬
+  - 锰
+  - 锡
+  - 铅
+  - 镁
+  - 钨
+  - 钴
+  - 合金
+  - 不锈钢
+  - 碳钢
+  - 铸铁
+  - 铝合金
+  - 钛合金
+  - 镁合金
+  - 铜合金
+  # Non-metals
+  - 塑料
+  - 橡胶
+  - 陶瓷
+  - 玻璃
+  - 纤维
+  - 复合材料
+  - 碳纤维
+  # Elements (single-char, for compound detection)
+  - 碳
+  - 硅
+  - 硼
+  - 硫
+  - 磷
+
+# Standards (organization codes and keywords)
+standard:
+  - GB
+  - GB/T
+  - ISO
+  - ASTM
+  - DIN
+  - JIS
+  - EN
+  - 标准
+  - 规范
+
+# Parameters (material properties and measurement keywords)
+parameter:
+  - 强度
+  - 硬度
+  - 韧性
+  - 密度
+  - 熔点
+  - 沸点
+  - 抗拉强度
+  - 屈服强度
+  - 延伸率
+
+# User-defined keywords (merged at runtime via API/env)
+# Example:
+# user_keywords:
+#   MATERIAL:
+#     - 石墨烯
+#   STANDARD:
+#     - JIS
+user_keywords: {}

@@ -1,0 +1,45 @@
+{
+    "name": "Modern Chinese",
+    "lang": "zh",
+    "cases": [
+        {
+            "name": "Steel Material",
+            "text": "碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。",
+            "raw": {
+                "tok/fine": ["碳","钢","是","钢","的","一","种","，","具有","高强度","和","高韧性","。","北京","立方庭","位于","海淀","区","。"],
+                "pos/ctb": ["NN","NN","VC","NN","DEG","CD","M","PU","VV","NN","CC","NN","PU","NR","NR","VV","NR","NR","PU"],
+                "ner/pku": [["北京","ns",13,14],["立方庭","ns",14,15],["海淀区","ns",16,18]],
+                "ner/msra": [["北京","LOCATION",13,14],["立方庭","LOCATION",14,15],["海淀区","LOCATION",16,18]],
+                "dep": [[2,"nn"],[3,"top"],[2,"attr"],[7,"assmod"],[7,"assm"],[7,"nummod"],[3,"attr"],[3,"punct"],[10,"nn"],[14,"nsubj"],[9,"nn"],[10,"nn"],[10,"nn"],[0,"root"],[14,"conj"],[14,"dobj"],[16,"nn"],[18,"nn"],[14,"punct"]],
+                "srl": [[["碳钢","ARG0",0,2],["是","PRED",2,3],["钢的一种","ARG1",3,7]],[["北京立方庭","ARG0",13,15],["位于","PRED",15,16],["海淀区","ARG1",16,18]]]
+            },
+            "expected": {
+                "min_entities": 4,
+                "entity_texts": ["碳钢", "钢", "北京立方庭", "海淀区"],
+                "entity_categories": {
+                    "碳钢": "MATERIAL",
+                    "钢": "MATERIAL",
+                    "北京立方庭": "LOCATION",
+                    "海淀区": "LOCATION"
+                },
+                "min_relations": 2
+            }
+        },
+        {
+            "name": "Technology",
+            "text": "人工智能技术正在改变世界。深度学习是人工智能的重要分支。",
+            "raw": {
+                "tok/fine": ["人工","智能","技术","正在","改变","世界","。","深度","学习","是","人工","智能","的","重要","分支","。"],
+                "pos/ctb": ["NN","NN","NN","AD","VV","NN","PU","NN","NN","VC","NN","NN","DEG","JJ","NN","PU"],
+                "ner/pku": [],
+                "ner/msra": [],
+                "dep": [[3,"nn"],[2,"nn"],[5,"nsubj"],[5,"advmod"],[6,"dobj"],[5,"punct"],[10,"nsubj"],[11,"nn"],[10,"nn"],[12,"nn"],[10,"attr"],[14,"nn"],[10,"dobj"],[10,"punct"]],
+                "srl": [[["人工智能技术","ARG0",0,3],["改变","PRED",4,5],["世界","ARG1",5,6]],[["深度学习","ARG0",7,9],["是","PRED",9,10],["人工智能的重要分支","ARG1",10,15]]]
+            },
+            "expected": {
+                "min_entities": 0,
+                "min_relations": 2
+            }
+        }
+    ]
+}
