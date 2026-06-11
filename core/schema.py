@@ -188,6 +188,75 @@ class Relation(BaseModel):
         return v
 
 
+# ---------------------------------------------------------------------------
+# Coreference Resolution
+# ---------------------------------------------------------------------------
+
+class Mention(BaseModel):
+    """A single mention (reference) in a coreference chain."""
+    text: str = Field(..., min_length=1, description="Mention surface text")
+    span: tuple[int, int] = Field(..., description="Character offset [start, end)")
+    mention_type: str = Field(
+        default="entity",
+        description="pronoun|nominal|entity — type of mention"
+    )
+    entity_id: Optional[str] = Field(
+        default=None,
+        description="Linked entity ID if this mention is a named entity"
+    )
+    is_principal: bool = Field(
+        default=False,
+        description="Whether this is the principal/representative mention in the chain"
+    )
+
+    @field_validator("span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+
+class CoreferenceChain(BaseModel):
+    """A coreference chain: a set of mentions that refer to the same entity.
+
+    quality_flag indicates the confidence level of the resolution:
+    - high: modern Chinese/English, high confidence
+    - medium: medium confidence
+    - low: low confidence
+    - degraded: classical Chinese or other degraded mode (placeholder for future optimization)
+    """
+    chain_id: str = Field(..., pattern=r"^coref_\d+$", description="Unique chain ID")
+    mentions: list[Mention] = Field(
+        ...,
+        min_length=1,
+        description="All mentions in this coreference chain, ordered by span"
+    )
+    representative: str = Field(
+        ...,
+        min_length=1,
+        description="Representative mention text (usually the principal entity)"
+    )
+    confidence: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Overall chain confidence score [0, 1]"
+    )
+    language: str = Field(
+        default="modern",
+        description="Language of the chain: modern|classical|english"
+    )
+    quality_flag: str = Field(
+        default="medium",
+        description="high|medium|low|degraded — quality indicator for downstream processing"
+    )
+    model_version: str = Field(
+        default="rule_based_v1",
+        description="Model/algorithm version for traceability"
+    )
+
+
 # ── Sentence Pattern ──
 
 class SentencePattern(BaseModel):
@@ -285,6 +354,10 @@ class NarrativeContent(BaseModel):
     entities: list[Entity] = Field(default_factory=list, description="Unified entity list")
     relations: list[Relation] = Field(default_factory=list, description="Extracted relation triples")
     patterns: list[SentencePattern] = Field(default_factory=list, description="Sentence-level structural patterns")
+    coreferences: list[CoreferenceChain] = Field(
+        default_factory=list,
+        description="Coreference chains linking mentions to entities",
+    )
     sentences: list[SentenceLanguage] = Field(
         default_factory=list,
         description="Per-sentence text, span, and detected language label",

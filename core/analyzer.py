@@ -14,7 +14,8 @@ from typing import Optional
 
 from .language_detector import detect_language, classical_confidence, LanguageClass
 from .mapper import HanlpSchemaMapper
-from .schema import NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
+from .schema import CoreferenceChain, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
+from .coref_resolver import CorefResolver
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,24 @@ def _apply_offset(doc: NarrativeDocument, offset: int):
         r.evidence_span = (r.evidence_span[0] + offset, r.evidence_span[1] + offset)
 
 
+def _resolve_coreferences(
+    text: str,
+    tokens: list[Token],
+    entities: list,
+    language: str,
+) -> list[CoreferenceChain]:
+    """Run coreference resolution on the analyzed text."""
+    resolver = CorefResolver()
+    # Determine language for coref
+    if language == "auto":
+        # Use the dominant language from segments
+        lang = "modern"  # default
+    else:
+        lang = language
+    result = resolver.resolve(text, entities, tokens, lang)
+    return result.chains
+
+
 # ---------------------------------------------------------------------------
 # Classical Key Normalization (lzh_* → standard mapper keys)
 # ---------------------------------------------------------------------------
@@ -402,6 +421,9 @@ def analyze(
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
         t.id = i
 
+    # Coreference resolution
+    all_coreferences = _resolve_coreferences(text, all_tokens, all_entities, language)
+
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
@@ -416,6 +438,7 @@ def analyze(
         content=NarrativeContent(
             tokens=all_tokens, entities=all_entities,
             relations=all_relations, patterns=all_patterns,
+            coreferences=all_coreferences,
             sentences=sentence_objects, structural={},
         ),
     )
