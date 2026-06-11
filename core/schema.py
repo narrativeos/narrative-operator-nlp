@@ -158,13 +158,20 @@ class Entity(BaseModel):
 # ---------------------------------------------------------------------------
 
 class Relation(BaseModel):
-    """A semantic relation triple extracted from the text."""
+    """A semantic relation triple extracted from the text.
+
+    subject/object: the resolved/canonical entity text after merging.
+    subject_raw/object_raw: the original surface mention from the text (for traceability).
+    When the mention is already a canonical entity, raw == canonical.
+    """
     id: str = Field(..., pattern=r"^rel_\d+$", description="Unique relation ID, e.g. rel_001")
-    subject: str = Field(..., min_length=1, description="Subject text")
+    subject: str = Field(..., min_length=1, description="Subject text (canonical form after entity resolution)")
+    subject_raw: str = Field(default="", description="Original subject surface mention (for traceability)")
     subject_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     predicate: str = Field(..., description="Relation type from predefined set")
     predicate_verb: str | None = Field(default=None, description="Original SRL predicate verb (e.g. '生产', '抛光')")
-    object: str = Field(..., min_length=1, description="Object text")
+    object: str = Field(..., min_length=1, description="Object text (canonical form after entity resolution)")
+    object_raw: str = Field(default="", description="Original object surface mention (for traceability)")
     object_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     evidence: str = Field(..., min_length=1, description="Original text fragment supporting this relation")
     evidence_span: tuple[int, int] = Field(..., description="Character offset of evidence in original text")

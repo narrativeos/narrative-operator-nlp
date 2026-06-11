@@ -16,8 +16,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .entity_mapper import EntityMappingRules
+from .entity_deduplicator import EntityDeduplicator
 from .relation_mapper import RelationExtractionRules
 from .schema import (
+    Entity,
     NarrativeContent,
     NarrativeDocument,
     NarrativeMeta,
@@ -46,14 +48,68 @@ class HanlpSchemaMapper:
         self.entity_rules.reset()
         self.relation_rules.reset()
         tokens = self._map_tokens(text, raw)
-        entities = self._map_entities(
+
+        # ── Step 1: Extract raw entities (before merging) ──
+        raw_entities = self._map_entities(
             text, raw, tokens, entity_dict, entity_categories,
             auto_discover_entities,
         )
-        self._assign_attributes(text, raw, tokens, entities)
+        self._assign_attributes(text, raw, tokens, raw_entities)
         # PARAMETERs are properties, not standalone entities
-        entities = [e for e in entities if e.category != "PARAMETER"]
-        relations = self._map_relations(text, raw, tokens, entities)
+        raw_entities = [e for e in raw_entities if e.category != "PARAMETER"]
+
+        # ── Step 2: Extract relations using raw entities (preserves original mentions) ──
+        relations = self._map_relations(text, raw, tokens, raw_entities)
+
+        # ── Step 3: Merge entities ──
+        raw_entities.sort(key=lambda e: e.span[0])
+        raw_entities = self.entity_rules.merger.merge_same_category(raw_entities)
+        raw_entities.sort(key=lambda e: e.span[0])
+        raw_entities = self.entity_rules.merger.merge_cross_category(raw_entities)
+        raw_entities = self.entity_rules.merger.merge_det_entities(raw_entities, tokens, raw)
+        raw_entities = EntityDeduplicator.deduplicate(raw_entities)
+
+        # ── Step 4: Normalize relations to merged entities ──
+        # Build mapping: raw mention text → resolved entity
+        mention_to_entity: dict[str, Entity] = {}
+        for e in raw_entities:
+            mention_to_entity[e.text] = e
+            # Also map merged text variants
+            for attr in e.attributes:
+                pass  # attributes are not entity mentions
+
+        # Also build span-based mapping for mentions that don't have entity IDs
+        span_to_entity: dict[tuple[int, int], Entity] = {}
+        for e in raw_entities:
+            span_to_entity[e.span] = e
+
+        for rel in relations:
+            # Normalize subject
+            subj_entity = mention_to_entity.get(rel.subject)
+            if subj_entity:
+                rel.subject_raw = rel.subject
+                rel.subject = subj_entity.text
+                rel.subject_ent_id = subj_entity.id
+            elif rel.subject_raw == rel.subject:
+                # Already set raw during extraction
+                pass
+
+            # Normalize object
+            obj_entity = mention_to_entity.get(rel.object)
+            if obj_entity:
+                rel.object_raw = rel.object
+                rel.object = obj_entity.text
+                rel.object_ent_id = obj_entity.id
+            elif rel.object_raw == rel.object:
+                pass
+
+            # Set raw = canonical if not already set
+            if not rel.subject_raw:
+                rel.subject_raw = rel.subject
+            if not rel.object_raw:
+                rel.object_raw = rel.object
+
+        entities = raw_entities
         patterns = self._build_patterns(text, raw, entities, relations)
         return NarrativeDocument(
             meta=NarrativeMeta(
