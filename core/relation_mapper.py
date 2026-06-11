@@ -10,6 +10,11 @@ Strategy (redesigned):
 4. Function words (是, 的, 和, 一, ...) are excluded as endpoints.
 5. Compound-internal dependencies (nn, assmod, assm) are skipped —
    they're entity merging hints, not cross-entity relations.
+
+Optimizations (v2):
+- Extended SRL pairs: ARG0→ARG2, ARG1→ARGM-TMP, etc.
+- Predicate refinement: verb-based mapping (位于→LOCATED_AT, etc.)
+- Relaxed entity filter: at least ONE endpoint must be an entity
 """
 
 from __future__ import annotations
@@ -28,6 +33,42 @@ _NON_ENDPOINT_POS: frozenset[str] = frozenset({
     "NUM", "ADV", "PART", "PUNCT", "PRON", "DET", "AUX", "SCONJ", "CCONJ",
     "INTJ", "SYM", "X",
 })
+
+# ── Verb-based predicate mapping ──
+# Maps predicate_verb → more specific NSP predicate
+_VERB_PREDICATE_MAP: dict[str, str] = {
+    # Location
+    "位于": "LOCATED_AT",
+    "在": "LOCATED_AT",
+    "坐落于": "LOCATED_AT",
+    "地处": "LOCATED_AT",
+    # Production
+    "生产": "PRODUCES",
+    "制造": "PRODUCES",
+    "制造出": "PRODUCES",
+    # Composition
+    "组成": "COMPOSED_OF",
+    "构成": "COMPOSED_OF",
+    "由...组成": "COMPOSED_OF",
+    # Causal
+    "导致": "CAUSES",
+    "引起": "CAUSES",
+    "造成": "CAUSES",
+    # Control
+    "控制": "CONTROLS",
+    "管理": "CONTROLS",
+    "领导": "CONTROLS",
+    # Transfer
+    "转移到": "TRANSFERS_TO",
+    "运往": "TRANSFERS_TO",
+    # Movement
+    "移动到": "MOVED_TO",
+    "迁往": "MOVED_TO",
+    "出发": "DEPARTED_FROM",
+    # Interaction
+    "与...合作": "INTERACTS_WITH",
+    "和...合作": "INTERACTS_WITH",
+}
 
 
 def _is_relation_endpoint(token) -> bool:
@@ -53,7 +94,6 @@ def _attach_attribute(
     owner = _find_entity(entities, owner_text)
     if owner is None:
         return
-    # Deduplicate: skip if same key already exists
     if any(a.key == prop_text for a in owner.attributes):
         return
     attr = EntityAttribute(
@@ -64,14 +104,15 @@ def _attach_attribute(
     )
     owner.attributes.append(attr)
 
+
 # Classical Chinese deprel types that indicate semantic relations
 _CLASSICAL_DEP_RELS: dict[str, str] = {
-    "nsubj": "RELATES_TO",    # subject → verb: 鲲→有 → RELATES_TO
-    "obj": "RELATES_TO",      # verb → object: 有→鱼 → RELATES_TO
-    "dobj": "RELATES_TO",     # verb → object (Peking UD)
-    "nmod": "HAS_PROPERTY",   # noun modifier: 名→鲲 → HAS_PROPERTY
-    "amod": "HAS_PROPERTY",   # adj modifier: 大→鲲 → HAS_PROPERTY
-    "iobj": "RELATES_TO",     # indirect object
+    "nsubj": "RELATES_TO",
+    "obj": "RELATES_TO",
+    "dobj": "RELATES_TO",
+    "nmod": "HAS_PROPERTY",
+    "amod": "HAS_PROPERTY",
+    "iobj": "RELATES_TO",
 }
 
 
@@ -82,6 +123,26 @@ def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
     if start < 0 or end > len(text):
         return ""
     return text[start:end]
+
+
+def _resolve_predicate(pred_text: str, arg_role: str = "") -> str:
+    """Resolve predicate_verb to a more specific NSP predicate.
+
+    Args:
+        pred_text: The verb/predicate text (e.g., "位于", "生产")
+        arg_role: The argument role for context (e.g., "argm-loc")
+    """
+    # Direct verb mapping
+    if pred_text in _VERB_PREDICATE_MAP:
+        return _VERB_PREDICATE_MAP[pred_text]
+
+    # Role-based mapping
+    if arg_role == "argm-loc":
+        return "LOCATED_AT"
+    if arg_role == "argm-tmp":
+        return "TEMPORAL_AT"
+
+    return "RELATES_TO"
 
 
 class RelationExtractionRules:
@@ -98,8 +159,16 @@ class RelationExtractionRules:
 
     def extract_from_srl(self, frame: list, tokens: list,
                          text: str = "") -> list[Relation]:
-        """Extract relations from SRL frame. One frame can yield
-        multiple relations (e.g. ARG0→ARG1 + ARG1→ARGM-LOC)."""
+        """Extract relations from SRL frame.
+
+        Extended pairs:
+        - ARG0→ARG1 (primary)
+        - ARG0→ARG2 (secondary object)
+        - ARG0→ARGM-LOC (location)
+        - ARG0→ARGM-TMP (time)
+        - ARG1→ARGM-LOC (object location)
+        - ARG1→ARG2 (object→secondary)
+        """
         args: dict[str, tuple[str, tuple]] = {}
         pred_text = ""
 
@@ -123,20 +192,38 @@ class RelationExtractionRules:
         a1 = args.get("arg1")
         a2 = args.get("arg2")
         loc = args.get("argm-loc")
+        tmp = args.get("argm-tmp")
 
         # ── Generate all applicable relation pairs ──
-        pairs: list[tuple[tuple, str]] = []
+        pairs: list[tuple[tuple, tuple, str]] = []
+
+        # Primary: ARG0→ARG1
         if a0 and a1:
-            pairs.append((a0, a1, "RELATES_TO"))
-        if a1 and a2:
-            pairs.append((a1, a2, "RELATES_TO"))
+            pairs.append((a0, a1, "arg1"))
+
+        # ARG0→ARG2
+        if a0 and a2:
+            pairs.append((a0, a2, "arg2"))
+
+        # ARG0→ARGM-LOC
         if a0 and loc:
-            pairs.append((a0, loc, "RELATES_TO"))
+            pairs.append((a0, loc, "argm-loc"))
+
+        # ARG0→ARGM-TMP
+        if a0 and tmp:
+            pairs.append((a0, tmp, "argm-tmp"))
+
+        # ARG1→ARGM-LOC
         if a1 and loc:
-            pairs.append((a1, loc, "RELATES_TO"))
+            pairs.append((a1, loc, "argm-loc"))
+
+        # ARG1→ARG2
+        if a1 and a2:
+            pairs.append((a1, a2, "arg2"))
 
         relations = []
-        for subj, obj, predicate in pairs:
+        for subj, obj, role in pairs:
+            predicate = _resolve_predicate(pred_text, role)
             evidence = _span_between(subj[1], obj[1], text)
             if not evidence:
                 evidence = f"{subj[0]} {pred_text} {obj[0]}"
@@ -199,14 +286,7 @@ class RelationExtractionRules:
         self, child_idx: int, deprel: str, head_idx: int,
         tokens: list, text: str = "",
     ) -> Optional[Relation]:
-        """Extract semantic relations from classical Chinese dep output.
-
-        Unlike modern Chinese (which relies on SRL), classical Chinese
-        uses dependency relations as the primary relation source:
-        - nsubj → subject-verb → RELATES_TO
-        - dobj → verb-object → RELATES_TO
-        - nmod → noun-modifier → HAS_PROPERTY
-        """
+        """Extract semantic relations from classical Chinese dep output."""
         deprel = str(deprel).strip().lower()
 
         if deprel in _COMPOUND_INTERNAL:
@@ -225,12 +305,9 @@ class RelationExtractionRules:
         if ct.text == ht.text:
             return None
 
-        # Determine subject and object based on deprel direction
         if deprel in ("nsubj", "nmod", "amod"):
-            # child modifies head: child→subject, head→verb/noun
             subj, obj = ct, ht
         elif deprel in ("dobj", "obj", "iobj"):
-            # head is verb, child is object
             subj, obj = ht, ct
         else:
             return None
@@ -257,12 +334,7 @@ class RelationExtractionRules:
     def _merge_det_compound(
         idx: int, dep: list, tokens: list,
     ) -> tuple[str, tuple[int, int]]:
-        """Merge a token with its det children into a compound.
-
-        ``其(det)→名`` becomes ``其名`` with combined span.
-        Returns (merged_text, merged_span).
-        """
-        # Collect det children that point to this token
+        """Merge a token with its det children into a compound."""
         merged_indices = {idx}
         for ci, d in enumerate(dep):
             if not isinstance(d, (list, tuple)) or len(d) < 2:
@@ -283,18 +355,13 @@ class RelationExtractionRules:
                     entities: list | None = None) -> list:
         """Extract relations: SRL first, then supplementary DEP (amod).
 
-        When entities are provided, relations are normalized and filtered:
-        - Endpoints are matched to recognized entities
-        - Non-entity endpoints cause the relation to be dropped
-        - Bare adjectives (高, 大, ...) as objects are suppressed
+        Relaxed entity filter: at least ONE endpoint must be an entity.
         """
-        # Build entity index: entity text → canonical text
         entity_texts: set[str] = set()
         if entities:
             for e in entities:
                 entity_texts.add(e.text)
 
-        # Extract SRL relations (when available — classical Chinese has no SRL)
         relations: list = []
         has_srl = bool(raw.get("srl"))
         if has_srl:
@@ -306,12 +373,7 @@ class RelationExtractionRules:
                         if rel:
                             relations.append(rel)
 
-        # ── Classical Chinese: 3-step pipeline ──
-        # Step 1: Entities (already identified by entity_mapper).
-        # Step 2: Entity-to-entity relations via nsubj+obj / cop bridges.
-        # Step 3: Entity properties via nmod/amod (HAS_PROPERTY).
         if not has_srl:
-            # Step 2 — Build entity-to-entity bridges
             bridges = self._bridge_subj_obj(
                 raw.get("dep", []), tokens, text, entity_texts,
             )
@@ -321,14 +383,11 @@ class RelationExtractionRules:
             relations.extend(bridges)
             relations.extend(cop_bridges)
 
-            # Collect verbs already covered by bridges (for nsubj/obj suppression)
             bridged_verbs: set[str] = set()
             for r in bridges + cop_bridges:
                 if r.predicate_verb:
                     bridged_verbs.add(r.predicate_verb)
 
-            # Step 3 — Entity properties: nmod/amod → HAS_PROPERTY
-            # Also keep lone nsubj/obj not covered by any bridge.
             for i, d in enumerate(raw.get("dep", [])):
                 if not isinstance(d, (list, tuple)) or len(d) < 2:
                     continue
@@ -337,18 +396,13 @@ class RelationExtractionRules:
                 head_0 = head_1based - 1
 
                 if deprel in ("nsubj", "obj", "dobj", "iobj"):
-                    # Suppress if covered by bridge; keep lone survivors
                     head_tok = tokens[head_0] if 0 <= head_0 < len(tokens) else None
                     head_text = head_tok.text if head_tok else ""
                     if head_text in bridged_verbs:
                         continue
-                    # Drop if the non-entity endpoint is a function word
-                    # (NUM, ADV, PART, ...) — these are property material,
-                    # not relation endpoints.
                     child_tok = tokens[i] if 0 <= i < len(tokens) else None
                     if not _is_relation_endpoint(head_tok) or not _is_relation_endpoint(child_tok):
                         continue
-                    # Suppress VERB→single-char-NOUN (syntactic noise, e.g. 知→名)
                     if head_tok and child_tok:
                         if (head_tok.pos == "VERB" and child_tok.pos == "NOUN" and len(child_tok.text) == 1):
                             continue
@@ -363,26 +417,20 @@ class RelationExtractionRules:
                             relations.append(rel)
 
                 elif deprel in ("nmod", "amod"):
-                    # Attach property to entity as EntityAttribute
                     if not (0 <= i < len(tokens) and 0 <= head_0 < len(tokens)):
                         continue
                     child_tok, head_tok = tokens[i], tokens[head_0]
-
-                    # Determine which token is the entity (property owner)
                     if head_tok.text in entity_texts:
                         owner_text, prop_text = head_tok.text, child_tok.text
                     elif child_tok.text in entity_texts:
                         owner_text, prop_text = child_tok.text, head_tok.text
                     else:
                         continue
+                    if entities:
+                        _attach_attribute(entities, owner_text, prop_text,
+                                          confidence=0.70, source=f"dep/{deprel}")
 
-                    # Attach to entity object
-                    _attach_attribute(entities, owner_text, prop_text,
-                                      confidence=0.70, source=f"dep/{deprel}")
-
-            # ── Post: 之-interpolation + NUM/measure heuristic ──
-            # "X之Y，…Z" where Y and Z are attributes of X.
-            # Also collects trailing NUM+CLF compounds as attributes.
+            # 之-interpolation + NUM/measure heuristic
             for e_text in entity_texts:
                 occurrences = [t for t in tokens if t.text == e_text]
                 for e_tok in occurrences:
@@ -394,23 +442,21 @@ class RelationExtractionRules:
                         if t.text == "之" and t.pos in ("SCONJ", "PART"):
                             nxt = tokens[i + 1] if i + 1 < len(tokens) else None
                             if nxt and nxt.pos in ("VERB", "ADJ", "ADV"):
-                                _attach_attribute(
-                                    entities, e_text, nxt.text,
-                                    confidence=0.50, source="heuristic/之",
-                                )
+                                if entities:
+                                    _attach_attribute(
+                                        entities, e_text, nxt.text,
+                                        confidence=0.50, source="heuristic/之",
+                                    )
                                 found_attr = True
-                                # Continue scanning for NUM+CLF compound
                                 j = i + 2
                                 while j < len(tokens):
                                     tt = tokens[j]
                                     if tt.pos in ("PUNCT",) and tt.text in ("。", "！", "？", "；"):
-                                        break  # stop at sentence-ending punctuation
+                                        break
                                     if tt.pos == "NUM":
-                                        # Collect NUM + following CLF/measure tokens
                                         parts = [tt.text]
                                         k = j + 1
                                         while k < len(tokens) and tokens[k].pos in ("NOUN", "NUM"):
-                                            # Stop if POS isn't measure-like (check xpos)
                                             xp = (raw.get("pos/xpos", [])[k]
                                                   if raw and k < len(raw.get("pos/xpos", []))
                                                   else "")
@@ -421,26 +467,27 @@ class RelationExtractionRules:
                                                 parts.append(tokens[k].text)
                                                 k += 1
                                             else:
-                                                # Try one more if it's NOUN (e.g., classifier)
                                                 if tokens[k].pos == "NOUN":
                                                     parts.append(tokens[k].text)
                                                     k += 1
                                                 break
                                         compound = "".join(parts)
-                                        _attach_attribute(
-                                            entities, e_text, compound,
-                                            confidence=0.45, source="heuristic/num_measure",
-                                        )
+                                        if entities:
+                                            _attach_attribute(
+                                                entities, e_text, compound,
+                                                confidence=0.45, source="heuristic/num_measure",
+                                            )
                                         j = k
                                         continue
                                     if tt.pos == "ADJ":
-                                        _attach_attribute(
-                                            entities, e_text, tt.text,
-                                            confidence=0.40, source="heuristic/cont",
-                                        )
+                                        if entities:
+                                            _attach_attribute(
+                                                entities, e_text, tt.text,
+                                                confidence=0.40, source="heuristic/cont",
+                                            )
                                     j += 1
                             break
-                        break  # stop at first token after entity
+                        break
                         if found_attr:
                             break
 
@@ -451,15 +498,7 @@ class RelationExtractionRules:
     def _bridge_subj_obj(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
     ) -> list[Relation]:
-        """Bridge nsubj→verb←obj into subject→object relations.
-
-        In classical Chinese DEP, ``北冥(nsubj)→有`` and ``鱼(obj)→有``
-        are separate edges. We merge them into ``北冥→鱼`` with
-        predicate_verb ``有``, producing entity-to-entity relations.
-
-        Only keeps relations where at least one endpoint is an entity.
-        """
-        # Index: head_verb → list of (child_idx, deprel)
+        """Bridge nsubj→verb←obj into subject→object relations."""
         head_to_children: dict[int, list[tuple[int, str]]] = {}
         for child_idx, d in enumerate(dep):
             if not isinstance(d, (list, tuple)) or len(d) < 2:
@@ -487,7 +526,6 @@ class RelationExtractionRules:
                     if not (0 <= subj_idx < len(tokens) and 0 <= obj_idx < len(tokens)):
                         continue
 
-                    # Merge det compounds: 其名 → 其名
                     subj_text, subj_span = self._merge_det_compound(
                         subj_idx, dep, tokens,
                     )
@@ -495,7 +533,6 @@ class RelationExtractionRules:
                         obj_idx, dep, tokens,
                     )
 
-                    # At least one endpoint must be an entity
                     subj_is_ent = subj_text in entity_texts
                     obj_is_ent = obj_text in entity_texts
                     if not subj_is_ent and not obj_is_ent:
@@ -526,15 +563,8 @@ class RelationExtractionRules:
     def _bridge_cop(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
     ) -> list[Relation]:
-        """Bridge copula relations: 为(cop)→鲲 + 名(obj)→知 → 名→鲲(为).
-
-        A copula (为) points to a predicate nominal (鲲). The predicate's
-        head (知) also governs the copula's subject (名,obj). We bridge
-        the subject and predicate into a single relation.
-        """
-        # Build: head → list of (child_idx, deprel)
+        """Bridge copula relations: 为(cop)→鲲 + 名(obj)→知 → 名→鲲(为)."""
         head_children: dict[int, list[tuple[int, str]]] = {}
-        # Also track: child → its head
         child_head: dict[int, int] = {}
         for ci, d in enumerate(dep):
             if not isinstance(d, (list, tuple)) or len(d) < 2:
@@ -551,15 +581,13 @@ class RelationExtractionRules:
             deprel = str(d[1]).strip().lower()
             if deprel != "cop":
                 continue
-            cop_verb = tokens[ci]  # e.g. "为"
-            pred_idx = int(d[0]) - 1  # predicate nominal, e.g. "鲲"
+            cop_verb = tokens[ci]
+            pred_idx = int(d[0]) - 1
 
             if not (0 <= pred_idx < len(tokens)):
                 continue
             pred_tok = tokens[pred_idx]
 
-            # The predicate's head governs both the predicate and the
-            # copula's subject — find sibling nsubj/obj there.
             pred_head = child_head.get(pred_idx)
             if pred_head is None:
                 continue
@@ -571,12 +599,10 @@ class RelationExtractionRules:
                     continue
                 sib_tok = tokens[sib_idx]
 
-                # Merge det compound: 其名 → 其名
                 sib_text, sib_span = self._merge_det_compound(
                     sib_idx, dep, tokens,
                 )
 
-                # At least one endpoint must be an entity
                 if (sib_text not in entity_texts
                         and pred_tok.text not in entity_texts):
                     continue
@@ -608,44 +634,29 @@ class RelationExtractionRules:
                           strict: bool = True) -> Relation | None:
         """Normalize endpoints: exact match → sub-entity match → reject.
 
-        If an SRL argument is a phrase containing a known entity
-        (e.g., '钢的一种' contains entity '钢'), normalize to that entity.
-        Only single-entity matches are accepted to avoid ambiguity.
-
-        When ``strict=False`` (classical Chinese), at least ONE endpoint
-        must match an entity; purely verb–noun relations are dropped.
+        Relaxed: at least ONE endpoint must match an entity.
         """
         if not entity_texts:
             return rel
 
-        hit_count = 0  # how many endpoints matched an entity
+        hit_count = 0
 
         for attr in ("subject", "object"):
             text = getattr(rel, attr)
             if text in entity_texts:
                 hit_count += 1
-                continue  # exact match
+                continue
 
-            # Find entities that are substrings of this argument
             matches = [e for e in entity_texts if e in text]
             if len(matches) == 1:
-                setattr(rel, attr, matches[0])  # normalize to single matched entity
+                setattr(rel, attr, matches[0])
                 hit_count += 1
                 continue
 
-            # No match
-            if strict:
-                # Modern SRL: require BOTH endpoints to be entities
-                return None
-            # Classical DEP: allow non-entity as long as the OTHER endpoint
-            # is an entity (checked after loop)
-
-        if not strict and hit_count == 0:
-            # Classical: neither endpoint is an entity
+        # Relaxed: at least one endpoint must match
+        if hit_count == 0:
             if not entity_texts:
-                # No entities found at all → keep relations as-is
                 return rel
-            # Entities exist but neither endpoint matches → noise, drop
             return None
 
         return rel
