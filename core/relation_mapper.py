@@ -533,7 +533,75 @@ class RelationExtractionRules:
                         if found_attr:
                             break
 
+        # ── Split conjunction-connected objects ──
+        relations = self._split_conjunction_relations(relations)
+
         return relations
+
+    # ── Conjunction Splitting ──
+
+    def _split_conjunction_relations(
+        self, relations: list[Relation]
+    ) -> list[Relation]:
+        """Split relations whose subject or object contains conjunctions.
+
+        E.g., '碳钢 → RELATES_TO → 高强度和高韧性' becomes:
+          - '碳钢 → RELATES_TO → 高强度'
+          - '碳钢 → RELATES_TO → 高韧性'
+
+        Supports Chinese conjunctions: 和, 与, 及, 或, 以及, 、
+        Supports English conjunctions: and, or
+        """
+        # Conjunction patterns (sorted by length to match longer first)
+        CN_CONJS = ["以及", "和", "与", "及", "或", "、"]
+        EN_CONJS = [" and ", " or "]
+
+        def split_conjunctions(text: str) -> list[str]:
+            """Split text by conjunctions, returning clean parts."""
+            for conj in CN_CONJS:
+                text = text.replace(conj, "||SPLIT||")
+            for conj in EN_CONJS:
+                text = text.replace(conj, "||SPLIT||")
+            parts = [p.strip() for p in text.split("||SPLIT||") if p.strip()]
+            return parts if len(parts) > 1 else [text]
+
+        result: list[Relation] = []
+        for rel in relations:
+            # Check if subject or object contains conjunctions
+            subj_parts = split_conjunctions(rel.subject)
+            obj_parts = split_conjunctions(rel.object)
+
+            if len(subj_parts) == 1 and len(obj_parts) == 1:
+                # No conjunctions — keep as-is
+                result.append(rel)
+            else:
+                # Split: create one relation per combination
+                for subj in subj_parts:
+                    for obj in obj_parts:
+                        self._counter += 1
+                        new_rel = Relation(
+                            id=f"rel_{self._counter:03d}",
+                            subject=subj,
+                            predicate=rel.predicate,
+                            predicate_verb=rel.predicate_verb,
+                            object=obj,
+                            evidence=rel.evidence,
+                            evidence_span=rel.evidence_span,
+                            confidence=rel.confidence,
+                            source=rel.source,
+                        )
+                        # Preserve raw fields
+                        if subj == rel.subject:
+                            new_rel.subject_raw = rel.subject_raw
+                        else:
+                            new_rel.subject_raw = subj
+                        if obj == rel.object:
+                            new_rel.object_raw = rel.object_raw
+                        else:
+                            new_rel.object_raw = obj
+                        result.append(new_rel)
+
+        return result
 
     # ── Classical nsubj+obj bridging ──
 
