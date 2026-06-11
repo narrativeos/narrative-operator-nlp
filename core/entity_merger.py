@@ -100,6 +100,16 @@ class EntityMerger:
                 nxt = entities[j]
                 if (cur.category == nxt.category
                         and cur.span[1] == nxt.span[0]):
+                    # Merge attributes from both entities
+                    merged_attrs = list(cur.attributes) + list(nxt.attributes)
+                    # Deduplicate by key
+                    seen_keys: set[str] = set()
+                    deduped_attrs = []
+                    for attr in merged_attrs:
+                        if attr.key not in seen_keys:
+                            seen_keys.add(attr.key)
+                            deduped_attrs.append(attr)
+
                     cur = Entity(
                         id=cur.id,
                         text=cur.text + nxt.text,
@@ -108,6 +118,7 @@ class EntityMerger:
                         normalized=cur.normalized + nxt.normalized,
                         source=cur.source,
                         confidence=min(cur.confidence, nxt.confidence),
+                        attributes=deduped_attrs,
                     )
                     j += 1
                 else:
@@ -142,6 +153,14 @@ class EntityMerger:
                             and nxt.category == from_cats[1]
                             and cur.span[1] == nxt.span[0]):
                         # Merge
+                        merged_attrs = list(cur.attributes) + list(nxt.attributes)
+                        seen_keys: set[str] = set()
+                        deduped_attrs = []
+                        for attr in merged_attrs:
+                            if attr.key not in seen_keys:
+                                seen_keys.add(attr.key)
+                                deduped_attrs.append(attr)
+
                         new_result.append(Entity(
                             id=cur.id,
                             text=cur.text + nxt.text,
@@ -150,6 +169,7 @@ class EntityMerger:
                             normalized=cur.normalized + nxt.normalized,
                             source=cur.source,
                             confidence=min(cur.confidence, nxt.confidence),
+                            attributes=deduped_attrs,
                         ))
                         i += 2
                         continue
@@ -242,6 +262,7 @@ class EntityMerger:
                 normalized=merged_text,
                 source=e.source,
                 confidence=e.confidence,
+                attributes=list(e.attributes),
             ))
             merged_indices.add(e_idx)
             merged_indices.update(det_children)

@@ -652,7 +652,11 @@ function renderNSP(data){
         return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
     }).join('')||'<span style="color:#484f58">-</span>';
 
-    const relations=c.relations.map(r=>`<div class="relation-row"><span class="subj">${r.subject}</span> &rarr; <span class="pred">${r.predicate}</span> &rarr; <span class="obj">${r.object}</span><span class="src">${r.source}</span></div>`).join('')||'<span style="color:#484f58">-</span>';
+    const relations=c.relations.map(r=>{
+        const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<br><small style="color:#484f58">raw: ${esc(r.subject_raw)}</small>` : '';
+        const objRaw = r.object_raw && r.object_raw !== r.object ? `<br><small style="color:#484f58">raw: ${esc(r.object_raw)}</small>` : '';
+        return `<div class="relation-row"><span class="subj">${esc(r.subject)}${subjRaw}</span> &rarr; <span class="pred">${esc(r.predicate)}</span> &rarr; <span class="obj">${esc(r.object)}${objRaw}</span><span class="src">${esc(r.source)}</span></div>`;
+    }).join('')||'<span style="color:#484f58">-</span>';
 
     let newWordsHtml='';
     const mode=document.getElementById('discoverMode').value;

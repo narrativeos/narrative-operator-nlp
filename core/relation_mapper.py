@@ -137,10 +137,18 @@ def _resolve_predicate(pred_text: str, arg_role: str = "") -> str:
         return _VERB_PREDICATE_MAP[pred_text]
 
     # Role-based mapping
-    if arg_role == "argm-loc":
-        return "LOCATED_AT"
-    if arg_role == "argm-tmp":
-        return "TEMPORAL_AT"
+    role_map = {
+        "argm-loc": "LOCATED_AT",
+        "argm-tmp": "TEMPORAL_AT",
+        "argm-mnr": "HAS_PROPERTY",
+        "argm-cau": "CAUSES",
+        "argm-prd": "PRODUCES",
+        "argm-ben": "BENEFITS",
+        "argm-rec": "TRANSFERS_TO",
+        "argm-src": "DEPARTED_FROM",
+    }
+    if arg_role in role_map:
+        return role_map[arg_role]
 
     return "RELATES_TO"
 
@@ -193,6 +201,12 @@ class RelationExtractionRules:
         a2 = args.get("arg2")
         loc = args.get("argm-loc")
         tmp = args.get("argm-tmp")
+        mnr = args.get("argm-mnr")  # Manner
+        cau = args.get("argm-cau")  # Cause
+        prd = args.get("argm-prd")  # Product/Result
+        ben = args.get("argm-ben")  # Beneficiary
+        rec = args.get("argm-rec")  # Recipient
+        src = args.get("argm-src")  # Source
 
         # ── Generate all applicable relation pairs ──
         pairs: list[tuple[tuple, tuple, str]] = []
@@ -205,13 +219,37 @@ class RelationExtractionRules:
         if a0 and a2:
             pairs.append((a0, a2, "arg2"))
 
-        # ARG0→ARGM-LOC
+        # ARG0→ARGM-LOC (location)
         if a0 and loc:
             pairs.append((a0, loc, "argm-loc"))
 
-        # ARG0→ARGM-TMP
+        # ARG0→ARGM-TMP (time)
         if a0 and tmp:
             pairs.append((a0, tmp, "argm-tmp"))
+
+        # ARG0→ARGM-MNR (manner)
+        if a0 and mnr:
+            pairs.append((a0, mnr, "argm-mnr"))
+
+        # ARG0→ARGM-CAU (cause)
+        if a0 and cau:
+            pairs.append((a0, cau, "argm-cau"))
+
+        # ARG0→ARGM-PRD (product/result)
+        if a0 and prd:
+            pairs.append((a0, prd, "argm-prd"))
+
+        # ARG0→ARGM-BEN (beneficiary)
+        if a0 and ben:
+            pairs.append((a0, ben, "argm-ben"))
+
+        # ARG0→ARGM-REC (recipient)
+        if a0 and rec:
+            pairs.append((a0, rec, "argm-rec"))
+
+        # ARG0→ARGM-SRC (source)
+        if a0 and src:
+            pairs.append((a0, src, "argm-src"))
 
         # ARG1→ARGM-LOC
         if a1 and loc:
@@ -220,6 +258,10 @@ class RelationExtractionRules:
         # ARG1→ARG2
         if a1 and a2:
             pairs.append((a1, a2, "arg2"))
+
+        # ARG1→ARGM-PRD
+        if a1 and prd:
+            pairs.append((a1, prd, "argm-prd"))
 
         relations = []
         for subj, obj, role in pairs:

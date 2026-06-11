@@ -259,6 +259,39 @@ def _resolve_coreferences(
     return result.chains
 
 
+def _normalize_relations_by_coref(
+    relations: list,
+    coreferences: list[CoreferenceChain],
+) -> None:
+    """Use coreference chains to normalize relation endpoints.
+
+    For each relation, if subject_raw or object_raw is a non-principal
+    mention in a coreference chain, replace subject/object with the
+    chain's representative (canonical entity).
+
+    This ensures that '该公司→位于→加州' becomes '苹果公司→位于→加州'
+    when '该公司' and '苹果公司' are in the same coreference chain.
+    """
+    # Build mention→chain lookup
+    mention_to_chain: dict[str, CoreferenceChain] = {}
+    for chain in coreferences:
+        representative = chain.representative
+        for mention in chain.mentions:
+            mention_to_chain[mention.text] = chain
+
+    for rel in relations:
+        # Normalize subject via coref
+        subj_chain = mention_to_chain.get(rel.subject_raw)
+        if subj_chain and subj_chain.representative != rel.subject_raw:
+            rel.subject = subj_chain.representative
+            # Keep subject_raw as the original mention for traceability
+
+        # Normalize object via coref
+        obj_chain = mention_to_chain.get(rel.object_raw)
+        if obj_chain and obj_chain.representative != rel.object_raw:
+            rel.object = obj_chain.representative
+
+
 # ---------------------------------------------------------------------------
 # Classical Key Normalization (lzh_* → standard mapper keys)
 # ---------------------------------------------------------------------------
@@ -423,6 +456,10 @@ def analyze(
 
     # Coreference resolution
     all_coreferences = _resolve_coreferences(text, all_tokens, all_entities, language)
+
+    # ── Coref-Relation Integration ──
+    # Use coreference chains to further normalize relation endpoints
+    _normalize_relations_by_coref(all_relations, all_coreferences)
 
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
