@@ -198,7 +198,13 @@ class EntityMappingRules:
         )
         entities.extend(keyword_entities)
 
-        # ── Layer 3b: Classical Chinese fallback (when no NER/SRL) ──
+        # ── Layer 3b: Numeric entity extraction (dates, amounts, percentages) ──
+        from .numeric_extractor import extract_numeric_entities
+        entity_spans = {(e.span[0], e.span[1]) for e in entities}
+        numeric_entities = extract_numeric_entities(text, entity_spans, self._id_gen)
+        entities.extend(numeric_entities)
+
+        # ── Layer 3c: Classical Chinese fallback (when no NER/SRL) ──
         has_ner = any(
             raw.get(k) for k in self._label_mapper.ner_sources
         )

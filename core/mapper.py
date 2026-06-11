@@ -61,6 +61,17 @@ class HanlpSchemaMapper:
         # ── Step 2: Extract relations using raw entities (preserves original mentions) ──
         relations = self._map_relations(text, raw, tokens, raw_entities)
 
+        # ── Step 2.5: Apply negation-aware confidence adjustment ──
+        from .negation_detector import find_negation_spans, compute_negation_aware_confidence
+        negation_spans = find_negation_spans(text)
+        for rel in relations:
+            adjusted_conf, is_neg = compute_negation_aware_confidence(
+                rel.confidence, rel.evidence_span, negation_spans,
+            )
+            rel.confidence = adjusted_conf
+            # Dynamic confidence: adjust based on evidence quality
+            rel.confidence = self._dynamic_confidence(rel, raw)
+
         # ── Step 3: Merge entities ──
         raw_entities.sort(key=lambda e: e.span[0])
         raw_entities = self.entity_rules.merger.merge_same_category(raw_entities)
@@ -172,6 +183,37 @@ class HanlpSchemaMapper:
     def _map_relations(self, text: str, raw: dict, tokens: list[Token],
                        entities: list) -> list:
         return self.relation_rules.extract_all(text, raw, tokens, entities)
+
+    def _dynamic_confidence(self, rel, raw: dict) -> float:
+        """Compute dynamic confidence based on evidence quality.
+
+        Factors:
+        - SRL source: higher confidence (0.65)
+        - DEP source: medium confidence (0.55)
+        - Bridge source: lower confidence (0.50)
+        - Both endpoints matched to entities: bonus (+0.05)
+        - Evidence length: shorter = more precise = bonus
+        """
+        base = rel.confidence
+
+        # Source-based adjustment
+        if "srl/" in rel.source:
+            base = max(base, 0.65)
+        elif "bridge/" in rel.source:
+            base = min(base, 0.50)
+
+        # Entity match bonus
+        if rel.subject_ent_id and rel.object_ent_id:
+            base = min(1.0, base + 0.05)
+        elif rel.subject_ent_id or rel.object_ent_id:
+            base = min(1.0, base + 0.02)
+
+        # Evidence length bonus (shorter = more precise)
+        evidence_len = rel.evidence_span[1] - rel.evidence_span[0]
+        if evidence_len <= 10:
+            base = min(1.0, base + 0.03)
+
+        return base
 
     def _assign_attributes(self, text: str, raw: dict, tokens: list,
                            entities: list) -> None:
