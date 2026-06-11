@@ -327,10 +327,13 @@ def _normalize_relations_by_coref(
                 rel.subject = resolved
 
         # Level 3: entity text normalization — find entity that contains subject
+        # Only apply if the subject is a proper substring (not the full entity name)
+        # and it's shorter than the entity (to avoid false matches like "钢"→"碳钢")
+        orig_subject = rel.subject
         best_entity_match = None
         best_entity_len = 0
         for et in entity_texts:
-            if rel.subject in et or rel.subject_raw in et:
+            if (rel.subject in et or rel.subject_raw in et) and len(rel.subject) < len(et):
                 if len(et) > best_entity_len:
                     best_entity_len = len(et)
                     best_entity_match = et
@@ -355,15 +358,21 @@ def _normalize_relations_by_coref(
                 rel.object = resolved
 
         # Level 3: entity text normalization — find entity that contains object
+        orig_object = rel.object
         best_entity_match = None
         best_entity_len = 0
         for et in entity_texts:
-            if rel.object in et or rel.object_raw in et:
+            if (rel.object in et or rel.object_raw in et) and len(rel.object) < len(et):
                 if len(et) > best_entity_len:
                     best_entity_len = len(et)
                     best_entity_match = et
         if best_entity_match and best_entity_match != rel.object:
             rel.object = best_entity_match
+
+        # Prevent self-loops: if subject == object after normalization, revert
+        if rel.subject == rel.object:
+            rel.subject = orig_subject
+            rel.object = orig_object
 
 
 # ---------------------------------------------------------------------------
