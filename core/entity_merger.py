@@ -232,7 +232,23 @@ class EntityMerger:
                 if ent is e:
                     e_idx = idx
                     break
-            if e_idx is None or e_idx in merged_indices:
+
+            # If entity doesn't match a single token (multi-token entity),
+            # keep it as-is without det merging
+            if e_idx is None:
+                merged.append(Entity(
+                    id=e.id,
+                    text=e.text,
+                    category=e.category,
+                    span=e.span,
+                    normalized=e.normalized,
+                    source=e.source,
+                    confidence=e.confidence,
+                    attributes=list(e.attributes),
+                ))
+                continue
+
+            if e_idx in merged_indices:
                 continue
 
             # Check if previous token is a determiner
@@ -249,7 +265,7 @@ class EntityMerger:
 
             # Merge: det child + entity → compound
             all_idx = sorted([e_idx] + det_children)
-            merged_text = "".join(tokens[i].text for i in all_idx)
+            merged_text = "".join(tokens[ii].text for ii in all_idx)
             merged_span = (
                 tokens[all_idx[0]].span[0],
                 tokens[all_idx[-1]].span[1],
