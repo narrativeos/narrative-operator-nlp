@@ -500,26 +500,26 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 </div>
 <div class="sample-cards" id="sampleCards">
 <!-- 现代汉语 -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('张三来到北京，他在清华大学攻读博士学位。该校位于海淀区，是中国最著名的大学之一。','modern')">
+<div class="sample-card" onclick="setLanguageAndAnalyze('马云创立了阿里巴巴，该公司总部位于杭州。马云后来还推出了支付宝，成为中国最大的移动支付平台。','modern')">
   <span class="lang-tag">📄 现代-指代</span>
-  <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区……</span>
+  <span class="preview">马云创立了阿里巴巴，该公司总部位于杭州。马云后来还推出了支付宝……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('苹果公司推出了iPhone，这款手机采用了最新的芯片技术。该公司总部位于加州库比蒂诺。','modern')">
+<div class="sample-card" onclick="setLanguageAndAnalyze('北京是中国的首都，位于华北平原。这座城市有着三千年的建城历史，是重要的文化中心。','modern')">
   <span class="lang-tag">📄 现代-指代</span>
-  <span class="preview">苹果公司推出了iPhone，这款手机采用了最新的芯片技术……</span>
+  <span class="preview">北京是中国的首都，位于华北平原。这座城市有着三千年的建城历史……</span>
 </div>
 <div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
   <span class="lang-tag">📄 现代-基础</span>
   <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
 </div>
 <!-- 古汉语 -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。','classical')">
-  <span class="lang-tag classical">🏯 古汉语-指代</span>
-  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟……</span>
-</div>
 <div class="sample-card" onclick="setLanguageAndAnalyze('沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。','classical')">
   <span class="lang-tag classical">🏯 古汉语-指代</span>
   <span class="preview">沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('曹操字孟德，挟天子以令诸侯。刘备闻之，遂与孙权结盟，共抗曹军。','classical')">
+  <span class="lang-tag classical">🏯 古汉语-指代</span>
+  <span class="preview">曹操字孟德，挟天子以令诸侯。刘备闻之，遂与孙权结盟……</span>
 </div>
 <!-- 英文 -->
 <div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. He later started Pixar, which became a major animation studio.','english')">
