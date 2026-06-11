@@ -155,13 +155,9 @@ class RelationModifier(BaseModel):
             raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
         return v
 
-    @field_validator("type")
-    @classmethod
-    def type_valid(cls, v: str) -> str:
-        valid_types = {"degree", "scope", "negation", "quantity", "condition", "temporal", "comparison", "emphasis"}
-        if v not in valid_types:
-            raise ValueError(f"Unknown modifier type: {v}. Must be one of {sorted(valid_types)}")
-        return v
+    # Note: type validator is intentionally permissive to allow custom modifier types
+    # Users can define their own types (e.g., "certainty", "frequency") via custom dictionaries
+    # The built-in types are: degree, scope, negation, quantity, condition, temporal, comparison, emphasis
 
 
 # ---------------------------------------------------------------------------
