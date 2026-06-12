@@ -504,8 +504,8 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
   <span class="lang-tag">📄 现代-指代</span>
   <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('苹果公司推出了iPhone，这款手机采用了最新的芯片技术。该公司总部位于加州库比蒂诺。','modern')">
-  <span class="lang-tag">📄 现代-指代</span>
+<div class="sample-card" onclick="setLanguageAndDict('苹果公司推出了iPhone，这款手机采用了最新的芯片技术。该公司总部位于加州库比蒂诺。','modern','库比蒂诺 加州库比蒂诺')">
+  <span class="lang-tag">📄 现代-指代+层级</span>
   <span class="preview">苹果公司推出了iPhone，这款手机采用了最新的芯片技术……</span>
 </div>
 <div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
@@ -1026,6 +1026,12 @@ function setSample(text){
 
 function setLanguageAndAnalyze(text, lang){
     document.getElementById('input').value=text;
+    setLanguage(lang);
+}
+
+function setLanguageAndDict(text, lang, dictWords){
+    document.getElementById('input').value=text;
+    document.getElementById('dictInput').value=dictWords;
     setLanguage(lang);
 }
 
