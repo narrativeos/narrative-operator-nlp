@@ -645,17 +645,31 @@ function renderNSP(data){
         return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}% source:${t.source}">${sourceDot}${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
     }).join('');
 
+    // Build entity lookup for hierarchy display
+    const entityMap={};
+    c.entities.forEach(e=>entityMap[e.id]=e);
+
     const entities=c.entities.map(e=>{
         const pct=Math.round((e.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
-        const attrs=(e.attributes||[]).map(a=>`<small style="color:#e3b341;margin-left:2px">${a.key}=${a.value||'?'}</small>`).join('');
-        return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
+        const attrs=(e.attributes||[]).map(a=>{
+            const src=a.source_relation_id?`<small style="color:#484f58">←${a.source_relation_id}</small>`:'';
+            return `<small style="color:#e3b341;margin-left:2px">${a.key}=${a.value||'?'}</small>${src}`;
+        }).join('');
+        const parent=e.parent_entity_id?`<small style="color:#a5b4fc;margin-left:4px">⊂${esc((entityMap[e.parent_entity_id]||{}).text||e.parent_entity_id)}</small>`:'';
+        return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs}${parent} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
     }).join('')||'<span style="color:#484f58">-</span>';
 
     const relations=c.relations.map(r=>{
         const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<br><small style="color:#484f58">raw: ${esc(r.subject_raw)}</small>` : '';
         const objRaw = r.object_raw && r.object_raw !== r.object ? `<br><small style="color:#484f58">raw: ${esc(r.object_raw)}</small>` : '';
-        return `<div class="relation-row"><span class="subj">${esc(r.subject)}${subjRaw}</span> &rarr; <span class="pred">${esc(r.predicate)}</span> &rarr; <span class="obj">${esc(r.object)}${objRaw}</span><span class="src">${esc(r.source)}</span></div>`;
+        const mods=(r.modifiers||[]).map(m=>{
+            const typeColor=m.type==='negation'?'#f85149':m.type==='degree'?'#e3b341':m.type==='scope'?'#79c0ff':'#8b949e';
+            return `<small style="color:${typeColor};margin-right:4px">[${m.text}:${m.type}]</small>`;
+        }).join('');
+        const modHtml=mods?`<span style="margin-left:8px">${mods}</span>`:'';
+        const srcLabel=r.source==='hierarchy/containment'?'<span style="color:#a5b4fc;font-size:10px">⊂hierarchy</span>':esc(r.source);
+        return `<div class="relation-row"><span class="subj">${esc(r.subject)}${subjRaw}</span> &rarr; <span class="pred">${esc(r.predicate)}</span> &rarr; <span class="obj">${esc(r.object)}${objRaw}</span>${modHtml}<span class="src">${srcLabel}</span></div>`;
     }).join('')||'<span style="color:#484f58">-</span>';
 
     let newWordsHtml='';
