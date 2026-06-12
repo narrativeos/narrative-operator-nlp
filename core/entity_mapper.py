@@ -90,17 +90,13 @@ class EntityMappingRules:
         self._id_gen = EntityIdGenerator()
 
         # Load classical Chinese dictionaries using DictionaryLoader
-        self._dict_loader = DictionaryLoader(config_dir)
+        # Do NOT load CBDB to memory here - it's too slow (533k entries into keyword_extractor)
+        # Instead, use DictionaryLoader for on-demand lookup via _dict_loader.lookup()
+        self._dict_loader = DictionaryLoader(config_dir, load_cbdb_to_memory=False)
         total_loaded = self._dict_loader.load_all()
         
-        # Merge loaded keywords into keyword_extractor
-        for category in self._dict_loader.FILE_TO_CATEGORY.values():
-            keywords = self._dict_loader.get_keywords(category)
-            if keywords:
-                self._keyword_extractor.add_keywords({category: list(keywords)})
-        
         if total_loaded > 0:
-            logger.info("Classical dictionaries loaded: %d entries", total_loaded)
+            logger.info("Classical dictionaries loaded: %d entries (YAML only)", total_loaded)
 
         if entity_categories:
             self._keyword_extractor.add_keywords(entity_categories)

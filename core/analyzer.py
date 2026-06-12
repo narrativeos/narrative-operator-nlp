@@ -19,17 +19,19 @@ from .coref_resolver import CorefResolver
 from .modifier_extractor import ModifierExtractor
 from .relation_classifier import RelationClassifier
 from .entity_hierarchy import EntityHierarchyBuilder
+from .classical_pattern_extractor import ClassicalPatternExtractor
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Lazy-loaded HanLP pipelines
+# Lazy-loaded HanLP pipelines + cached dictionary loader
 # ---------------------------------------------------------------------------
 
 _modern_pipeline: Optional[object] = None
 _classical_pipeline: Optional[object] = None
 _english_pipeline: Optional[object] = None
 _mapper: Optional[HanlpSchemaMapper] = None
+_dict_loader = None  # Cached DictionaryLoader with CBDB loaded
 
 
 def _get_modern_pipeline():
@@ -189,23 +191,23 @@ def _analyze_classical(
         all_dict_words = set()
         if dict_combine:
             all_dict_words |= dict_combine
-        
-        # Load dictionaries for evidence tracking
-        loader = None
+
+        # Load only YAML seed dictionaries for dict_combine (not full CBDB, too slow for tokenizer)
+        # CBDB is used for post-NER classification via the mapper's keyword_extractor
         try:
             from .dictionary_loader import DictionaryLoader
             from pathlib import Path
             config_dir = str(Path(__file__).parent.parent / "config")
-            loader = DictionaryLoader(config_dir)
-            loader.load_all()
-            # Get all keywords as dict_combine words (YAML only, not CBDB)
-            for category in loader.FILE_TO_CATEGORY.values():
-                keywords = loader.get_keywords(category)
+            # Only load YAML dictionaries (not CBDB) for tokenizer dict_combine
+            loader_yaml = DictionaryLoader(config_dir, load_cbdb_to_memory=False)
+            loader_yaml.load_all()
+            for category in loader_yaml.FILE_TO_CATEGORY.values():
+                keywords = loader_yaml.get_keywords(category)
                 if keywords:
                     all_dict_words |= keywords
         except Exception as exc:
-            logger.debug("Failed to load dictionaries for tokenization: %s", exc)
-        
+            logger.debug("Failed to load YAML dictionaries for tokenization: %s", exc)
+
         if all_dict_words:
             try:
                 pipeline['tok/fine'].dict_combine = all_dict_words
@@ -228,30 +230,32 @@ def _analyze_classical(
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "hanlp_lzh"
-    
-    # ── Fill evidence for entities ──
-    if loader is not None:
+
+    # Fill evidence for entities using on-demand CBDB lookup
+    # (CBDB is queried via SQLite, not loaded to memory - avoids timeout)
+    try:
+        from .dictionary_loader import DictionaryLoader
+        from pathlib import Path
+        config_dir = str(Path(__file__).parent.parent / "config")
+        dict_loader = DictionaryLoader(config_dir, load_cbdb_to_memory=False)
+        dict_loader.load_all()
         # Build token list for smart lookup
         token_list = [(t.text, t.span[0], t.span[1]) for t in doc.content.tokens]
-        
-        # Smart CBDB lookup: fuzzy + n-gram combination
-        discovered = loader.lookup_tokens(token_list, text)
+        discovered = dict_loader.lookup_tokens(token_list, text)
         discovered_map = {d.keyword: d for d in discovered}
-        
         for entity in doc.content.entities:
-            # Tokenizer evidence: was the entity in dict_combine?
             entity.evidence.tokenizer = entity.text in all_dict_words
-            # Seed dictionary evidence
-            entry = loader.get_entry(entity.text)
+            entry = dict_loader.get_entry(entity.text)
             if entry is not None:
                 entity.evidence.seed_dict = True
                 entity.evidence.seed_dict_source = entry.source
-            # CBDB evidence (smart lookup: exact + fuzzy + n-gram)
-            cbdb_entry = discovered_map.get(entity.text) or loader.lookup(entity.text)
+            cbdb_entry = discovered_map.get(entity.text) or dict_loader.lookup(entity.text)
             if cbdb_entry is not None and cbdb_entry.source == "CBDB":
                 entity.evidence.cbdb = True
                 entity.evidence.cbdb_category = cbdb_entry.category
-    
+    except Exception as exc:
+        logger.debug("Failed to fill entity evidence: %s", exc)
+
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
             doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
 
@@ -333,7 +337,7 @@ def _normalize_relations_by_coref(
     # Demonstrative prefixes
     DEMO_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
 
-    # Build mention→chain lookup
+    # Build mention->chain lookup
     mention_to_chain: dict[str, CoreferenceChain] = {}
     for chain in coreferences:
         for mention in chain.mentions:
@@ -362,6 +366,12 @@ def _normalize_relations_by_coref(
 
     # Also build entity text set for normalization
     for rel in relations:
+        # Skip normalization for HAS_STYLE_NAME and EQUIVALENT_TO from classical patterns
+        # (the style name and equivalent names are intentional, not coref mentions)
+        if rel.predicate in ("HAS_STYLE_NAME", "EQUIVALENT_TO"):
+            if "classical_pattern" in rel.source:
+                continue
+
         # Normalize subject
         matched_chain = None
 
@@ -369,7 +379,7 @@ def _normalize_relations_by_coref(
         if rel.subject_raw in mention_to_chain:
             matched_chain = mention_to_chain[rel.subject_raw]
         else:
-            # Level 2: prefix match — find longest mention that's a prefix
+            # Level 2: prefix match - find longest mention that's a prefix
             best_prefix = ""
             for mention_text, chain in mention_to_chain.items():
                 if rel.subject_raw.startswith(mention_text) and len(mention_text) > len(best_prefix):
@@ -381,9 +391,9 @@ def _normalize_relations_by_coref(
             if resolved != rel.subject_raw:
                 rel.subject = resolved
 
-        # Level 3: entity text normalization — find entity that contains subject
+        # Level 3: entity text normalization - find entity that contains subject
         # Only apply if the subject is a proper substring (not the full entity name)
-        # and it's shorter than the entity (to avoid false matches like "钢"→"碳钢")
+        # and it's shorter than the entity (to avoid false matches like "钢"->"碳钢")
         orig_subject = rel.subject
         best_entity_match = None
         best_entity_len = 0
@@ -412,7 +422,7 @@ def _normalize_relations_by_coref(
             if resolved != rel.object_raw:
                 rel.object = resolved
 
-        # Level 3: entity text normalization — find entity that contains object
+        # Level 3: entity text normalization - find entity that contains object
         orig_object = rel.object
         best_entity_match = None
         best_entity_len = 0
@@ -431,7 +441,7 @@ def _normalize_relations_by_coref(
 
 
 # ---------------------------------------------------------------------------
-# Classical Key Normalization (lzh_* → standard mapper keys)
+# Classical Key Normalization (lzh_* -> standard mapper keys)
 # ---------------------------------------------------------------------------
 
 _LZH_KEY_MAP = {
@@ -483,20 +493,20 @@ def analyze(
             - "classical": force classical Chinese pipeline
             - "english": force English pipeline
         entity_dict: Optional ``{term: NSP_category}`` dictionary for classical
-            Chinese entity recognition. No hardcoded dictionaries — the
+            Chinese entity recognition. No hardcoded dictionaries - the
             caller (API / frontend) supplies this.
             Example: ``{"北冥": "LOCATION", "鲲": "PERSON"}``.
         entity_categories: Optional ``{category: [keyword1, keyword2, ...]}``
             for domain-specific keyword injection. The caller supplies domain
-            keywords at runtime — no hardcoded domain knowledge in the tool.
+            keywords at runtime - no hardcoded domain knowledge in the tool.
             Example: ``{"DISEASE": ["乳腺癌", "肿瘤"], "ANATOMY": ["乳腺"]}``.
             Keywords with categories not in EntityCategory.ALL are mapped to UNKNOWN.
         auto_discover_entities: If True, run new word discovery (PMI+MTL)
             and promote high-score candidates to UNKNOWN entities. Default False.
 
-    Modern Chinese  → MTL (ELECTRA-small)
-    Classical Chinese → LZH (KYOTO-EVAHAN)
-    English          → MODERNBERT-base
+    Modern Chinese  -> MTL (ELECTRA-small)
+    Classical Chinese -> LZH (KYOTO-EVAHAN)
+    English          -> MODERNBERT-base
 
     Returns a single NarrativeDocument with global offsets.
     """
@@ -592,24 +602,38 @@ def analyze(
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
         t.id = i
 
+    # Classical Chinese pattern extraction (post-processing)
+    # Extract relations using regex patterns for classical Chinese sentence structures
+    if language == "classical" or (language == "auto" and any(s["label"] == "classical" for s in language_sentences)):
+        pattern_extractor = ClassicalPatternExtractor()
+        pattern_rels, pattern_corefs = pattern_extractor.extract(text, all_entities)
+        all_relations.extend(pattern_rels)
+        # These coreferences will be merged with the standard coref results below
+
     # Coreference resolution
     all_coreferences = _resolve_coreferences(text, all_tokens, all_entities, language)
 
-    # ── Coref-Relation Integration ──
+    # Merge classical pattern coreferences with standard coreferences
+    if language == "classical" or (language == "auto" and any(s["label"] == "classical" for s in language_sentences)):
+        pattern_extractor = ClassicalPatternExtractor()
+        _, pattern_corefs = pattern_extractor.extract(text, all_entities)
+        all_coreferences.extend(pattern_corefs)
+
+    # Coref-Relation Integration
     # Use coreference chains to further normalize relation endpoints
     _normalize_relations_by_coref(all_relations, all_coreferences, all_entities)
 
-    # ── Modifier Extraction ──
+    # Modifier Extraction
     # Extract relation modifiers (degree, negation, scope, etc.)
     modifier_extractor = ModifierExtractor()
     modifier_extractor.extract_batch(text, all_relations)
 
-    # ── Relation Classification ──
+    # Relation Classification
     # Classify relations into entity relations vs entity attributes
     classifier = RelationClassifier()
     classifier.classify(all_relations, all_entities)
 
-    # ── Entity Hierarchy ──
+    # Entity Hierarchy
     # Detect containment relationships and generate PART_OF relations
     hierarchy_builder = EntityHierarchyBuilder(relation_counter=len(all_relations))
     hierarchy_relations = hierarchy_builder.build(all_entities, text)

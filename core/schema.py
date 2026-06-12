@@ -106,6 +106,12 @@ class RelationPredicate:
     EQUIVALENT_TO = "EQUIVALENT_TO"
     REFERENCE_OF = "REFERENCE_OF"
     CONSTRAINT_OF = "CONSTRAINT_OF"
+    # Classical Chinese extensions
+    HAS_STYLE_NAME = "HAS_STYLE_NAME"   # 表字/号: 陈胜 字 涉
+    HAS_TITLE = "HAS_TITLE"             # 官职任命: 拜为 郎中
+    SAYS = "SAYS"                       # 对话引述: X曰...
+    DIED_AT = "DIED_AT"                 # 死亡: X卒于Y
+
     # Generic fallback — raw predicate preserved in predicate_verb
     RELATES_TO = "RELATES_TO"
 
@@ -116,6 +122,8 @@ class RelationPredicate:
         MOVED_TO, DEPARTED_FROM, INTERACTS_WITH, CONTROLS,
         BENEFITS, EQUIVALENT_TO, REFERENCE_OF, CONSTRAINT_OF,
         RELATES_TO,
+        # Classical Chinese
+        HAS_STYLE_NAME, HAS_TITLE, SAYS, DIED_AT,
     })
 
 

@@ -179,35 +179,47 @@ class DictionaryLoader:
         start_time = time.time()
         
         # Load ERA (DYNASTIES)
+        if "ERA" not in self._keywords:
+            self._keywords["ERA"] = set()
         cursor = conn.execute("SELECT c_dynasty_chn FROM DYNASTIES WHERE c_dynasty_chn IS NOT NULL")
         for row in cursor:
             kw = row[0].strip()
             if kw and kw not in self._entries:
                 self._entries[kw] = DictionaryEntry(kw, "ERA", "CBDB", 0.95)
+                self._keywords["ERA"].add(kw)
                 total += 1
         
         # Load TITLE (OFFICE_CODES)
+        if "TITLE" not in self._keywords:
+            self._keywords["TITLE"] = set()
         cursor = conn.execute("SELECT c_office_chn FROM OFFICE_CODES WHERE c_office_chn IS NOT NULL")
         for row in cursor:
             kw = row[0].strip()
             if kw and kw not in self._entries:
                 self._entries[kw] = DictionaryEntry(kw, "TITLE", "CBDB", 0.90)
+                self._keywords["TITLE"].add(kw)
                 total += 1
         
         # Load LOCATION (ADDR_CODES)
+        if "LOCATION" not in self._keywords:
+            self._keywords["LOCATION"] = set()
         cursor = conn.execute("SELECT c_name_chn FROM ADDR_CODES WHERE c_name_chn IS NOT NULL")
         for row in cursor:
             kw = row[0].strip()
             if kw and kw not in self._entries:
                 self._entries[kw] = DictionaryEntry(kw, "LOCATION", "CBDB", 0.90)
+                self._keywords["LOCATION"].add(kw)
                 total += 1
         
         # Load PERSON (BIOG_MAIN)
+        if "PERSON" not in self._keywords:
+            self._keywords["PERSON"] = set()
         cursor = conn.execute("SELECT c_name_chn FROM BIOG_MAIN WHERE c_name_chn IS NOT NULL AND LENGTH(c_name_chn) >= 2")
         for row in cursor:
             kw = row[0].strip()
             if kw and kw not in self._entries:
                 self._entries[kw] = DictionaryEntry(kw, "PERSON", "CBDB", 0.85)
+                self._keywords["PERSON"].add(kw)
                 total += 1
         
         self._cbdb_loaded = True
