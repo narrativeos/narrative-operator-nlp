@@ -49,8 +49,12 @@ _CLASSICAL_NON_ENDPOINTS: frozenset[str] = frozenset({
     "名", "千", "万", "百", "十", "里", "丈", "尺", "寸", "斤", "两", "钱", "贯",
     "几", "数", "多", "少", "大", "小", "长", "短", "高", "低", "深", "浅",
     # 常见虚词组合
-    "其名", "其大", "其小", "其长", "其高", "其深", "其广",
+    "其名", "其大", "其小", "其长", "其高", "其深", "其广", "其翼", "其尾",
     "不知", "不亦", "未尝", "未始",
+    # 动词作虚词（不应作为关系端点）
+    "去", "徙", "击", "抟", "息", "化", "为", "曰", "云", "谓",
+    # 数量组合
+    "三千", "九万", "三千里", "九万里", "六月",
 })
 
 # ── Verb-based predicate mapping (Modern Chinese) ──
@@ -970,7 +974,10 @@ class RelationExtractionRules:
     def _bridge_cop(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
     ) -> list[Relation]:
-        """Bridge copula relations: 为(cop)→鲲 + 名(obj)→知 → 名→鲲(为)."""
+        """Bridge copula relations: 为(cop)→鲲 + 名(obj)→知 → 名→鲲(为).
+        
+        Filters out classical Chinese function words as endpoints.
+        """
         head_children: dict[int, list[tuple[int, str]]] = {}
         child_head: dict[int, int] = {}
         for ci, d in enumerate(dep):
@@ -1010,6 +1017,12 @@ class RelationExtractionRules:
                     sib_idx, dep, tokens,
                 )
 
+                # Filter function words
+                if sib_text in _CLASSICAL_NON_ENDPOINTS:
+                    continue
+                if pred_tok.text in _CLASSICAL_NON_ENDPOINTS:
+                    continue
+
                 if (sib_text not in entity_texts
                         and pred_tok.text not in entity_texts):
                     continue
@@ -1048,19 +1061,22 @@ class RelationExtractionRules:
         Also refines the predicate using entity type-based inference when
         both endpoints are resolved to entities.
         
-        Filters out classical Chinese function words as endpoints.
+        Filters out classical Chinese function words as endpoints — if either
+        subject or object is a function word, the entire relation is discarded.
         """
         if not entity_texts:
             return rel
+
+        # ── Filter function words: discard relation if endpoint is a function word ──
+        if rel.subject in _CLASSICAL_NON_ENDPOINTS:
+            return None
+        if rel.object in _CLASSICAL_NON_ENDPOINTS:
+            return None
 
         hit_count = 0
 
         for attr in ("subject", "object"):
             text = getattr(rel, attr)
-            
-            # Filter classical Chinese function words
-            if text in _CLASSICAL_NON_ENDPOINTS:
-                continue
             
             if text in entity_texts:
                 hit_count += 1
@@ -1071,7 +1087,8 @@ class RelationExtractionRules:
                 # Use the longest matching entity, but skip if it's a function word
                 matched = matches[0]
                 if matched in _CLASSICAL_NON_ENDPOINTS:
-                    continue
+                    # Function word matched — discard this relation
+                    return None
                 setattr(rel, attr, matched)
                 hit_count += 1
                 continue
@@ -1080,6 +1097,12 @@ class RelationExtractionRules:
         if hit_count == 0:
             if not entity_texts:
                 return rel
+            return None
+
+        # ── Final check: ensure endpoints are not function words after normalization ──
+        if rel.subject in _CLASSICAL_NON_ENDPOINTS:
+            return None
+        if rel.object in _CLASSICAL_NON_ENDPOINTS:
             return None
 
         # ── Refine predicate using entity type inference ──
