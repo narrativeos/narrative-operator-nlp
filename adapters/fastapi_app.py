@@ -649,7 +649,20 @@ function renderNSP(data){
     const entityMap={};
     c.entities.forEach(e=>entityMap[e.id]=e);
 
-    const entities=c.entities.map(e=>{
+    // Build hierarchy tree for display
+    const rootEntities = c.entities.filter(e => !e.parent_entity_id);
+    const childEntities = c.entities.filter(e => e.parent_entity_id);
+    
+    // Group children by parent
+    const childrenByParent = {};
+    childEntities.forEach(e => {
+        if (!childrenByParent[e.parent_entity_id]) {
+            childrenByParent[e.parent_entity_id] = [];
+        }
+        childrenByParent[e.parent_entity_id].push(e);
+    });
+
+    function renderEntityCard(e) {
         const pct=Math.round((e.confidence||1)*100);
         const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
         const attrs=(e.attributes||[]).map(a=>{
@@ -658,7 +671,43 @@ function renderNSP(data){
         }).join('');
         const parent=e.parent_entity_id?`<small style="color:#a5b4fc;margin-left:4px">⊂${esc((entityMap[e.parent_entity_id]||{}).text||e.parent_entity_id)}</small>`:'';
         return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs}${parent} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
-    }).join('')||'<span style="color:#484f58">-</span>';
+    }
+
+    function renderEntityHierarchy() {
+        let html = '';
+        // Show entities with hierarchy
+        const shown = new Set();
+        rootEntities.forEach(e => {
+            html += `<div style="margin:4px 0">${renderEntityCard(e)}</div>`;
+            shown.add(e.id);
+            const children = childrenByParent[e.id] || [];
+            if (children.length > 0) {
+                html += `<div style="margin-left:24px;border-left:2px solid #30363d;padding-left:12px">`;
+                children.forEach(child => {
+                    html += `<div style="margin:4px 0">${renderEntityCard(child)}</div>`;
+                    shown.add(child.id);
+                    // Recursively show grandchildren
+                    const grandchildren = childrenByParent[child.id] || [];
+                    if (grandchildren.length > 0) {
+                        html += `<div style="margin-left:24px;border-left:2px solid #484f58;padding-left:12px">`;
+                        grandchildren.forEach(gc => {
+                            html += `<div style="margin:4px 0">${renderEntityCard(gc)}</div>`;
+                            shown.add(gc.id);
+                        });
+                        html += `</div>`;
+                    }
+                });
+                html += `</div>`;
+            }
+        });
+        // Show any remaining entities not in hierarchy
+        c.entities.filter(e => !shown.has(e.id)).forEach(e => {
+            html += `<div style="margin:4px 0">${renderEntityCard(e)}</div>`;
+        });
+        return html;
+    }
+
+    const entities = renderEntityHierarchy();
 
     const relations=c.relations.map(r=>{
         const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<br><small style="color:#484f58">raw: ${esc(r.subject_raw)}</small>` : '';
