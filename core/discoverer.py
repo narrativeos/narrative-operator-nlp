@@ -290,8 +290,19 @@ def _compute_llr(
     if obs == 0 or exp == 0:
         return 0.0
 
-    # Simplified LLR (one-sided)
-    llr = obs * math.log2(obs / exp)
+    # Full G-test LLR formula:
+    # LLR = 2 * [obs * ln(obs/exp) + (total-obs) * ln((total-obs)/(total-exp))]
+    # Using natural log as standard for G-test
+    remaining = total_ngrams - obs
+    expected_remaining = total_ngrams - exp
+
+    if remaining <= 0 or expected_remaining <= 0:
+        return 0.0
+
+    llr = 2.0 * (
+        obs * math.log(obs / exp) +
+        remaining * math.log(remaining / expected_remaining)
+    )
     return llr
 
 
@@ -455,8 +466,8 @@ def _compute_entropy_multisentence(ngram: str, sentences: list[str], side: str) 
 
 _COMPOUND_POS: set[str] = {"NN", "NR", "JJ", "NT"}
 
-# Only merge these POS types (nouns + adjectives)
-_MERGE_POS: set[str] = {"NN", "NR", "JJ", "NT"}
+# Merge POS types: nouns, adjectives, verbs (for compound verbs like 分析, 优化)
+_MERGE_POS: set[str] = {"NN", "NR", "JJ", "NT", "VV"}
 
 # Don't merge if one side is a common single char
 _DONT_MERGE_AFTER: set[str] = {"的", "了", "和", "与", "或", "是", "有"}
