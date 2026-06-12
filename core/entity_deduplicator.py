@@ -26,23 +26,62 @@ class EntityDeduplicator:
     def deduplicate(entities: list[Entity]) -> list[Entity]:
         """Remove overlapping entities, keeping the higher-confidence one.
 
-        Args:
-            entities: List of entities (may contain overlaps).
-
-        Returns:
-            Deduplicated list, sorted by span start.
+        Improved: preserves containment relationships.
+        - If A fully contains B (same category) → keep both (hierarchy will handle)
+        - If A crosses B (partial overlap) → keep higher-confidence one
         """
         if not entities:
             return []
 
-        # Sort by confidence descending, then by span start
-        sorted_entities = sorted(entities, key=lambda e: (-e.confidence, e.span[0]))
+        # Sort by span length descending (longer = more specific = parent candidate)
+        sorted_entities = sorted(entities, key=lambda e: (
+            -(e.span[1] - e.span[0]),
+            e.span[0],
+        ))
 
         kept: list[Entity] = []
         kept_spans: list[tuple[int, int]] = []
 
         for ent in sorted_entities:
-            if not EntityDeduplicator._overlaps(ent.span, kept_spans):
+            # Check if this entity is fully contained by any kept entity (same category)
+            is_contained = False
+            for k in kept:
+                if k.category != ent.category:
+                    continue
+                if (k.span[0] <= ent.span[0]
+                        and k.span[1] >= ent.span[1]
+                        and (k.span[0] < ent.span[0] or k.span[1] > ent.span[1])):
+                    is_contained = True
+                    break
+
+            if is_contained:
+                # Contained by a kept entity → keep both (hierarchy will link them)
+                kept.append(ent)
+                kept_spans.append(ent.span)
+                continue
+
+            # Check for crossing overlap (not full containment)
+            should_add = True
+            for k in kept:
+                if k.category != ent.category:
+                    continue
+                # Overlap check
+                if (ent.span[0] < k.span[1] and ent.span[1] > k.span[0]):
+                    # Check if it's full containment (already handled above as is_contained)
+                    # Also check if ent fully contains k (reverse containment)
+                    if (ent.span[0] <= k.span[0] and ent.span[1] >= k.span[1]
+                            and (ent.span[0] < k.span[0] or ent.span[1] > k.span[1])):
+                        # ent contains k → keep both (hierarchy will handle)
+                        continue
+                    # Crossing overlap (partial, not full containment)
+                    if ent.confidence >= k.confidence:
+                        kept.remove(k)
+                        kept_spans.remove(k.span)
+                    else:
+                        should_add = False
+                    break
+
+            if should_add:
                 kept.append(ent)
                 kept_spans.append(ent.span)
 

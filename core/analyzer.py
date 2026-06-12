@@ -18,6 +18,7 @@ from .schema import CoreferenceChain, NarrativeContent, NarrativeDocument, Narra
 from .coref_resolver import CorefResolver
 from .modifier_extractor import ModifierExtractor
 from .relation_classifier import RelationClassifier
+from .entity_hierarchy import EntityHierarchyBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -555,6 +556,12 @@ def analyze(
     # Classify relations into entity relations vs entity attributes
     classifier = RelationClassifier()
     classifier.classify(all_relations, all_entities)
+
+    # ── Entity Hierarchy ──
+    # Detect containment relationships and generate PART_OF relations
+    hierarchy_builder = EntityHierarchyBuilder(relation_counter=len(all_relations))
+    hierarchy_relations = hierarchy_builder.build(all_entities, text)
+    all_relations.extend(hierarchy_relations)
 
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"

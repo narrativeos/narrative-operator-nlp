@@ -174,6 +174,10 @@ class Entity(BaseModel):
     source: str = Field(default="", description="Source NER model, e.g. ner/ontonotes")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score [0, 1]")
     attributes: list[EntityAttribute] = Field(default_factory=list, description="Key-value properties of this entity")
+    parent_entity_id: Optional[str] = Field(
+        default=None,
+        description="Parent entity ID for containment hierarchy (entity ⊃ entity)"
+    )
 
     @field_validator("span")
     @classmethod
