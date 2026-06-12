@@ -34,6 +34,25 @@ _NON_ENDPOINT_POS: frozenset[str] = frozenset({
     "INTJ", "SYM", "X",
 })
 
+# Classical Chinese function words that should NOT be relation endpoints
+# These are common in classical texts but are not meaningful entities
+_CLASSICAL_NON_ENDPOINTS: frozenset[str] = frozenset({
+    # 代词
+    "其", "之", "彼", "此", "是", "斯", "厥", "我", "汝", "尔", "乃", "若", "而",
+    "吾", "余", "予", "吾人", "余人",
+    # 指示词
+    "此", "彼", "是", "斯", "夫", "盖",
+    # 虚词/助词
+    "者", "也", "矣", "焉", "乎", "哉", "耶", "欤", "兮", "哉",
+    "所", "以", "所", "之", "于", "以", "而", "则", "虽", "然",
+    # 量词/数量词
+    "名", "千", "万", "百", "十", "里", "丈", "尺", "寸", "斤", "两", "钱", "贯",
+    "几", "数", "多", "少", "大", "小", "长", "短", "高", "低", "深", "浅",
+    # 常见虚词组合
+    "其名", "其大", "其小", "其长", "其高", "其深", "其广",
+    "不知", "不亦", "未尝", "未始",
+})
+
 # ── Verb-based predicate mapping (Modern Chinese) ──
 # Maps predicate_verb → more specific NSP predicate
 _VERB_PREDICATE_MAP: dict[str, str] = {
@@ -322,11 +341,19 @@ def _infer_predicate_from_types(
     return "RELATES_TO"
 
 
-def _is_relation_endpoint(token) -> bool:
-    """A token is a valid relation endpoint unless it is a function word."""
+def _is_relation_endpoint(token, text: str = "") -> bool:
+    """A token is a valid relation endpoint unless it is a function word.
+    
+    Also filters out classical Chinese function words that are not meaningful entities.
+    """
     if token is None:
         return False
-    return token.pos not in _NON_ENDPOINT_POS
+    if token.pos in _NON_ENDPOINT_POS:
+        return False
+    # Filter classical Chinese function words
+    if text in _CLASSICAL_NON_ENDPOINTS:
+        return False
+    return True
 
 
 def _find_entity(entities: list, text: str):
@@ -871,7 +898,10 @@ class RelationExtractionRules:
     def _bridge_subj_obj(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
     ) -> list[Relation]:
-        """Bridge nsubj→verb←obj into subject→object relations."""
+        """Bridge nsubj→verb←obj into subject→object relations.
+        
+        Filters out classical Chinese function words as endpoints.
+        """
         head_to_children: dict[int, list[tuple[int, str]]] = {}
         for child_idx, d in enumerate(dep):
             if not isinstance(d, (list, tuple)) or len(d) < 2:
@@ -905,6 +935,10 @@ class RelationExtractionRules:
                     obj_text, obj_span = self._merge_det_compound(
                         obj_idx, dep, tokens,
                     )
+                    
+                    # Filter classical Chinese function words
+                    if subj_text in _CLASSICAL_NON_ENDPOINTS or obj_text in _CLASSICAL_NON_ENDPOINTS:
+                        continue
 
                     subj_is_ent = subj_text in entity_texts
                     obj_is_ent = obj_text in entity_texts
@@ -1013,6 +1047,8 @@ class RelationExtractionRules:
         
         Also refines the predicate using entity type-based inference when
         both endpoints are resolved to entities.
+        
+        Filters out classical Chinese function words as endpoints.
         """
         if not entity_texts:
             return rel
@@ -1021,14 +1057,22 @@ class RelationExtractionRules:
 
         for attr in ("subject", "object"):
             text = getattr(rel, attr)
+            
+            # Filter classical Chinese function words
+            if text in _CLASSICAL_NON_ENDPOINTS:
+                continue
+            
             if text in entity_texts:
                 hit_count += 1
                 continue
 
             matches = sorted([e for e in entity_texts if e in text], key=len, reverse=True)
             if matches:
-                # Use the longest matching entity
-                setattr(rel, attr, matches[0])
+                # Use the longest matching entity, but skip if it's a function word
+                matched = matches[0]
+                if matched in _CLASSICAL_NON_ENDPOINTS:
+                    continue
+                setattr(rel, attr, matched)
                 hit_count += 1
                 continue
 
