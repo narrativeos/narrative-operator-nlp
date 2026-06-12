@@ -70,8 +70,9 @@ _VERB_PREDICATE_MAP: dict[str, str] = {
     "和...合作": "INTERACTS_WITH",
 }
 
-# ── Classical Chinese verb-based predicate mapping ──
-# 古汉语动词谓词映射
+# ── Classical Chinese verb-based predicate mapping (minimal seed) ──
+# 古汉语动词谓词映射（最小种子，用于辅助推断）
+# 注意：这个映射只是辅助，主要依赖基于实体类型的动态推断
 _CLASSICAL_VERB_PREDICATE_MAP: dict[str, str] = {
     # 判断/系词 (Copula/Judgment)
     "为": "IS_A",
@@ -82,21 +83,13 @@ _CLASSICAL_VERB_PREDICATE_MAP: dict[str, str] = {
     "曰": "RELATES_TO",
     "云": "RELATES_TO",
     "谓": "RELATES_TO",
-    # 存在/拥有 (Existence/Possession)
-    "有": "HAS_PROPERTY",
-    "无": "HAS_PROPERTY",
+    # 表字 (Courtesy name)
+    "字": "HAS_PROPERTY",
     # 移动 (Movement)
     "至": "MOVED_TO",
     "往": "MOVED_TO",
     "来": "DEPARTED_FROM",
     "适": "MOVED_TO",
-    # 战争 (Warfare)
-    "胜": "INTERACTS_WITH",
-    "败": "INTERACTS_WITH",
-    "克": "INTERACTS_WITH",
-    "伐": "INTERACTS_WITH",
-    "攻": "INTERACTS_WITH",
-    "取": "INTERACTS_WITH",
     # 使令 (Causative)
     "使": "CAUSES",
     "令": "CAUSES",
@@ -106,6 +99,227 @@ _CLASSICAL_VERB_PREDICATE_MAP: dict[str, str] = {
     "予": "TRANSFERS_TO",
     "赠": "TRANSFERS_TO",
 }
+
+
+# ── Entity Type-Based Predicate Inference ──
+# 基于实体类型组合的动态谓词推断
+#
+# 注意：这个映射覆盖**所有**实体类型组合，不仅限于古汉语。
+# 古汉语实际常见的实体类型：PERSON, LOCATION, TITLE, ERA, INSTITUTION, PRODUCT
+# 现代汉语额外支持：MATERIAL, STANDARD, PARAMETER, FACILITY, ORGANIZATION, EVENT
+#
+# Key: (subject_category, object_category) → predicate
+
+_TYPE_BASED_PREDICATE_MAP: dict[tuple[str, str], str] = {
+    # ── PERSON (古今通用) ──
+    ("PERSON", "LOCATION"): "LOCATED_AT",
+    ("PERSON", "ERA"): "TEMPORAL_AT",
+    ("PERSON", "TITLE"): "HAS_PROPERTY",
+    ("PERSON", "INSTITUTION"): "PART_OF",
+    ("PERSON", "ORGANIZATION"): "PART_OF",
+    ("PERSON", "PERSON"): "INTERACTS_WITH",
+    ("PERSON", "PRODUCT"): "PRODUCES",
+    ("PERSON", "EVENT"): "INTERACTS_WITH",
+    ("PERSON", "MATERIAL"): "PRODUCES",
+    ("PERSON", "STANDARD"): "HAS_PROPERTY",
+    ("PERSON", "ASTRONOMY"): "HAS_PROPERTY",
+    ("PERSON", "FACILITY"): "LOCATED_AT",
+    ("PERSON", "DATE"): "TEMPORAL_AT",
+    ("PERSON", "NUMBER"): "HAS_PROPERTY",
+    ("PERSON", "PARAMETER"): "HAS_PROPERTY",
+    ("PERSON", "UNKNOWN"): "RELATES_TO",
+    
+    # ── LOCATION (古今通用) ──
+    ("LOCATION", "LOCATION"): "LOCATED_AT",
+    ("LOCATION", "ERA"): "TEMPORAL_AT",
+    ("LOCATION", "INSTITUTION"): "HAS_PROPERTY",
+    ("LOCATION", "ORGANIZATION"): "HAS_PROPERTY",
+    ("LOCATION", "PERSON"): "HAS_PROPERTY",
+    ("LOCATION", "MATERIAL"): "PRODUCES",
+    ("LOCATION", "PRODUCT"): "PRODUCES",
+    ("LOCATION", "EVENT"): "LOCATED_AT",
+    ("LOCATION", "ASTRONOMY"): "HAS_PROPERTY",
+    ("LOCATION", "FACILITY"): "HAS_PROPERTY",
+    ("LOCATION", "DATE"): "TEMPORAL_AT",
+    ("LOCATION", "STANDARD"): "HAS_PROPERTY",
+    ("LOCATION", "UNKNOWN"): "RELATES_TO",
+    
+    # ── ERA (古今通用) ──
+    ("ERA", "ERA"): "TEMPORAL_AT",
+    ("ERA", "PERSON"): "HAS_PROPERTY",
+    ("ERA", "LOCATION"): "HAS_PROPERTY",
+    ("ERA", "EVENT"): "TEMPORAL_AT",
+    ("ERA", "INSTITUTION"): "HAS_PROPERTY",
+    ("ERA", "PRODUCT"): "HAS_PROPERTY",
+    ("ERA", "ASTRONOMY"): "HAS_PROPERTY",
+    ("ERA", "ORGANIZATION"): "HAS_PROPERTY",
+    ("ERA", "FACILITY"): "HAS_PROPERTY",
+    ("ERA", "TITLE"): "HAS_PROPERTY",
+    ("ERA", "UNKNOWN"): "RELATES_TO",
+    
+    # ── TITLE (古汉语特有) ──
+    ("TITLE", "PERSON"): "HAS_PROPERTY",
+    ("TITLE", "INSTITUTION"): "PART_OF",
+    ("TITLE", "LOCATION"): "LOCATED_AT",
+    ("TITLE", "TITLE"): "PART_OF",
+    ("TITLE", "ERA"): "TEMPORAL_AT",
+    ("TITLE", "UNKNOWN"): "RELATES_TO",
+    
+    # ── INSTITUTION (古今通用) ──
+    ("INSTITUTION", "INSTITUTION"): "PART_OF",
+    ("INSTITUTION", "PERSON"): "HAS_PROPERTY",
+    ("INSTITUTION", "LOCATION"): "LOCATED_AT",
+    ("INSTITUTION", "ERA"): "TEMPORAL_AT",
+    ("INSTITUTION", "ORGANIZATION"): "PART_OF",
+    ("INSTITUTION", "PRODUCT"): "PRODUCES",
+    ("INSTITUTION", "STANDARD"): "HAS_PROPERTY",
+    ("INSTITUTION", "FACILITY"): "LOCATED_AT",
+    ("INSTITUTION", "TITLE"): "HAS_PROPERTY",
+    ("INSTITUTION", "UNKNOWN"): "RELATES_TO",
+    
+    # ── ORGANIZATION (现代为主) ──
+    ("ORGANIZATION", "ORGANIZATION"): "PART_OF",
+    ("ORGANIZATION", "PERSON"): "HAS_PROPERTY",
+    ("ORGANIZATION", "LOCATION"): "LOCATED_AT",
+    ("ORGANIZATION", "ERA"): "TEMPORAL_AT",
+    ("ORGANIZATION", "INSTITUTION"): "PART_OF",
+    ("ORGANIZATION", "PRODUCT"): "PRODUCES",
+    ("ORGANIZATION", "FACILITY"): "LOCATED_AT",
+    ("ORGANIZATION", "STANDARD"): "HAS_PROPERTY",
+    ("ORGANIZATION", "UNKNOWN"): "RELATES_TO",
+    
+    # ── PRODUCT (古今通用) ──
+    ("PRODUCT", "PRODUCT"): "RELATES_TO",
+    ("PRODUCT", "PERSON"): "HAS_PROPERTY",
+    ("PRODUCT", "MATERIAL"): "COMPOSED_OF",
+    ("PRODUCT", "STANDARD"): "DEPENDS_ON",
+    ("PRODUCT", "LOCATION"): "LOCATED_AT",
+    ("PRODUCT", "ERA"): "TEMPORAL_AT",
+    ("PRODUCT", "FACILITY"): "LOCATED_AT",
+    ("PRODUCT", "PARAMETER"): "HAS_PROPERTY",
+    ("PRODUCT", "UNKNOWN"): "RELATES_TO",
+    
+    # ── MATERIAL (现代为主) ──
+    ("MATERIAL", "MATERIAL"): "COMPOSED_OF",
+    ("MATERIAL", "LOCATION"): "LOCATED_AT",
+    ("MATERIAL", "STANDARD"): "DEPENDS_ON",
+    ("MATERIAL", "PRODUCT"): "COMPOSED_OF",
+    ("MATERIAL", "PARAMETER"): "HAS_PROPERTY",
+    ("MATERIAL", "PERSON"): "HAS_PROPERTY",
+    ("MATERIAL", "FACILITY"): "LOCATED_AT",
+    ("MATERIAL", "UNKNOWN"): "RELATES_TO",
+    
+    # ── STANDARD (现代为主) ──
+    ("STANDARD", "STANDARD"): "DEPENDS_ON",
+    ("STANDARD", "PARAMETER"): "HAS_PROPERTY",
+    ("STANDARD", "MATERIAL"): "CONSTRAINT_OF",
+    ("STANDARD", "PRODUCT"): "CONSTRAINT_OF",
+    ("STANDARD", "PERSON"): "HAS_PROPERTY",
+    ("STANDARD", "ORGANIZATION"): "HAS_PROPERTY",
+    ("STANDARD", "UNKNOWN"): "RELATES_TO",
+    
+    # ── PARAMETER (现代为主) ──
+    ("PARAMETER", "PARAMETER"): "RELATES_TO",
+    ("PARAMETER", "MATERIAL"): "HAS_PROPERTY",
+    ("PARAMETER", "PRODUCT"): "HAS_PROPERTY",
+    ("PARAMETER", "STANDARD"): "DEPENDS_ON",
+    ("PARAMETER", "PERSON"): "HAS_PROPERTY",
+    ("PARAMETER", "UNKNOWN"): "RELATES_TO",
+    
+    # ── FACILITY (现代为主) ──
+    ("FACILITY", "LOCATION"): "LOCATED_AT",
+    ("FACILITY", "FACILITY"): "LOCATED_AT",
+    ("FACILITY", "ORGANIZATION"): "PART_OF",
+    ("FACILITY", "PERSON"): "HAS_PROPERTY",
+    ("FACILITY", "ERA"): "TEMPORAL_AT",
+    ("FACILITY", "UNKNOWN"): "RELATES_TO",
+    
+    # ── EVENT (古今通用) ──
+    ("EVENT", "EVENT"): "RELATES_TO",
+    ("EVENT", "PERSON"): "HAS_PROPERTY",
+    ("EVENT", "LOCATION"): "LOCATED_AT",
+    ("EVENT", "ERA"): "TEMPORAL_AT",
+    ("EVENT", "INSTITUTION"): "HAS_PROPERTY",
+    ("EVENT", "ORGANIZATION"): "HAS_PROPERTY",
+    ("EVENT", "DATE"): "TEMPORAL_AT",
+    ("EVENT", "UNKNOWN"): "RELATES_TO",
+    
+    # ── ASTRONOMY (古汉语特有) ──
+    ("ASTRONOMY", "ASTRONOMY"): "RELATES_TO",
+    ("ASTRONOMY", "LOCATION"): "LOCATED_AT",
+    ("ASTRONOMY", "ERA"): "TEMPORAL_AT",
+    ("ASTRONOMY", "PERSON"): "HAS_PROPERTY",
+    ("ASTRONOMY", "UNKNOWN"): "RELATES_TO",
+    
+    # ── DATE ──
+    ("DATE", "DATE"): "TEMPORAL_AT",
+    ("DATE", "PERSON"): "HAS_PROPERTY",
+    ("DATE", "EVENT"): "TEMPORAL_AT",
+    ("DATE", "LOCATION"): "HAS_PROPERTY",
+    ("DATE", "ERA"): "TEMPORAL_AT",
+    ("DATE", "UNKNOWN"): "RELATES_TO",
+    
+    # ── NUMBER ──
+    ("NUMBER", "NUMBER"): "RELATES_TO",
+    ("NUMBER", "PERSON"): "HAS_PROPERTY",
+    ("NUMBER", "PRODUCT"): "HAS_PROPERTY",
+    ("NUMBER", "MATERIAL"): "HAS_PROPERTY",
+    ("NUMBER", "UNKNOWN"): "RELATES_TO",
+    
+    # ── UNKNOWN (兜底) ──
+    ("UNKNOWN", "PERSON"): "RELATES_TO",
+    ("UNKNOWN", "LOCATION"): "RELATES_TO",
+    ("UNKNOWN", "UNKNOWN"): "RELATES_TO",
+}
+
+
+def _infer_predicate_from_types(
+    subject_category: str,
+    object_category: str,
+    predicate_verb: str = "",
+) -> str:
+    """Infer predicate from entity types and verb context.
+    
+    Uses a combination of:
+    1. Entity type pair (subject_type, object_type)
+    2. Predicate verb hints
+    
+    Args:
+        subject_category: Subject entity category (e.g., "PERSON", "LOCATION")
+        object_category: Object entity category
+        predicate_verb: Original verb for additional context
+        
+    Returns:
+        NSP predicate string.
+    """
+    # Try direct type-based lookup
+    type_pair = (subject_category, object_category)
+    if type_pair in _TYPE_BASED_PREDICATE_MAP:
+        return _TYPE_BASED_PREDICATE_MAP[type_pair]
+    
+    # Try verb-based lookup (as supplement)
+    if predicate_verb in _CLASSICAL_VERB_PREDICATE_MAP:
+        return _CLASSICAL_VERB_PREDICATE_MAP[predicate_verb]
+    
+    # Try verb-based lookup for modern Chinese
+    if predicate_verb in _VERB_PREDICATE_MAP:
+        return _VERB_PREDICATE_MAP[predicate_verb]
+    
+    # Fallback: use semantic heuristics
+    # Movement verbs + LOCATION → MOVED_TO
+    movement_verbs = {"至", "往", "来", "适", "迁", "赴", "归", "还", "入", "出"}
+    if predicate_verb in movement_verbs and object_category == "LOCATION":
+        return "MOVED_TO"
+    if predicate_verb in movement_verbs and subject_category == "LOCATION":
+        return "DEPARTED_FROM"
+    
+    # Judgment/copula verbs → IS_A
+    judgment_verbs = {"为", "乃", "即", "系", "是"}
+    if predicate_verb in judgment_verbs:
+        return "IS_A"
+    
+    # Default fallback
+    return "RELATES_TO"
 
 
 def _is_relation_endpoint(token) -> bool:
@@ -448,7 +662,7 @@ class RelationExtractionRules:
                 if isinstance(f, list):
                     rels = self.extract_from_srl(f, tokens, text)
                     for rel in rels:
-                        rel = self._entity_normalize(rel, entity_texts, strict=False)
+                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities)
                         if rel:
                             relations.append(rel)
 
@@ -491,7 +705,7 @@ class RelationExtractionRules:
                         i, deprel, head_1based, tokens, text,
                     )
                     if rel:
-                        rel = self._entity_normalize(rel, entity_texts, strict=False)
+                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities)
                         if rel:
                             relations.append(rel)
 
@@ -790,10 +1004,15 @@ class RelationExtractionRules:
 
     def _entity_normalize(self, rel: Relation,
                           entity_texts: set[str],
-                          strict: bool = True) -> Relation | None:
+                          strict: bool = True,
+                          entities: list | None = None,
+                          ) -> Relation | None:
         """Normalize endpoints: exact match → sub-entity match → reject.
 
         Relaxed: at least ONE endpoint must match an entity.
+        
+        Also refines the predicate using entity type-based inference when
+        both endpoints are resolved to entities.
         """
         if not entity_texts:
             return rel
@@ -818,5 +1037,19 @@ class RelationExtractionRules:
             if not entity_texts:
                 return rel
             return None
+
+        # ── Refine predicate using entity type inference ──
+        if entities:
+            subj_entity = _find_entity(entities, rel.subject)
+            obj_entity = _find_entity(entities, rel.object)
+            
+            if subj_entity and obj_entity:
+                inferred = _infer_predicate_from_types(
+                    subj_entity.category,
+                    obj_entity.category,
+                    rel.predicate_verb or "",
+                )
+                if inferred != rel.predicate:
+                    rel.predicate = inferred
 
         return rel

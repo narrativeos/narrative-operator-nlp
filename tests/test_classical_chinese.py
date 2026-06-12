@@ -152,7 +152,8 @@ def test_relation_mapper():
             print(f"  ✗ {verb} → {actual_pred} (预期: {expected_pred})")
             assert False, f"动词映射错误: {verb}"
     
-    assert len(_CLASSICAL_VERB_PREDICATE_MAP) >= 20, f"动词映射数量不足: {len(_CLASSICAL_VERB_PREDICATE_MAP)}"
+    # Note: _CLASSICAL_VERB_PREDICATE_MAP is now a minimal seed, with type-based inference as the primary method
+    assert len(_CLASSICAL_VERB_PREDICATE_MAP) >= 15, f"动词映射数量不足: {len(_CLASSICAL_VERB_PREDICATE_MAP)}"
     
     print(f"  ✓ 关系映射测试通过")
     print()

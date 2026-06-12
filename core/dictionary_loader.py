@@ -80,7 +80,13 @@ class DictionaryLoader:
         "events.yaml": "EVENT",
     }
     
-    def __init__(self, config_dir: str):
+    def __init__(
+        self, 
+        config_dir: str, 
+        load_cbdb_to_memory: bool = False,
+        auto_promote_threshold: int = 100,  # requests before auto-promote
+        auto_promote_window: float = 60.0,   # time window in seconds
+    ):
         self._config_dir = Path(config_dir)
         self._seed_dir = self._config_dir / "classical" / "seed"
         self._custom_dir = self._config_dir / "classical" / "custom"
@@ -99,6 +105,16 @@ class DictionaryLoader:
         # SQLite database (lazy loaded)
         self._sqlite_conn: Optional[sqlite3.Connection] = None
         self._sqlite_cache: dict[str, Optional[DictionaryEntry]] = {}
+        
+        # CBDB loading mode
+        self._load_cbdb_to_memory = load_cbdb_to_memory
+        self._cbdb_loaded = False
+        
+        # Auto-promote accumulator: track request frequency
+        self._auto_promote_threshold = auto_promote_threshold
+        self._auto_promote_window = auto_promote_window
+        self._request_timestamps: list[float] = []
+        self._auto_promoted = False
         
         # Cache
         self._cache_enabled = True
@@ -136,7 +152,68 @@ class DictionaryLoader:
         # Load user dictionaries (runtime injection)
         total += self._load_layer(self._user_dir, "user")
         
+        # Load CBDB to memory if configured
+        if self._load_cbdb_to_memory and not self._cbdb_loaded:
+            total += self._load_cbdb_to_memory_data()
+        
         logger.info("DictionaryLoader: Total entries loaded: %d", total)
+        return total
+    
+    def _load_cbdb_to_memory_data(self) -> int:
+        """Load all CBDB entries into memory for fast O(1) lookups.
+        
+        This loads:
+        - DYNASTIES (ERA)
+        - OFFICE_CODES (TITLE)
+        - ADDR_CODES (LOCATION)
+        - BIOG_MAIN (PERSON)
+        
+        Returns:
+            Number of entries loaded.
+        """
+        conn = self._get_sqlite_connection()
+        if conn is None:
+            return 0
+        
+        total = 0
+        start_time = time.time()
+        
+        # Load ERA (DYNASTIES)
+        cursor = conn.execute("SELECT c_dynasty_chn FROM DYNASTIES WHERE c_dynasty_chn IS NOT NULL")
+        for row in cursor:
+            kw = row[0].strip()
+            if kw and kw not in self._entries:
+                self._entries[kw] = DictionaryEntry(kw, "ERA", "CBDB", 0.95)
+                total += 1
+        
+        # Load TITLE (OFFICE_CODES)
+        cursor = conn.execute("SELECT c_office_chn FROM OFFICE_CODES WHERE c_office_chn IS NOT NULL")
+        for row in cursor:
+            kw = row[0].strip()
+            if kw and kw not in self._entries:
+                self._entries[kw] = DictionaryEntry(kw, "TITLE", "CBDB", 0.90)
+                total += 1
+        
+        # Load LOCATION (ADDR_CODES)
+        cursor = conn.execute("SELECT c_name_chn FROM ADDR_CODES WHERE c_name_chn IS NOT NULL")
+        for row in cursor:
+            kw = row[0].strip()
+            if kw and kw not in self._entries:
+                self._entries[kw] = DictionaryEntry(kw, "LOCATION", "CBDB", 0.90)
+                total += 1
+        
+        # Load PERSON (BIOG_MAIN)
+        cursor = conn.execute("SELECT c_name_chn FROM BIOG_MAIN WHERE c_name_chn IS NOT NULL AND LENGTH(c_name_chn) >= 2")
+        for row in cursor:
+            kw = row[0].strip()
+            if kw and kw not in self._entries:
+                self._entries[kw] = DictionaryEntry(kw, "PERSON", "CBDB", 0.85)
+                total += 1
+        
+        self._cbdb_loaded = True
+        elapsed = time.time() - start_time
+        logger.info("CBDB loaded to memory: %d entries in %.1fs", total, elapsed)
+        
         return total
     
     def _load_layer(self, directory: Path, layer_name: str) -> int:
@@ -450,21 +527,52 @@ class DictionaryLoader:
         
         return None
 
+    def _check_and_promote(self):
+        """Check if request frequency exceeds threshold, auto-promote to in-memory mode.
+        
+        If the number of requests within the time window exceeds the threshold,
+        automatically load CBDB into memory for faster subsequent lookups.
+        """
+        if self._auto_promoted or self._cbdb_loaded:
+            return
+        
+        now = time.time()
+        
+        # Record this request
+        self._request_timestamps.append(now)
+        
+        # Clean old timestamps outside the window
+        cutoff = now - self._auto_promote_window
+        self._request_timestamps = [
+            ts for ts in self._request_timestamps if ts > cutoff
+        ]
+        
+        # Check if threshold exceeded
+        if len(self._request_timestamps) >= self._auto_promote_threshold:
+            logger.info(
+                "Auto-promoting CBDB to memory: %d requests in %.1fs "
+                "(threshold: %d in %.1fs)",
+                len(self._request_timestamps),
+                self._auto_promote_window,
+                self._auto_promote_threshold,
+                self._auto_promote_window,
+            )
+            self._auto_promoted = True
+            self._load_cbdb_to_memory_data()
+    
     def lookup_tokens(
         self,
         tokens: list[tuple[str, int, int]],  # (text, start, end)
         text: str,
     ) -> list[DictionaryEntry]:
-        """Scientific token-based CBDB lookup.
+        """Batch CBDB lookup for a sequence of tokens.
+        
+        Uses batch queries (IN clause) to minimize database round trips.
         
         Method:
-        1. Exact match for each token
-        2. N-gram combination (2-4 gram) with contiguous span check
-        3. Precise CBDB query for each candidate
-        
-        This avoids fuzzy matching which produces high false positive rates.
-        Instead, we rely on the tokenizer's output as candidate boundaries
-        and explore adjacent combinations.
+        1. Collect all candidate texts (tokens + n-grams)
+        2. Batch query each table with IN clause
+        3. Map results back to DictionaryEntry objects
         
         Args:
             tokens: List of (text, start_offset, end_offset) tuples
@@ -473,27 +581,23 @@ class DictionaryLoader:
         Returns:
             List of DictionaryEntry objects for discovered entities.
         """
+        # Auto-promote check: switch to in-memory if high frequency
+        self._check_and_promote()
+        
         if not tokens:
             return []
         
-        results = []
-        seen_texts = set()
+        # Step 1: Collect all candidate texts
+        candidates = set()
         
-        # Step 1: Exact match for each token
+        # Individual tokens
         for token_text, start, end in tokens:
-            if token_text in seen_texts:
-                continue
-            
-            entry = self.lookup(token_text)
-            if entry is not None:
-                results.append(entry)
-                seen_texts.add(token_text)
+            candidates.add(token_text)
         
-        # Step 2: N-gram combinations with contiguous span check
-        # Only combine adjacent tokens that form a contiguous span
+        # N-gram combinations (2-4 gram) with contiguous span check
         for n in range(2, min(5, len(tokens) + 1)):
             for i in range(len(tokens) - n + 1):
-                # Check for contiguous span (no gaps between tokens)
+                # Check for contiguous span
                 expected_end = tokens[i][1]
                 is_contiguous = True
                 for j in range(i, i + n):
@@ -506,15 +610,118 @@ class DictionaryLoader:
                     continue
                 
                 combined = "".join(tokens[j][0] for j in range(i, i + n))
-                if combined in seen_texts:
-                    continue
-                
-                entry = self.lookup(combined)
+                candidates.add(combined)
+        
+        if not candidates:
+            return []
+        
+        # Step 2: Check memory (YAML + CBDB if loaded)
+        results = []
+        seen_texts = set()
+        db_candidates = set()
+        
+        for candidate in candidates:
+            if candidate in self._entries:
+                results.append(self._entries[candidate])
+                seen_texts.add(candidate)
+            elif candidate not in self._sqlite_cache:
+                db_candidates.add(candidate)
+        
+        # Step 3: Batch query SQLite for remaining candidates (only if not fully loaded)
+        if db_candidates and not self._cbdb_loaded:
+            conn = self._get_sqlite_connection()
+            if conn is not None:
+                self._batch_lookup(conn, db_candidates, seen_texts, results)
+        
+        # Step 4: Return cached results for any remaining
+        for candidate in candidates:
+            if candidate not in seen_texts and candidate in self._sqlite_cache:
+                entry = self._sqlite_cache[candidate]
                 if entry is not None:
                     results.append(entry)
-                    seen_texts.add(combined)
+                    seen_texts.add(candidate)
         
         return results
+    
+    def _batch_lookup(
+        self,
+        conn: sqlite3.Connection,
+        keywords: set[str],
+        seen_texts: set[str],
+        results: list[DictionaryEntry],
+    ) -> None:
+        """Batch lookup multiple keywords across all CBDB tables.
+        
+        Uses IN clause to minimize round trips.
+        Results are cached in _sqlite_cache for future lookups.
+        """
+        if not keywords:
+            return
+        
+        placeholders = ",".join("?" for _ in keywords)
+        keyword_list = list(keywords)
+        
+        # Batch query ERA
+        cursor = conn.execute(
+            f"SELECT c_dynasty_chn FROM DYNASTIES WHERE c_dynasty_chn IN ({placeholders})",
+            keyword_list,
+        )
+        for row in cursor:
+            kw = row[0]
+            entry = DictionaryEntry(kw, "ERA", "CBDB", 0.95)
+            results.append(entry)
+            seen_texts.add(kw)
+            self._sqlite_cache[kw] = entry
+        
+        # Batch query TITLE (skip already found)
+        title_keywords = [k for k in keyword_list if k not in seen_texts]
+        if title_keywords:
+            ph = ",".join("?" for _ in title_keywords)
+            cursor = conn.execute(
+                f"SELECT c_office_chn FROM OFFICE_CODES WHERE c_office_chn IN ({ph})",
+                title_keywords,
+            )
+            for row in cursor:
+                kw = row[0]
+                entry = DictionaryEntry(kw, "TITLE", "CBDB", 0.90)
+                results.append(entry)
+                seen_texts.add(kw)
+                self._sqlite_cache[kw] = entry
+        
+        # Batch query LOCATION (skip already found)
+        loc_keywords = [k for k in keyword_list if k not in seen_texts]
+        if loc_keywords:
+            ph = ",".join("?" for _ in loc_keywords)
+            cursor = conn.execute(
+                f"SELECT c_name_chn FROM ADDR_CODES WHERE c_name_chn IN ({ph})",
+                loc_keywords,
+            )
+            for row in cursor:
+                kw = row[0]
+                entry = DictionaryEntry(kw, "LOCATION", "CBDB", 0.90)
+                results.append(entry)
+                seen_texts.add(kw)
+                self._sqlite_cache[kw] = entry
+        
+        # Batch query PERSON (skip already found)
+        person_keywords = [k for k in keyword_list if k not in seen_texts]
+        if person_keywords:
+            ph = ",".join("?" for _ in person_keywords)
+            cursor = conn.execute(
+                f"SELECT c_name_chn FROM BIOG_MAIN WHERE c_name_chn IN ({ph})",
+                person_keywords,
+            )
+            for row in cursor:
+                kw = row[0]
+                entry = DictionaryEntry(kw, "PERSON", "CBDB", 0.85)
+                results.append(entry)
+                seen_texts.add(kw)
+                self._sqlite_cache[kw] = entry
+        
+        # Cache missed lookups to avoid repeated queries
+        for kw in keyword_list:
+            if kw not in self._sqlite_cache:
+                self._sqlite_cache[kw] = None
     
     def validate_integrity(self) -> bool:
         """Validate integrity of all loaded dictionaries.
