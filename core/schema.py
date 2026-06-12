@@ -30,7 +30,26 @@ class SentenceLanguage(BaseModel):
 # ---------------------------------------------------------------------------
 
 class EntityCategory:
-    """NSP standard entity categories."""
+    """NSP standard entity categories.
+    
+    Standard categories:
+    - PERSON: 人名
+    - ORGANIZATION: 组织、机构
+    - LOCATION: 地名
+    - FACILITY: 设施
+    - PRODUCT: 产品、作品
+    - DATE: 日期
+    - NUMBER: 数字
+    - MATERIAL: 材料
+    - STANDARD: 标准
+    - PARAMETER: 参数
+    
+    Classical Chinese categories (古汉语扩展):
+    - TITLE: 官职、爵位
+    - ERA: 朝代、时代
+    - INSTITUTION: 典章制度
+    - ASTRONOMY: 天文历法
+    """
     PERSON = "PERSON"
     ORGANIZATION = "ORGANIZATION"
     LOCATION = "LOCATION"
@@ -42,10 +61,16 @@ class EntityCategory:
     STANDARD = "STANDARD"
     PARAMETER = "PARAMETER"
     UNKNOWN = "UNKNOWN"
+    # Classical Chinese extensions
+    TITLE = "TITLE"          # 官职、爵位
+    ERA = "ERA"             # 朝代、时代
+    INSTITUTION = "INSTITUTION"  # 典章制度
+    ASTRONOMY = "ASTRONOMY"  # 天文历法
 
     ALL = frozenset({
         PERSON, ORGANIZATION, LOCATION, FACILITY, PRODUCT,
         DATE, NUMBER, MATERIAL, STANDARD, PARAMETER, UNKNOWN,
+        TITLE, ERA, INSTITUTION, ASTRONOMY,
     })
 
 
@@ -164,6 +189,34 @@ class RelationModifier(BaseModel):
 # Entity
 # ---------------------------------------------------------------------------
 
+class EntityEvidence(BaseModel):
+    """Evidence sources for entity recognition.
+    
+    Tracks which data sources contributed to recognizing this entity,
+    enabling transparency and downstream optimization.
+    """
+    tokenizer: bool = Field(
+        default=False,
+        description="Whether the entity was in the tokenizer's dict_combine (forced tokenization)"
+    )
+    seed_dict: bool = Field(
+        default=False,
+        description="Whether the entity was found in YAML seed dictionaries"
+    )
+    seed_dict_source: str = Field(
+        default="",
+        description="Which seed dictionary file matched: persons.yaml, locations.yaml, etc."
+    )
+    cbdb: bool = Field(
+        default=False,
+        description="Whether the entity was found in CBDB database"
+    )
+    cbdb_category: str = Field(
+        default="",
+        description="CBDB category matched: PERSON, LOCATION, TITLE, ERA"
+    )
+
+
 class Entity(BaseModel):
     """A named entity recognized in the text."""
     id: str = Field(..., pattern=r"^ent_\d+$", description="Unique entity ID, e.g. ent_001")
@@ -177,6 +230,10 @@ class Entity(BaseModel):
     parent_entity_id: Optional[str] = Field(
         default=None,
         description="Parent entity ID for containment hierarchy (entity ⊃ entity)"
+    )
+    evidence: EntityEvidence = Field(
+        default_factory=EntityEvidence,
+        description="Evidence sources for entity recognition (tokenizer, seed_dict, cbdb)"
     )
 
     @field_validator("span")

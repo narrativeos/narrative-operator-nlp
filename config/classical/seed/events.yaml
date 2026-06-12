@@ -1,0 +1,32 @@
+# ============================================================================
+# Source Attribution and License
+# ============================================================================
+# Source: Classical-Chinese-NER-RE-Dataset
+# Repository: https://github.com/beeevita/Classical-Chinese-NER-RE-Dataset
+# Author: beeevita (Evita)
+# License: MIT License
+# 
+# This file was auto-generated from the above open-source dataset.
+# The original dataset is used for Named Entity Recognition (NER) tasks
+# in Classical Chinese (文言文).
+#
+# Dataset Statistics:
+#   - PERSON: 4,119 entities
+#   - LOCATION: 1,624 entities
+#   - TITLE: 1,527 entities
+#   - ORGANIZATION: 238 entities
+#   - PRODUCT (classics): 129 entities
+#   - EVENT: 6 entities
+# ============================================================================
+
+# Auto-generated from Classical-Chinese-NER-RE-Dataset
+# Category: EVENT
+# Count: 6
+
+event:
+- 令狐之役
+- 安平之战
+- 尔朱之难
+- 殽之役
+- 沭阳之役
+- 邙山之战

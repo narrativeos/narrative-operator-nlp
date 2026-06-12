@@ -1,0 +1,13 @@
+{
+  "source": "CBDB (China Biographical Database)",
+  "version": "20260606",
+  "sha256": "50366bf1234dbddbc31723d34514b2d8209bd7b857c043685387aaceec87682a",
+  "download_url": "https://huggingface.co/datasets/cbdb/cbdb-sqlite/resolve/main/latest.zip",
+  "updated_at": "2026-06-12T14:00:00+08:00",
+  "statistics": {
+    "persons": 658941,
+    "locations": 14472,
+    "titles": 29367,
+    "dynasties": 85
+  }
+}

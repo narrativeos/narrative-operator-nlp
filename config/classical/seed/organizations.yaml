@@ -1,0 +1,194 @@
+# ============================================================================
+# Source Attribution and License
+# ============================================================================
+# Source: Classical-Chinese-NER-RE-Dataset
+# Repository: https://github.com/beeevita/Classical-Chinese-NER-RE-Dataset
+# Author: beeevita (Evita)
+# License: MIT License
+# 
+# This file was auto-generated from the above open-source dataset.
+# The original dataset is used for Named Entity Recognition (NER) tasks
+# in Classical Chinese (文言文).
+#
+# Dataset Statistics:
+#   - PERSON: 4,119 entities
+#   - LOCATION: 1,624 entities
+#   - TITLE: 1,527 entities
+#   - ORGANIZATION: 238 entities
+#   - PRODUCT (classics): 129 entities
+#   - EVENT: 6 entities
+# ============================================================================
+
+# Auto-generated from Classical-Chinese-NER-RE-Dataset
+# Category: ORGANIZATION
+# Count: 238
+
+organization:
+- 丁零
+- 三晋
+- 三苗
+- 东周
+- 东夷
+- 中国
+- 中山
+- 丹州军
+- 义宁军
+- 义成军
+- 义渠
+- 乌丸
+- 云州人
+- 仆骨
+- 伪梁
+- 保义军
+- 保宁军
+- 元氏
+- 冀戎
+- 冥氏
+- 匈奴
+- 北狄
+- 南唐
+- 南蛮
+- 南郑
+- 卢台军
+- 同罗
+- 后唐
+- 吐浑
+- 吐蕃
+- 吴越
+- 吴越国
+- 周人
+- 周国
+- 周室
+- 周师
+- 商国
+- 商州军
+- 回鹘
+- 堣夷
+- 处密
+- 处月
+- 夏后氏
+- 夏国
+- 大司马府
+- 大骆之族
+- 天平
+- 天雄军
+- 太史公
+- 太子
+- 太祖
+- 夷狄
+- 夷翟
+- 契丹
+- 姚姓
+- 姜氏之戎
+- 嬴氏
+- 孟氏
+- 安庆
+- 宣义
+- 宣武
+- 密须
+- 小虢
+- 山戎
+- 岛夷
+- 左右龙骧
+- 帝挚
+- 幽陵都督府
+- 延陀
+- 彤城氏
+- 彭戏氏
+- 征东府
+- 忠正军
+- 戎人
+- 戎夷
+- 戎狄
+- 戎翟
+- 承天军
+- 护国
+- 拔野古
+- 振武
+- 文帝
+- 文林馆
+- 斟寻氏
+- 斟戈氏
+- 昭义
+- 昭义军
+- 昭德军
+- 晋兵
+- 晋军
+- 晋王兵
+- 晋阳宫
+- 有司
+- 有扈氏
+- 有熊
+- 有男氏
+- 有莘氏
+- 朱邪
+- 李氏
+- 杞氏
+- 梁王兵
+- 楚国
+- 殷国
+- 江左
+- 汴军
+- 沙陀
+- 沙陀军
+- 沙陀府
+- 沙陀突厥
+- 河中
+- 洛邑
+- 淮军
+- 淮夷
+- 渤海
+- 濮人
+- 燕国
+- 犬戎
+- 犬戎氏
+- 秦国
+- 织皮
+- 缯氏
+- 耆国
+- 苛岚军
+- 荡氏
+- 莱夷
+- 薰育戎狄
+- 衍氏
+- 襃氏
+- 襄州军
+- 西京
+- 西周
+- 西夷犬戎
+- 西戎
+- 西突厥
+- 西陵
+- 费氏
+- 赵氏
+- 辛氏
+- 达靼
+- 造父族
+- 遮虏军
+- 金微都督府
+- 闽国
+- 阿史那
+- 陆浑之戎
+- 陶唐
+- 雄武军
+- 雍氏
+- 青州兵
+- 青州征东府
+- 颍川贼
+- 饑国
+- 骊戎
+- 高句骊
+- 魏公
+- 魏军
+- 魏博
+- 魏国
+- 魏氏
+- 鲜卑
+- 鸟夷
+- 黄巾
+- 黑山
+- 黑山贼
+- 黑山馀贼
+- 齐国
+- 龙骧
+- 龟林都督府

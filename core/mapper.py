@@ -13,6 +13,7 @@ Handles the real HanLP output structures:
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from .entity_mapper import EntityMappingRules
@@ -471,22 +472,91 @@ def _detect_voice(text: str) -> str:
 
 
 def _detect_sub_types(text: str) -> list[str]:
-    """Returns empty list as safe default.
+    """Detect special sentence constructions.
 
-    Special constructions (ba_construction, bei_construction, serial_verb,
-    pivotal, ellipsis) cannot be reliably detected via keyword matching.
-    Hints go to limitations for downstream resolution.
+    Modern Chinese:
+    - ba_construction: 把...V...
+    - bei_construction: 被...V...
+    
+    Classical Chinese (古汉语特有句式):
+    - judgment_sentence: ...者，...也 (判断句)
+    - passive_classical: 见V于N, 为V所N (被动句)
+    - rhetorical_question: 何...之有, 不亦...乎 (反问句)
+    - object_fronting: 宾语前置 (倒装句)
+    - comparison: 孰与..., 何...如 (比较句)
+    - negation_judgment: 非...也 (否定判断句)
     """
-    return []
+    sub_types: list[str] = []
+    
+    # ── Modern Chinese constructions ──
+    if "把" in text and re.search(r"把[\u4e00-\u9fff]+[^\u4e00-\u9fff]*[vV]", text):
+        sub_types.append("ba_construction")
+    if "被" in text:
+        sub_types.append("bei_construction")
+    
+    # ── Classical Chinese constructions ──
+    
+    # 判断句: ...者，...也
+    if re.search(r".+者[，,].+也", text):
+        sub_types.append("judgment_sentence")
+    
+    # 被动句 (古汉语): 见V于N, 为V所N
+    if re.search(r"见[\u4e00-\u9fff]+于", text):
+        sub_types.append("passive_classical")
+    if re.search(r"为[\u4e00-\u9fff]+所", text):
+        sub_types.append("passive_classical")
+    
+    # 反问句: 何...之有
+    if re.search(r"何[\u4e00-\u9fff]{0,4}之有", text):
+        sub_types.append("rhetorical_question")
+    
+    # 反问句: 不亦...乎
+    if re.search(r"不亦[\u4e00-\u9fff]+乎", text):
+        sub_types.append("rhetorical_question")
+    
+    # 比较句: 孰与...
+    if "孰与" in text:
+        sub_types.append("comparison")
+    
+    # 比较句: 何...如
+    if re.search(r"何[\u4e00-\u9fff]+如", text):
+        sub_types.append("comparison")
+    
+    # 否定判断句: 非...也
+    if re.search(r"非[\u4e00-\u9fff]+也", text):
+        sub_types.append("negation_judgment")
+    
+    return sub_types
 
 
 def _detect_rhetorical(text: str) -> str:
-    """Returns 'unknown' as safe default.
+    """Detect rhetorical structure of the sentence.
 
-    Rhetorical structure detection via comma counting is NOT near-100%.
-    A sentence with ≥2 commas may be a list, not parallel structure.
-    Hints go to limitations for downstream resolution.
+    For modern Chinese, returns 'unknown' as safe default.
+    For classical Chinese, attempts to detect:
+    - parallel (对偶/排比): four-character rhythm blocks
+    - loose (松散): mixed rhythm patterns
+
+    Returns 'unknown' when detection is not reliable.
     """
+    # Classical Chinese: four-character rhythm detection (四字格)
+    total_chars = len(re.sub(r"[^\u4e00-\u9fff]", "", text))
+
+    if total_chars >= 8:
+        # Count four-character blocks (with or without trailing punctuation)
+        # Pattern 1: four chars followed by punctuation
+        four_char_with_punct = re.compile(r"[\u4e00-\u9fff]{4}[，。；、]")
+        # Pattern 2: four chars at the end of text
+        four_char_at_end = re.compile(r"[\u4e00-\u9fff]{4}$")
+
+        count_with_punct = len(four_char_with_punct.findall(text))
+        count_at_end = len(four_char_at_end.findall(text))
+        four_char_count = count_with_punct + count_at_end
+
+        # If >= 2 four-character blocks, likely parallel structure
+        if four_char_count >= 2:
+            return "parallel"
+
     return "unknown"
 
 
@@ -551,11 +621,12 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
     - Ellipsis — no reliable detection method
 
     Only SRL-derived signals are provided here.
+
+    For classical Chinese, additional limitations are documented.
     """
     limits: list[str] = []
 
     # ── serial_verb: multiple ARG0s suggest serial verb clauses ──
-    # Derived from SRL output (NLP), not raw text.
     nsubj_count = 0
     for f in frames:
         for item in f:
@@ -563,5 +634,14 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
                 nsubj_count += 1
     if nsubj_count >= 3:
         limits.append("hint:serial_verb")
+
+    # ── Classical Chinese specific limitations ──
+    # These patterns are common in classical Chinese but hard to detect reliably
+    if any(pattern in text for pattern in ["者...也", "...者，...也"]):
+        limits.append("hint:judgment_sentence")  # 判断句
+    if "被" in text or "见" in text or "于" in text:
+        limits.append("hint:passive_voice")  # 被动句
+    if re.search(r"何[\u4e00-\u9fff]{1,6}之有", text):
+        limits.append("hint:rhetorical_question")  # 反问句
 
     return limits

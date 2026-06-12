@@ -34,7 +34,7 @@ _NON_ENDPOINT_POS: frozenset[str] = frozenset({
     "INTJ", "SYM", "X",
 })
 
-# ── Verb-based predicate mapping ──
+# ── Verb-based predicate mapping (Modern Chinese) ──
 # Maps predicate_verb → more specific NSP predicate
 _VERB_PREDICATE_MAP: dict[str, str] = {
     # Location
@@ -68,6 +68,43 @@ _VERB_PREDICATE_MAP: dict[str, str] = {
     # Interaction
     "与...合作": "INTERACTS_WITH",
     "和...合作": "INTERACTS_WITH",
+}
+
+# ── Classical Chinese verb-based predicate mapping ──
+# 古汉语动词谓词映射
+_CLASSICAL_VERB_PREDICATE_MAP: dict[str, str] = {
+    # 判断/系词 (Copula/Judgment)
+    "为": "IS_A",
+    "乃": "IS_A",
+    "即": "IS_A",
+    "系": "IS_A",
+    # 引述 (Quotation/Statement)
+    "曰": "RELATES_TO",
+    "云": "RELATES_TO",
+    "谓": "RELATES_TO",
+    # 存在/拥有 (Existence/Possession)
+    "有": "HAS_PROPERTY",
+    "无": "HAS_PROPERTY",
+    # 移动 (Movement)
+    "至": "MOVED_TO",
+    "往": "MOVED_TO",
+    "来": "DEPARTED_FROM",
+    "适": "MOVED_TO",
+    # 战争 (Warfare)
+    "胜": "INTERACTS_WITH",
+    "败": "INTERACTS_WITH",
+    "克": "INTERACTS_WITH",
+    "伐": "INTERACTS_WITH",
+    "攻": "INTERACTS_WITH",
+    "取": "INTERACTS_WITH",
+    # 使令 (Causative)
+    "使": "CAUSES",
+    "令": "CAUSES",
+    "命": "CAUSES",
+    # 给予 (Giving)
+    "赐": "TRANSFERS_TO",
+    "予": "TRANSFERS_TO",
+    "赠": "TRANSFERS_TO",
 }
 
 
@@ -553,13 +590,25 @@ class RelationExtractionRules:
         Supports English conjunctions: and, or
         """
         # Conjunction patterns (sorted by length to match longer first)
+        # Modern Chinese
         CN_CONJS = ["以及", "和", "与", "及", "或", "、"]
+        # Classical Chinese conjunctions (古汉语连词)
+        CLASSICAL_CONJS = ["暨", "幷", "並", "共", "俱", "皆", "仍", "复", "复又"]
+        # English
         EN_CONJS = [" and ", " or "]
 
         def split_conjunctions(text: str) -> list[str]:
-            """Split text by conjunctions, returning clean parts."""
+            """Split text by conjunctions, returning clean parts.
+            
+            Supports modern Chinese, classical Chinese, and English conjunctions.
+            """
+            # Modern Chinese
             for conj in CN_CONJS:
                 text = text.replace(conj, "||SPLIT||")
+            # Classical Chinese (古汉语连词)
+            for conj in CLASSICAL_CONJS:
+                text = text.replace(conj, "||SPLIT||")
+            # English
             for conj in EN_CONJS:
                 text = text.replace(conj, "||SPLIT||")
             parts = [p.strip() for p in text.split("||SPLIT||") if p.strip()]

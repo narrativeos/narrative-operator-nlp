@@ -23,6 +23,7 @@ from .keyword_extractor import KeywordExtractor
 from .entity_merger import EntityMerger
 from .entity_deduplicator import EntityDeduplicator
 from .entity_id_generator import EntityIdGenerator
+from .dictionary_loader import DictionaryLoader
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,19 @@ class EntityMappingRules:
         self._keyword_extractor = KeywordExtractor._from_dir(config_dir)
         self._merger = EntityMerger._from_dir(config_dir)
         self._id_gen = EntityIdGenerator()
+
+        # Load classical Chinese dictionaries using DictionaryLoader
+        self._dict_loader = DictionaryLoader(config_dir)
+        total_loaded = self._dict_loader.load_all()
+        
+        # Merge loaded keywords into keyword_extractor
+        for category in self._dict_loader.FILE_TO_CATEGORY.values():
+            keywords = self._dict_loader.get_keywords(category)
+            if keywords:
+                self._keyword_extractor.add_keywords({category: list(keywords)})
+        
+        if total_loaded > 0:
+            logger.info("Classical dictionaries loaded: %d entries", total_loaded)
 
         if entity_categories:
             self._keyword_extractor.add_keywords(entity_categories)
@@ -450,9 +464,28 @@ class EntityMappingRules:
                     ))
                     entity_spans.add(span_key)
 
+        # Function words that should NEVER be extracted as entities
+        _CLASSICAL_FUNCTION_WORDS = {
+            # 虚词 - 代词
+            "之", "其", "者", "所", "何", "安", "孰", "胡", "奚", "焉",
+            # 虚词 - 助词
+            "也", "矣", "乎", "哉", "耳", "焉", "兮", "夫", "盖", "惟",
+            # 虚词 - 介词
+            "于", "以", "而", "则", "若", "如", "使", "令", "况",
+            # 虚词 - 连词
+            "与", "及", "且", "或", "虽", "然", "故", "因", "是",
+            # 常见非实体词
+            "人", "字", "时", "少", "多", "大", "小", "上", "下",
+            "父", "母", "子", "女", "兄", "弟", "妻", "夫",
+            "君", "臣", "官", "民", "兵", "将", "军",
+        }
+
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
+                continue
+            # Skip function words
+            if t.text in _CLASSICAL_FUNCTION_WORDS:
                 continue
             xpos = xpos_tags[i] if i < len(xpos_tags) else ""
             if not xpos:
@@ -484,15 +517,69 @@ class EntityMappingRules:
 
     @staticmethod
     def _parse_xpos_category(xpos: str) -> Optional[str]:
-        if not xpos or "," not in xpos:
+        """Parse xpos tag to entity category.
+        
+        Supports both modern and classical Chinese xpos tags.
+        Classical Chinese extensions:
+        - 官职名 → TITLE
+        - 时代名 → ERA
+        - 典章制度 → INSTITUTION
+        - 天文历法 → ASTRONOMY
+        - 爵位名 → TITLE
+        - 朝代名 → ERA
+        
+        xpos format examples:
+        - "名詞,地名" → LOCATION
+        - "名詞,人名" → PERSON
+        - "名詞,官職名" → TITLE
+        """
+        if not xpos:
             return None
-        parts = xpos.split(",")
-        if len(parts) < 2:
+        
+        # Handle both comma-separated and simple formats
+        if "," in xpos:
+            parts = xpos.split(",")
+            if len(parts) < 2:
+                return None
+            pos_class = parts[1].strip() if len(parts) > 1 else ""
+            rest = ",".join(parts[2:]) if len(parts) > 2 else ""
+        else:
+            # Simple format like "名詞" or "地名"
+            pos_class = xpos
+            rest = xpos
+        
+        # Check if it's a noun class
+        if "名詞" not in pos_class and "名詞" not in rest:
+            # Try direct matching for simple formats
+            if "官職" in xpos or "官名" in xpos or "爵位" in xpos:
+                return "TITLE"
+            if "朝代" in xpos or "时代" in xpos or "年代" in xpos:
+                return "ERA"
+            if "典章" in xpos or "制度" in xpos or "礼制" in xpos:
+                return "INSTITUTION"
+            if "天文" in xpos or "历法" in xpos or "星宿" in xpos:
+                return "ASTRONOMY"
+            if "地名" in xpos or "地形" in xpos:
+                return "LOCATION"
+            if "人名" in xpos:
+                return "PERSON"
+            if "組織" in xpos:
+                return "ORGANIZATION"
+            if "作品" in xpos:
+                return "PRODUCT"
             return None
-        pos_class = parts[1].strip()
-        if pos_class != "名詞":
-            return None
-        rest = ",".join(parts[2:]) if len(parts) > 2 else ""
+        
+        # Classical Chinese categories
+        if "官职" in rest or "官名" in rest or "爵位" in rest or "官職" in rest:
+            return "TITLE"
+        if "时代" in rest or "朝代" in rest or "年代" in rest:
+            return "ERA"
+        if "典章" in rest or "制度" in rest or "礼制" in rest:
+            return "INSTITUTION"
+        if "天文" in rest or "历法" in rest or "星宿" in rest:
+            return "ASTRONOMY"
+        
+        # Standard categories
         if "地名" in rest or "地形" in rest:
             return "LOCATION"
         if "人" in rest and "名" in rest:

@@ -175,6 +175,7 @@ def _analyze_classical(
     text: str,
     offset: int,
     mapper: HanlpSchemaMapper,
+    dict_combine: Optional[set] = None,
     entity_dict: dict[str, str] | None = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
@@ -183,6 +184,33 @@ def _analyze_classical(
         pipeline = _get_classical_pipeline()
         if pipeline is None:
             raise RuntimeError("Classical pipeline not loaded")
+        # Apply custom dictionary + seed dictionaries to classical pipeline
+        # Only load YAML seed dictionaries (small scale) to avoid memory issues
+        all_dict_words = set()
+        if dict_combine:
+            all_dict_words |= dict_combine
+        
+        # Load dictionaries for evidence tracking
+        loader = None
+        try:
+            from .dictionary_loader import DictionaryLoader
+            from pathlib import Path
+            config_dir = str(Path(__file__).parent.parent / "config")
+            loader = DictionaryLoader(config_dir)
+            loader.load_all()
+            # Get all keywords as dict_combine words (YAML only, not CBDB)
+            for category in loader.FILE_TO_CATEGORY.values():
+                keywords = loader.get_keywords(category)
+                if keywords:
+                    all_dict_words |= keywords
+        except Exception as exc:
+            logger.debug("Failed to load dictionaries for tokenization: %s", exc)
+        
+        if all_dict_words:
+            try:
+                pipeline['tok/fine'].dict_combine = all_dict_words
+            except (KeyError, AttributeError):
+                pass
         raw = pipeline(text)
     except (AttributeError, ImportError, RuntimeError):
         logger.warning("Classical Chinese model not available. Skipping.")
@@ -200,6 +228,30 @@ def _analyze_classical(
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "hanlp_lzh"
+    
+    # ── Fill evidence for entities ──
+    if loader is not None:
+        # Build token list for smart lookup
+        token_list = [(t.text, t.span[0], t.span[1]) for t in doc.content.tokens]
+        
+        # Smart CBDB lookup: fuzzy + n-gram combination
+        discovered = loader.lookup_tokens(token_list, text)
+        discovered_map = {d.keyword: d for d in discovered}
+        
+        for entity in doc.content.entities:
+            # Tokenizer evidence: was the entity in dict_combine?
+            entity.evidence.tokenizer = entity.text in all_dict_words
+            # Seed dictionary evidence
+            entry = loader.get_entry(entity.text)
+            if entry is not None:
+                entity.evidence.seed_dict = True
+                entity.evidence.seed_dict_source = entry.source
+            # CBDB evidence (smart lookup: exact + fuzzy + n-gram)
+            cbdb_entry = discovered_map.get(entity.text) or loader.lookup(entity.text)
+            if cbdb_entry is not None and cbdb_entry.source == "CBDB":
+                entity.evidence.cbdb = True
+                entity.evidence.cbdb_category = cbdb_entry.category
+    
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
             doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
 
@@ -503,7 +555,7 @@ def analyze(
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
             tokens, entities, relations, patterns, ok = _analyze_classical(
-                seg_text, seg_offset, mapper, entity_dict, entity_categories,
+                seg_text, seg_offset, mapper, dict_combine, entity_dict, entity_categories,
                 auto_discover_entities,
             )
             if not ok:

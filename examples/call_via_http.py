@@ -58,13 +58,14 @@ def main():
         sys.exit(1)
     print(f"   ✅ Server is healthy at {base_url}\n")
 
-    # 2. Analyze text
-    sample_texts = [
+    # 2. Analyze modern Chinese text
+    print("=== Modern Chinese Text Analysis ===")
+    modern_texts = [
         "碳钢是钢的一种，具有高强度和高韧性。",
         "北京立方庭位于海淀区，是一家科技公司的总部。",
     ]
 
-    for i, text in enumerate(sample_texts, 1):
+    for i, text in enumerate(modern_texts, 1):
         print(f"{i}. Analyzing: {text}")
         try:
             result = call_analyze(text, base_url)
@@ -84,9 +85,37 @@ def main():
             print(f"   ❌ Request failed: {exc}")
         print()
 
-    # 3. Pretty-print full output for first text
-    print("=== Full NSP Output (first text) ===")
-    result = call_analyze(sample_texts[0], base_url)
+    # 3. Analyze classical Chinese text
+    print("=== Classical Chinese (文言文) Text Analysis ===")
+    classical_texts = [
+        "陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。",
+        "尝与人佣耕，辍耕之垄上，怅恨久之，曰：'苟富贵，无相忘。'",
+        "见欺于王，何陋之有，不亦乐乎。",
+    ]
+
+    for i, text in enumerate(classical_texts, 1):
+        print(f"{i}. Analyzing: {text}")
+        try:
+            result = call_analyze(text, base_url)
+            print(f"   ✅ Success — {len(result['content']['tokens'])} tokens, "
+                  f"{len(result['content']['entities'])} entities, "
+                  f"{len(result['content']['relations'])} relations")
+            # Print summary
+            if result["content"]["entities"]:
+                print("   Entities:")
+                for ent in result["content"]["entities"]:
+                    print(f"     - [{ent['category']}] {ent['text']}")
+            if result["content"]["relations"]:
+                print("   Relations:")
+                for rel in result["content"]["relations"]:
+                    print(f"     - {rel['subject']} --[{rel['predicate']}]--> {rel['object']}")
+        except requests.RequestException as exc:
+            print(f"   ❌ Request failed: {exc}")
+        print()
+
+    # 4. Pretty-print full output for first classical text
+    print("=== Full NSP Output (Classical Chinese) ===")
+    result = call_analyze(classical_texts[0], base_url)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

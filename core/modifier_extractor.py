@@ -26,6 +26,8 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
         # Chinese degree modifiers
         "非常", "极其", "略微", "相当", "十分", "特别", "极为", "颇",
         "高度", "深度", "极度", "超", "最", "更", "较", "较为", "更为",
+        # Classical Chinese degree modifiers (古汉语程度副词)
+        "甚", "极", "至", "颇", "稍", "略", "微", "绝", "殊", "尤", "至为", "最为",
         # English degree modifiers
         "very", "extremely", "slightly", "quite", "rather", "highly",
         "deeply", "utterly", "totally", "completely", "absolutely",
@@ -35,6 +37,8 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
         # Chinese scope modifiers
         "主要", "部分", "全部", "几乎", "大部分", "少数", "所有", "一切",
         "整体", "局部", "广泛", "普遍",
+        # Classical Chinese scope modifiers (古汉语范围副词)
+        "悉", "皆", "俱", "咸", "尽", "毕", "总", "俱", "咸", "并", "俱",
         # English scope modifiers
         "mainly", "partially", "mostly", "entirely", "wholly",
         "generally", "widely", "universally", "largely",
@@ -42,6 +46,8 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
     "negation": frozenset({
         # Chinese negation
         "不", "未", "非", "无", "没", "没有", "并非", "不曾", "勿", "别",
+        # Classical Chinese negation (古汉语否定词)
+        "弗", "毋", "莫", "罔", "微", "未尝", "未始", "未能", "不曾",
         # English negation
         "not", "never", "no", "none", "neither", "nor", "n't",
     }),
@@ -49,6 +55,8 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
         # Chinese quantity approximations
         "约", "大约", "超过", "不足", "近", "将近", "左右", "上下",
         "多", "余", "以上", "以下", "约莫", "大概",
+        # Classical Chinese quantity approximations (古汉语数量近似)
+        "盖", "大抵", "略", "稍", "约", "几", "将", "且",
         # English quantity approximations
         "approximately", "about", "around", "over", "under", "below",
         "above", "roughly", "nearly", "almost", "exactly", "precisely",
@@ -58,6 +66,9 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
         "曾经", "目前", "将来", "一直", "仍然", "已经", "正在", "曾",
         "尚", "还", "仍", "已", "将", "即将", "曾经", "过去", "现在",
         "当前", "今后", "未来", "以前", "之前", "之后",
+        # Classical Chinese temporal modifiers (古汉语时态副词)
+        "尝", "曾", "已", "既", "方", "正", "将", "欲", "昔", "今", "后",
+        "向", "曩", "遽", "忽", "俄", "旋", "寻", "既而", "须臾",
         # English temporal modifiers
         "currently", "previously", "still", "already", "already",
         "formerly", "now", "presently", "recently", "soon", "later",
@@ -66,15 +77,24 @@ _BUILTIN_MODIFIER_DICT: dict[str, frozenset[str]] = {
     "comparison": frozenset({
         # Chinese comparison
         "比", "较", "较为", "更为", "相对", "相较于", "相比",
+        # Classical Chinese comparison (古汉语比较)
+        "逾", "过", "胜", "若", "如", "似", "堪比",
         # English comparison
         "compared", "versus", "vs", "relative", "relatively",
     }),
     "emphasis": frozenset({
         # Chinese emphasis
         "确实", "真的", "的确", "实在", "的确", "确", "确是",
+        # Classical Chinese emphasis (古汉语强调)
+        "诚", "信", "固", "本", "原", "实", "乃", "即", "即",
         # English emphasis
         "indeed", "actually", "really", "truly", "certainly",
         "definitely", "undoubtedly",
+    }),
+    # Classical Chinese interrogative (古汉语疑问词)
+    "interrogative": frozenset({
+        "何", "胡", "奚", "曷", "安", "焉", "孰", "盍", "讵", "岂",
+        "何故", "何以", "何如", "何若", "若何", "奈何",
     }),
 }
 

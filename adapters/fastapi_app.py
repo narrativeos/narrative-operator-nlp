@@ -513,13 +513,17 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
   <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
 </div>
 <!-- 古汉语 -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕。','classical')">
+  <span class="lang-tag classical">🏯 古汉语-判断句</span>
+  <span class="preview">陈胜者，阳城人也，字涉。吴广者，阳夏人也……</span>
+</div>
 <div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。','classical')">
   <span class="lang-tag classical">🏯 古汉语-指代</span>
-  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟……</span>
+  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。','classical')">
-  <span class="lang-tag classical">🏯 古汉语-指代</span>
-  <span class="preview">沛公军霸上，欲攻咸阳。项羽闻之，大怒，乃引兵击之。</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('见欺于王，何陋之有，不亦乐乎。孰与君少，非君子也。','classical')">
+  <span class="lang-tag classical">🏯 古汉语-句式</span>
+  <span class="preview">见欺于王，何陋之有，不亦乐乎。孰与君少……</span>
 </div>
 <!-- 英文 -->
 <div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. He later started Pixar, which became a major animation studio.','english')">

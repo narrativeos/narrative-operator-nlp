@@ -48,20 +48,31 @@ _CN_PERSON_PRONUN = {
 # Demonstrative + noun patterns (该/此/本 + N)
 _CN_DEMONSTRATIVE_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
 
-# Classical Chinese pronouns
+# Classical Chinese pronouns (古汉语代词)
+# Enhanced with case/role information for better resolution
 _CN_CLASSICAL_PRONUN = {
-    "之": {"person": "3rd"},
-    "其": {"person": "3rd"},
-    "彼": {"person": "3rd"},
-    "此": {"person": "3rd"},
-    "是": {"person": "3rd"},
-    "吾": {"person": "1st"},
-    "余": {"person": "1st"},
-    "我": {"person": "1st"},
-    "汝": {"person": "2nd"},
-    "尔": {"person": "2nd"},
-    "君": {"person": "2nd"},
-    "子": {"person": "2nd"},
+    # Third person (第三人称)
+    "之": {"person": "3rd", "case": "obj"},      # 宾语位置
+    "其": {"person": "3rd", "case": "gen"},      # 所有格/定语
+    "彼": {"person": "3rd", "case": "subj"},     # 主语位置
+    "此": {"person": "3rd", "case": "demonstrative"},  # 近指
+    "是": {"person": "3rd", "case": "demonstrative"},  # 近指
+    "斯": {"person": "3rd", "case": "demonstrative"},  # 近指
+    "厥": {"person": "3rd", "case": "demonstrative"},  # 远指
+    "彼": {"person": "3rd", "case": "demonstrative"},  # 远指
+    # First person (第一人称)
+    "吾": {"person": "1st", "case": "subj"},     # 主语位置
+    "余": {"person": "1st", "case": "subj"},     # 主语位置
+    "我": {"person": "1st", "case": "universal"}, # 通用
+    "予": {"person": "1st", "case": "obj"},      # 宾语位置
+    # Second person (第二人称)
+    "汝": {"person": "2nd", "case": "obj"},
+    "尔": {"person": "2nd", "case": "obj"},
+    "君": {"person": "2nd", "case": "subj"},
+    "子": {"person": "2nd", "case": "subj"},
+    "卿": {"person": "2nd", "case": "subj"},
+    "若": {"person": "2nd", "case": "obj"},
+    "而": {"person": "2nd", "case": "gen"},
 }
 
 # English pronouns

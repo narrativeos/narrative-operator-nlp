@@ -24,9 +24,14 @@ from typing import Optional
 
 
 # Negation words (sorted by length descending for longest-match-first)
+# Includes both modern Chinese and classical Chinese negation words
 _NEGATION_WORDS = [
-    "没有", "不曾", "未尝",
+    # Multi-char negation words (modern + classical)
+    "没有", "不曾", "未尝", "未始", "未能",
+    # Single-char negation words (modern + classical)
     "不", "没", "未", "非", "无", "勿", "别", "莫",
+    # Classical Chinese specific negation words
+    "弗", "毋", "罔", "微",
 ]
 
 # Build regex pattern: match any negation word
