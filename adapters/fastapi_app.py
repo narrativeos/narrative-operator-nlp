@@ -512,6 +512,10 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
   <span class="lang-tag">📄 现代-基础</span>
   <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
 </div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('在这届世界杯中日韩都踢得很出色。','modern')">
+  <span class="lang-tag">📄 现代-限定词+层级</span>
+  <span class="preview">在这届世界杯中日韩都踢得很出色。</span>
+</div>
 <!-- 古汉语 -->
 <div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕。','classical')">
   <span class="lang-tag classical">🏯 古汉语-判断句</span>
