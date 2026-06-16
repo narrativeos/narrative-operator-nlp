@@ -264,7 +264,13 @@ class EntityMerger:
                 continue
 
             # Merge: det child + entity → compound
-            all_idx = sorted([e_idx] + det_children)
+            # Include ALL tokens between the det and the entity head to avoid
+            # gaps (e.g., "这" + "届" + "世界杯" → "这届世界杯", not "这世界杯")
+            all_idx = sorted(set([e_idx] + det_children))
+            min_idx, max_idx = all_idx[0], all_idx[-1]
+            for ii in range(min_idx, max_idx + 1):
+                all_idx.append(ii)
+            all_idx = sorted(set(all_idx))
             merged_text = "".join(tokens[ii].text for ii in all_idx)
             merged_span = (
                 tokens[all_idx[0]].span[0],
