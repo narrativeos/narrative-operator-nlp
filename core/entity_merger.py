@@ -14,6 +14,7 @@ from typing import Optional
 import yaml
 
 from .schema import Entity, Token
+from .entity_id_generator import EntityIdGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -184,10 +185,24 @@ class EntityMerger:
         entities: list[Entity],
         tokens: list[Token],
         raw: dict | None,
+        id_generator: Optional[EntityIdGenerator] = None,
     ) -> list[Entity]:
-        """Merge determiners into their entity head (其+名→其名).
+        """Merge determiners into their entity head, creating compound entities.
+
+        Strategy:
+        - Keep the original entity (e.g., "世界杯") intact
+        - Create a NEW compound entity (e.g., "这届世界杯") with a new ID
+        - EntityHierarchyBuilder will then detect the containment relationship
+          and generate a PART_OF relation between them
 
         Uses dependency parse to find det→head relationships.
+
+        Args:
+            entities: List of entities to process.
+            tokens: Token list for text reconstruction.
+            raw: Raw NLP output containing dependency parse.
+            id_generator: Optional ID generator for new compound entities.
+                         If None, uses a simple counter-based fallback.
         """
         if not self._det_enabled:
             return entities
@@ -204,26 +219,10 @@ class EntityMerger:
                     ent_by_idx[i] = e
                     break
 
-        # Find det tokens
-        det_tokens: set[int] = set()
-        for i, t in enumerate(tokens):
-            if t.text in self._det_words:
-                # Check if this token has a det relationship to an entity
-                for d in dep:
-                    if not isinstance(d, (list, tuple)) or len(d) < 2:
-                        continue
-                    head_idx = int(d[0]) - 1  # 1-based to 0-based
-                    rel = str(d[1]).strip().lower()
-                    if i == head_idx - 1 and rel == "det":  # This token is the det
-                        # Find the head
-                        pass
-                    if int(d[0]) - 1 == i and rel == "det":
-                        # This token IS a det, find its head
-                        pass
-
         # Simpler approach: find det tokens that immediately precede entities
-        merged: list[Entity] = []
+        result: list[Entity] = []
         merged_indices: set[int] = set()
+        _fallback_counter = 0
 
         for i, e in enumerate(entities):
             # Find which token index this entity corresponds to
@@ -236,16 +235,7 @@ class EntityMerger:
             # If entity doesn't match a single token (multi-token entity),
             # keep it as-is without det merging
             if e_idx is None:
-                merged.append(Entity(
-                    id=e.id,
-                    text=e.text,
-                    category=e.category,
-                    span=e.span,
-                    normalized=e.normalized,
-                    source=e.source,
-                    confidence=e.confidence,
-                    attributes=list(e.attributes),
-                ))
+                result.append(e)
                 continue
 
             if e_idx in merged_indices:
@@ -260,12 +250,11 @@ class EntityMerger:
                     det_children.append(ci)
 
             if not det_children:
-                merged.append(e)
+                result.append(e)
                 continue
 
-            # Merge: det child + entity → compound
-            # Include ALL tokens between the det and the entity head to avoid
-            # gaps (e.g., "这" + "届" + "世界杯" → "这届世界杯", not "这世界杯")
+            # Build compound text: include ALL tokens between det and entity head
+            # (e.g., "这" + "届" + "世界杯" → "这届世界杯")
             all_idx = sorted(set([e_idx] + det_children))
             min_idx, max_idx = all_idx[0], all_idx[-1]
             for ii in range(min_idx, max_idx + 1):
@@ -276,8 +265,25 @@ class EntityMerger:
                 tokens[all_idx[0]].span[0],
                 tokens[all_idx[-1]].span[1],
             )
-            merged.append(Entity(
-                id=e.id,
+
+            # Keep the original entity intact (it's a sub-entity of the compound)
+            result.append(e)
+
+            # Generate a new ID for the compound entity
+            if id_generator is not None:
+                new_id = id_generator.generate(merged_text, merged_span, e.category)
+                if new_id is None:
+                    # Duplicate span already exists; skip compound creation
+                    merged_indices.add(e_idx)
+                    merged_indices.update(det_children)
+                    continue
+            else:
+                _fallback_counter += 1
+                new_id = f"ent_det_{_fallback_counter:03d}"
+
+            # Create a NEW compound entity with the expanded text
+            result.append(Entity(
+                id=new_id,
                 text=merged_text,
                 category=e.category,
                 span=merged_span,
@@ -286,7 +292,8 @@ class EntityMerger:
                 confidence=e.confidence,
                 attributes=list(e.attributes),
             ))
+
             merged_indices.add(e_idx)
             merged_indices.update(det_children)
 
-        return merged
+        return result

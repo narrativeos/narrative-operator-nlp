@@ -78,7 +78,9 @@ class HanlpSchemaMapper:
         raw_entities = self.entity_rules.merger.merge_same_category(raw_entities)
         raw_entities.sort(key=lambda e: e.span[0])
         raw_entities = self.entity_rules.merger.merge_cross_category(raw_entities)
-        raw_entities = self.entity_rules.merger.merge_det_entities(raw_entities, tokens, raw)
+        raw_entities = self.entity_rules.merger.merge_det_entities(
+            raw_entities, tokens, raw, self.entity_rules._id_gen,
+        )
         raw_entities = EntityDeduplicator.deduplicate(raw_entities)
 
         # ── Step 4: Normalize relations to merged entities ──

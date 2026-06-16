@@ -217,7 +217,7 @@ class EntityMappingRules:
         entities = self._merger.merge_cross_category(entities)
 
         if not has_ner and not has_srl:
-            entities = self._merger.merge_det_entities(entities, tokens, raw)
+            entities = self._merger.merge_det_entities(entities, tokens, raw, self._id_gen)
 
         entities = EntityDeduplicator.deduplicate(entities)
 
