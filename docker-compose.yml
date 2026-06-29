@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
     image: narrative-operator-nlp:latest
-    container_name: narrative-nlp
+    container_name: narrative-operator-nlp
     restart: unless-stopped
     env_file:
       - .env
