@@ -23,6 +23,9 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
 from pydantic import BaseModel, Field
 
 from core.analyzer import analyze
@@ -79,10 +82,40 @@ app = FastAPI(
     title="Narrative Operator NLP",
     description="NLP analysis operator for NarrativeOS — FastAPI dev/debug interface.",
     version="1.0.0",
-    docs_url="/docs",
+    docs_url=None,  # Disabled — using custom /docs with local Swagger UI assets
     redoc_url="/redoc",
     license_info={"name": "Apache 2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0"},
 )
+
+# Mount local Swagger UI static assets (offline-friendly, no CDN dependency)
+app.mount(
+    "/static/swagger-ui",
+    StaticFiles(directory=str(Path(__file__).resolve().parent.parent / "static" / "swagger-ui")),
+    name="swagger-ui-static",
+)
+
+
+# ---------------------------------------------------------------------------
+# Custom Swagger UI (offline, no CDN dependency)
+# ---------------------------------------------------------------------------
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui():
+    """Custom Swagger UI with local assets (no CDN dependency)."""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=app.title + " - Swagger UI",
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
+        oauth2_redirect_url="/docs/oauth2-redirect",
+        init_oauth=False,
+    )
+
+
+@app.get("/docs/oauth2-redirect", include_in_schema=False)
+async def custom_swagger_ui_oauth2_redirect():
+    """OAuth2 redirect page for Swagger UI."""
+    return get_swagger_ui_oauth2_redirect_html()
 
 
 # ---------------------------------------------------------------------------
@@ -1087,7 +1120,8 @@ function renderAPIDocs(){
     ];
     let html=`<div class="api-doc-intro">
       <p>Narrative Operator NLP 提供以下 REST API 端点，所有请求均通过 <code>HTTP POST</code> 或 <code>GET</code> 访问。
-      自动生成的 API 文档请访问 <a href="/docs" style="color:#58a6ff">Swagger UI</a> 或 <a href="/redoc" style="color:#58a6ff">ReDoc</a>。</p>
+      人类可读文档请访问 <a href="/docs" style="color:#58a6ff">Swagger UI</a>（支持在线测试）或 <a href="/redoc" style="color:#58a6ff">ReDoc</a>（三栏布局）。
+      智能体可程序化读取 <a href="/openapi.json" style="color:#58a6ff">OpenAPI JSON</a> 规范。</p>
     </div>`;
     endpoints.forEach((ep,i)=>{
         let fieldsHtml='';
