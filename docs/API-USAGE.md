@@ -251,15 +251,19 @@ AnalyzeRequest            AnalyzeResponse
                               │   ├── normalized: string
                               │   ├── source: string
                               │   └── confidence: float
-                              └── relations: Relation[]
-                                  ├── id: string
-                                  ├── subject: string
-                                  ├── predicate: string
-                                  ├── object: string
-                                  ├── evidence: string
-                                  ├── evidence_span: Span
-                                  ├── confidence: float
-                                  └── source: string
+                              ├── relations: Relation[]
+                              │   ├── id: string
+                              │   ├── subject: string
+                              │   ├── predicate: string
+                              │   ├── object: string
+                              │   ├── evidence: string
+                              │   ├── evidence_span: Span
+                              │   ├── confidence: float
+                              │   └── source: string
+                              └── deps: DependencyEdge[]
+                                  ├── child: int32    (child token index, 0-based)
+                                  ├── head: int32     (head token index, 0-based; -1 for ROOT)
+                                  └── rel: string     (dependency relation label)
 ```
 
 ---
@@ -273,9 +277,9 @@ python adapters/fastapi_app.py
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/health` | GET | `{"status":"ok"}` |
-| `/analyze` | POST | `{"text":"..."}` → NSP JSON |
+| `/analyze` | POST | `{"text":"..."}` → NSP JSON (含 tokens, entities, relations, **deps**) |
 | `/analyze/pretty` | POST | → HanLP `to_pretty()` 文本 |
-| `/analyze/dep` | POST | → `{tokens, deps}` SVG 数据 |
+| `/analyze/dep` | POST | → `{tokens, deps}` SVG 数据 (独立端点，也可通过 `/analyze` 获取) |
 | `/demo` | GET | 交互式可视化页面 |
 | `/docs` | GET | Swagger UI |
 

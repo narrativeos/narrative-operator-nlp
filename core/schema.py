@@ -465,11 +465,19 @@ class NarrativeDocument(BaseModel):
     content: NarrativeContent = Field(..., description="Analysis content")
 
 
+class DependencyEdge(BaseModel):
+    """A single dependency relation edge between two tokens."""
+    child: int = Field(..., ge=0, description="Child token index (0-based)")
+    head: int = Field(..., description="Head token index (0-based), -1 for ROOT")
+    rel: str = Field(..., description="Dependency relation label, e.g. nsubj, dobj")
+
+
 class NarrativeContent(BaseModel):
     """Content payload of a NarrativeDocument."""
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
     entities: list[Entity] = Field(default_factory=list, description="Unified entity list")
     relations: list[Relation] = Field(default_factory=list, description="Extracted relation triples")
+    deps: list[DependencyEdge] = Field(default_factory=list, description="Dependency syntax edges (UD)")
     patterns: list[SentencePattern] = Field(default_factory=list, description="Sentence-level structural patterns")
     coreferences: list[CoreferenceChain] = Field(
         default_factory=list,

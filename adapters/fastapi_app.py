@@ -638,19 +638,20 @@ async function analyze(){
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
-    const [r1,r2,r3,r4]=await Promise.all([
+    const [r1,r2,r3]=await Promise.all([
         post('/analyze',body),
         post('/analyze/pretty',body),
-        post('/analyze/dep',body),
         post('/analyze/discover',body)
     ]);
     if(r1._error) document.getElementById('nsp').innerHTML='<div class="error">分析失败: '+r1._error+'</div>';
     else renderNSP(r1);
     if(r2._error) document.getElementById('pretty').innerHTML='<div class="error">分析失败: '+r2._error+'</div>';
     else renderPretty(r2);
-    if(r3._error) document.getElementById('depsvg').innerHTML='<div class="error">分析失败: '+r3._error+'</div>';
-    else renderDepSVG(r3);    if(r4._error) document.getElementById('discover').innerHTML='<div class=\"error\">新词发现失败: '+r4._error+'</div>';
-    else renderDiscover(r4);    if(!r1._error) renderJSON(r1);
+    // depsvg: use deps from /analyze response (now includes deps field)
+    if(r1._error || !r1.content) document.getElementById('depsvg').innerHTML='<div class="error">分析失败</div>';
+    else renderDepSVG({tokens: r1.content.tokens, deps: r1.content.deps || []});
+    if(r3._error) document.getElementById('discover').innerHTML='<div class=\"error\">新词发现失败: '+r3._error+'</div>';
+    else renderDiscover(r3);    if(!r1._error) renderJSON(r1);
     const patData=r1.content&&r1.content.patterns;
     if(patData&&patData.length) renderPatterns(patData); else document.getElementById('patterns').innerHTML='<div class="card"><h3>📊 句式模式</h3><span style="color:#484f58">无模式数据</span></div>';
     renderLangDetect(r1);

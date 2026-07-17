@@ -32,6 +32,7 @@ All operator outputs MUST follow this top-level structure:
     "tokens": [],
     "entities": [],
     "relations": [],
+    "deps": [],
     "structural": {}
   }
 }
@@ -46,6 +47,7 @@ All operator outputs MUST follow this top-level structure:
 | `content.tokens` | Token[] | ✅ | Normalized token list |
 | `content.entities` | Entity[] | ✅ | Unified entity list (core) |
 | `content.relations` | Relation[] | ✅ | Dependency/SRL-derived logical chains (core) |
+| `content.deps` | DependencyEdge[] | ❌ | Dependency syntax edges (UD format) |
 | `content.structural` | object | ❌ | Raw analysis output (debug only) |
 
 ---
@@ -154,6 +156,41 @@ Extract simple triples from dependency parsing (`dep`) and semantic role labelin
 
 ---
 
+## Dependency Edge Schema
+
+Dependency syntax analysis results (Universal Dependencies format):
+
+```json
+{
+  "child": 0,
+  "head": 1,
+  "rel": "nsubj"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `child` | int | ✅ | Child token index (0-based) |
+| `head` | int | ✅ | Head token index (0-based), `-1` for ROOT |
+| `rel` | string | ✅ | Dependency relation label (e.g., `nsubj`, `dobj`, `root`, `nn`) |
+
+Common dependency relation types (Universal Dependencies):
+
+| Relation | Description | Example |
+|----------|-------------|---------|
+| `root` | Root of the sentence | ROOT → 是 |
+| `nsubj` | Nominal subject | 碳钢 → 是 |
+| `dobj` | Direct object | 是 → 钢 |
+| `nn` | Noun modifier | 碳 → 钢 |
+| `amod` | Adjectival modifier | 高强度 → 钢 |
+| `nummod` | Numeric modifier | 一 → 种 |
+| `attr` | Attribute | 钢 → 是 |
+| `punct` | Punctuation | 。 → 是 |
+| `advmod` | Adverbial modifier | 非常 → 好 |
+| `conj` | Conjunct | 生产 → 销售 |
+
+---
+
 ## Schema Mapper Flow
 
 ```
@@ -174,6 +211,11 @@ HanLP Raw Output
 ┌─────────────────┐
 │ Relation Mapper  │  dep + srl → NSP Relation[]
 │ (rule extraction)│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Dep Extractor   │  dep → NSP DependencyEdge[]
 └────────┬────────┘
          │
          ▼

@@ -14,7 +14,7 @@ from typing import Optional
 
 from .language_detector import detect_language, classical_confidence, LanguageClass
 from .mapper import HanlpSchemaMapper
-from .schema import CoreferenceChain, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
+from .schema import CoreferenceChain, DependencyEdge, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 from .coref_resolver import CorefResolver
 from .modifier_extractor import ModifierExtractor
 from .relation_classifier import RelationClassifier
@@ -151,7 +151,7 @@ def _analyze_modern(
     dict_combine: Optional[set] = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
-) -> tuple[list, list, list, list, bool]:
+) -> tuple[list, list, list, list, list, bool]:
     try:
         pipeline = _get_modern_pipeline()
         if dict_combine:
@@ -162,15 +162,16 @@ def _analyze_modern(
         raw = pipeline(text)
     except Exception as exc:
         logger.warning("Modern pipeline failed: %s", exc)
-        return [], [], [], [], False
+        return [], [], [], [], [], False
     doc = mapper.map(
         text, raw, source="hanlp_v2",
         entity_categories=entity_categories,
         auto_discover_entities=auto_discover_entities,
     )
     _apply_offset(doc, offset)
+    deps = _extract_deps(raw)
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, _assess_quality(doc.content.tokens, raw))
+            doc.content.patterns, deps, _assess_quality(doc.content.tokens, raw))
 
 
 def _analyze_classical(
@@ -181,7 +182,7 @@ def _analyze_classical(
     entity_dict: dict[str, str] | None = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
-) -> tuple[list, list, list, list, bool]:
+) -> tuple[list, list, list, list, list, bool]:
     try:
         pipeline = _get_classical_pipeline()
         if pipeline is None:
@@ -216,10 +217,10 @@ def _analyze_classical(
         raw = pipeline(text)
     except (AttributeError, ImportError, RuntimeError):
         logger.warning("Classical Chinese model not available. Skipping.")
-        return [], [], [], [], False
+        return [], [], [], [], [], False
     except Exception as exc:
         logger.warning("Classical pipeline failed: %s", exc)
-        return [], [], [], [], False
+        return [], [], [], [], [], False
     normalized = _normalize_lzh_keys(raw)
     doc = mapper.map(
         text, normalized, source="hanlp_lzh",
@@ -256,8 +257,9 @@ def _analyze_classical(
     except Exception as exc:
         logger.debug("Failed to fill entity evidence: %s", exc)
 
+    deps = _extract_deps(normalized)
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, _assess_quality(doc.content.tokens, normalized))
+            doc.content.patterns, deps, _assess_quality(doc.content.tokens, normalized))
 
 
 def _analyze_english(
@@ -266,7 +268,7 @@ def _analyze_english(
     mapper: HanlpSchemaMapper,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
-) -> tuple[list, list, list, list, bool]:
+) -> tuple[list, list, list, list, list, bool]:
     try:
         pipeline = _get_english_pipeline()
         if pipeline is None:
@@ -274,10 +276,10 @@ def _analyze_english(
         raw = pipeline(text)
     except (AttributeError, ImportError, RuntimeError):
         logger.warning("English model not available. Skipping.")
-        return [], [], [], [], False
+        return [], [], [], [], [], False
     except Exception as exc:
         logger.warning("English pipeline failed: %s", exc)
-        return [], [], [], [], False
+        return [], [], [], [], [], False
     # English model uses standard UD keys, map directly
     doc = mapper.map(
         text, raw, source="en_modernbert",
@@ -287,8 +289,22 @@ def _analyze_english(
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
         t.source = "en_modernbert"
+    deps = _extract_deps(raw)
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, _assess_quality(doc.content.tokens, raw))
+            doc.content.patterns, deps, _assess_quality(doc.content.tokens, raw))
+
+
+def _extract_deps(raw: dict) -> list[DependencyEdge]:
+    """Extract dependency edges from HanLP raw output (1-indexed to 0-indexed)."""
+    deps: list[DependencyEdge] = []
+    dep_data = raw.get("dep", [])
+    for i, d in enumerate(dep_data):
+        if not isinstance(d, (list, tuple)) or len(d) < 2:
+            continue
+        head_idx = int(d[0]) - 1  # HanLP is 1-indexed, convert to 0-indexed; 0 becomes -1 (ROOT)
+        rel = str(d[1])
+        deps.append(DependencyEdge(child=i, head=head_idx, rel=rel))
+    return deps
 
 
 def _apply_offset(doc: NarrativeDocument, offset: int):
@@ -561,10 +577,11 @@ def analyze(
             })
 
     # Process each segment
-    all_tokens, all_entities, all_relations, all_patterns = [], [], [], []
+    all_tokens, all_entities, all_relations, all_patterns, all_deps = [], [], [], [], []
+    token_offset = 0  # Global token index offset for dep remapping
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
-            tokens, entities, relations, patterns, ok = _analyze_classical(
+            tokens, entities, relations, patterns, deps, ok = _analyze_classical(
                 seg_text, seg_offset, mapper, dict_combine, entity_dict, entity_categories,
                 auto_discover_entities,
             )
@@ -573,8 +590,10 @@ def analyze(
                     "Classical segment not analyzed (model unavailable): %s...",
                     seg_text[:20],
                 )
+                token_offset += len(tokens)
+                continue
         elif lang == "english":
-            tokens, entities, relations, patterns, ok = _analyze_english(
+            tokens, entities, relations, patterns, deps, ok = _analyze_english(
                 seg_text, seg_offset, mapper, entity_categories,
                 auto_discover_entities,
             )
@@ -583,8 +602,10 @@ def analyze(
                     "English segment not analyzed (model unavailable): %s...",
                     seg_text[:20],
                 )
+                token_offset += len(tokens)
+                continue
         else:
-            tokens, entities, relations, patterns, ok = _analyze_modern(
+            tokens, entities, relations, patterns, deps, ok = _analyze_modern(
                 seg_text, seg_offset, mapper, dict_combine, entity_categories,
                 auto_discover_entities,
             )
@@ -593,10 +614,21 @@ def analyze(
                     "Modern segment not analyzed: %s...",
                     seg_text[:20],
                 )
+                token_offset += len(tokens)
+                continue
+
+        # Remap dep indices from segment-local to global
+        for dep in deps:
+            dep.child += token_offset
+            if dep.head >= 0:
+                dep.head += token_offset
+        all_deps.extend(deps)
+
         all_tokens.extend(tokens)
         all_entities.extend(entities)
         all_relations.extend(relations)
         all_patterns.extend(patterns)
+        token_offset += len(tokens)
 
     # Re-number token IDs globally, sorted by position
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
@@ -652,8 +684,8 @@ def analyze(
         ),
         content=NarrativeContent(
             tokens=all_tokens, entities=all_entities,
-            relations=all_relations, patterns=all_patterns,
-            coreferences=all_coreferences,
+            relations=all_relations, deps=all_deps,
+            patterns=all_patterns, coreferences=all_coreferences,
             sentences=sentence_objects, structural={},
         ),
     )

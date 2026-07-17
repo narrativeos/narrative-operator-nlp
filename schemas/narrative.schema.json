@@ -49,6 +49,11 @@
           "description": "Extracted relation triples",
           "items": { "$ref": "#/$defs/Relation" }
         },
+        "deps": {
+          "type": "array",
+          "description": "Dependency syntax edges (Universal Dependencies format)",
+          "items": { "$ref": "#/$defs/DependencyEdge" }
+        },
         "structural": {
           "type": "object",
           "description": "Raw NLP engine output (debug only)"
@@ -116,6 +121,26 @@
       "maxItems": 2,
       "items": { "type": "integer", "minimum": 0 },
       "description": "Character offset [start, end) in original text"
+    },
+    "DependencyEdge": {
+      "type": "object",
+      "required": ["child", "head", "rel"],
+      "properties": {
+        "child": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Child token index (0-based)"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Head token index (0-based), -1 for ROOT"
+        },
+        "rel": {
+          "type": "string",
+          "description": "Dependency relation label (e.g., nsubj, dobj, root, nn)"
+        }
+      }
     }
   }
 }
