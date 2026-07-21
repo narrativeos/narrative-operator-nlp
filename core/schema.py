@@ -472,11 +472,79 @@ class DependencyEdge(BaseModel):
     rel: str = Field(..., description="Dependency relation label, e.g. nsubj, dobj")
 
 
+# ---------------------------------------------------------------------------
+# Event Extraction
+# ---------------------------------------------------------------------------
+
+class EventArgument(BaseModel):
+    """An argument (participant) in an event.
+
+    Maps SRL roles to standard event argument roles:
+    - ARG0 → Agent (施事/主体)
+    - ARG1 → Patient (受事/客体)
+    - ARGM-TMP → Time (时间)
+    - ARGM-LOC → Location (地点)
+    - ARGM-MNR → Manner (方式)
+    - ARGM-CAU → Cause (原因)
+    - ARGM-PRD → Product (产物/结果)
+    - ARGM-BEN → Beneficiary (受益者)
+    - ARGM-REC → Recipient (接收者)
+    - ARGM-SRC → Source (来源)
+    - ARGM-ADJ → Adjunct (附加语)
+    - ARGM-DIR → Direction (方向)
+    - ARGM-PRP → Purpose (目的)
+    """
+    role: str = Field(..., min_length=1, description="Argument role, e.g. Agent, Patient, Time, Location")
+    text: str = Field(..., min_length=1, description="Argument surface text")
+    entity_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
+    span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+
+    @field_validator("span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+
+class Event(BaseModel):
+    """An event instance extracted from the text.
+
+    V3: Entity → Relation → Event pipeline:
+    1. Entity: NER identifies "who/what"
+    2. Relation: dependency syntax extracts subject-predicate-object triples
+    3. Event: relations with the same predicate_verb in the same sentence
+       are clustered into a single event instance
+
+    Traceability chain: Event.source_relation_ids → Relation.id
+                       Relation.subject_ent_id/object_ent_id → Entity.id
+    """
+    id: str = Field(..., pattern=r"^evt_\d+$", description="Unique event ID, e.g. evt_001")
+    event_type: str = Field(..., min_length=1, description="Event type (trigger verb itself, no fixed taxonomy)")
+    trigger: str = Field(..., min_length=1, description="Event trigger word")
+    trigger_span: tuple[int, int] = Field(..., description="Character offset of trigger [start, end)")
+    arguments: list[EventArgument] = Field(default_factory=list, description="Event arguments (participants)")
+    sentence_index: int = Field(default=-1, ge=-1, description="Index of the sentence this event belongs to (-1 if unknown)")
+    is_main_event: bool = Field(default=True, description="Whether this is the main event of the sentence (vs. sub-event)")
+    sub_events: list[str] = Field(default_factory=list, description="IDs of sub-events under this main event")
+    source_relation_ids: list[str] = Field(default_factory=list, description="Source relation IDs that form this event (traceability: Event ← Relation)")
+    confidence: float = Field(default=0.75, ge=0.0, le=1.0, description="Event confidence score [0, 1]")
+    source: str = Field(default="relation_cluster", description="Extraction source, e.g. relation_cluster, dep, srl")
+
+    @field_validator("trigger_span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"trigger_span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+
 class NarrativeContent(BaseModel):
     """Content payload of a NarrativeDocument."""
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
     entities: list[Entity] = Field(default_factory=list, description="Unified entity list")
     relations: list[Relation] = Field(default_factory=list, description="Extracted relation triples")
+    events: list[Event] = Field(default_factory=list, description="Extracted event instances from SRL frames")
     deps: list[DependencyEdge] = Field(default_factory=list, description="Dependency syntax edges (UD)")
     patterns: list[SentencePattern] = Field(default_factory=list, description="Sentence-level structural patterns")
     coreferences: list[CoreferenceChain] = Field(

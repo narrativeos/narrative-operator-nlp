@@ -46,6 +46,7 @@ message NarrativeContent {
   repeated Token tokens = 1;
   repeated Entity entities = 2;
   repeated Relation relations = 3;
+  repeated Event events = 5;
   // Raw NLP engine output (JSON string, for debugging).
   string structural_json = 4;
 }
@@ -95,4 +96,29 @@ message Relation {
   Span evidence_span = 8;     // Evidence offset
   float confidence = 9;       // [0, 1]
   string source = 10;         // Extraction source
+}
+
+// ---------------------------------------------------------------------------
+// Event
+// ---------------------------------------------------------------------------
+
+message EventArgument {
+  string role = 1;            // e.g. Agent, Patient, Time, Location
+  string text = 2;            // Argument surface text
+  string entity_id = 3;       // Linked entity ID (optional)
+  Span span = 4;              // Character offset
+}
+
+message Event {
+  string id = 1;              // e.g. "evt_001"
+  string event_type = 2;      // Derived from trigger verb (no fixed taxonomy)
+  string trigger = 3;         // Event trigger word
+  Span trigger_span = 4;      // Character offset of trigger
+  repeated EventArgument arguments = 5;  // Event arguments (participants)
+  int32 sentence_index = 6;   // Index of the sentence this event belongs to
+  bool is_main_event = 7;     // Whether this is the main event (vs. sub-event)
+  repeated string sub_events = 8;  // IDs of sub-events under this main event
+  repeated string source_relation_ids = 9;  // Source relation IDs (traceability: Event ← Relation)
+  float confidence = 10;       // [0, 1]
+  string source = 11;         // Extraction source, e.g. "relation_cluster"
 }

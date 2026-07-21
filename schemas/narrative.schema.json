@@ -49,6 +49,11 @@
           "description": "Extracted relation triples",
           "items": { "$ref": "#/$defs/Relation" }
         },
+        "events": {
+          "type": "array",
+          "description": "Extracted event instances from SRL frames",
+          "items": { "$ref": "#/$defs/Event" }
+        },
         "deps": {
           "type": "array",
           "description": "Dependency syntax edges (Universal Dependencies format)",
@@ -139,6 +144,80 @@
         "rel": {
           "type": "string",
           "description": "Dependency relation label (e.g., nsubj, dobj, root, nn)"
+        }
+      }
+    },
+    "EventArgument": {
+      "type": "object",
+      "required": ["role", "text", "span"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Argument role, e.g. Agent, Patient, Time, Location"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Argument surface text"
+        },
+        "entity_id": {
+          "type": "string",
+          "description": "Linked entity ID (optional)"
+        },
+        "span": { "$ref": "#/$defs/Span" }
+      }
+    },
+    "Event": {
+      "type": "object",
+      "required": ["id", "event_type", "trigger", "trigger_span"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^evt_\\d+$",
+          "description": "Unique event ID, e.g. evt_001"
+        },
+        "event_type": {
+          "type": "string",
+          "description": "Event type derived from trigger verb (no fixed taxonomy, e.g. '实现', '覆盖', '收获')"
+        },
+        "trigger": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Event trigger word"
+        },
+        "trigger_span": { "$ref": "#/$defs/Span" },
+        "arguments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EventArgument" }
+        },
+        "sentence_index": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Index of the sentence this event belongs to (-1 if unknown)"
+        },
+        "is_main_event": {
+          "type": "boolean",
+          "description": "Whether this is the main event of the sentence (vs. sub-event)"
+        },
+        "sub_events": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of sub-events under this main event"
+        },
+        "source_relation_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Source relation IDs that form this event (traceability: Event ← Relation)"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Event confidence score [0, 1]"
+        },
+        "source": {
+          "type": "string",
+          "description": "Extraction source, e.g. dep (dependency), srl"
         }
       }
     }

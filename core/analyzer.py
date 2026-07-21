@@ -14,12 +14,13 @@ from typing import Optional
 
 from .language_detector import detect_language, classical_confidence, LanguageClass
 from .mapper import HanlpSchemaMapper
-from .schema import CoreferenceChain, DependencyEdge, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
+from .schema import CoreferenceChain, DependencyEdge, Event, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 from .coref_resolver import CorefResolver
 from .modifier_extractor import ModifierExtractor
 from .relation_classifier import RelationClassifier
 from .entity_hierarchy import EntityHierarchyBuilder
 from .classical_pattern_extractor import ClassicalPatternExtractor
+from .event_extractor import EventExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,7 @@ def _analyze_modern(
     dict_combine: Optional[set] = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
-) -> tuple[list, list, list, list, list, bool]:
+) -> tuple[list, list, list, list, list, list, bool]:
     try:
         pipeline = _get_modern_pipeline()
         if dict_combine:
@@ -162,7 +163,7 @@ def _analyze_modern(
         raw = pipeline(text)
     except Exception as exc:
         logger.warning("Modern pipeline failed: %s", exc)
-        return [], [], [], [], [], False
+        return [], [], [], [], [], [], False
     doc = mapper.map(
         text, raw, source="hanlp_v2",
         entity_categories=entity_categories,
@@ -170,8 +171,9 @@ def _analyze_modern(
     )
     _apply_offset(doc, offset)
     deps = _extract_deps(raw)
+    srl_frames = _validate_srl_frames(raw.get("srl", []))
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, deps, _assess_quality(doc.content.tokens, raw))
+            doc.content.patterns, deps, srl_frames, _assess_quality(doc.content.tokens, raw))
 
 
 def _analyze_classical(
@@ -268,7 +270,12 @@ def _analyze_english(
     mapper: HanlpSchemaMapper,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
-) -> tuple[list, list, list, list, list, bool]:
+) -> tuple[list, list, list, list, list, list, bool]:
+    """Analyze English text.
+
+    Note: The English pipeline does not currently support SRL (Semantic Role Labeling),
+    so the returned srl_frames list is always empty.
+    """
     try:
         pipeline = _get_english_pipeline()
         if pipeline is None:
@@ -276,10 +283,10 @@ def _analyze_english(
         raw = pipeline(text)
     except (AttributeError, ImportError, RuntimeError):
         logger.warning("English model not available. Skipping.")
-        return [], [], [], [], [], False
+        return [], [], [], [], [], [], False
     except Exception as exc:
         logger.warning("English pipeline failed: %s", exc)
-        return [], [], [], [], [], False
+        return [], [], [], [], [], [], False
     # English model uses standard UD keys, map directly
     doc = mapper.map(
         text, raw, source="en_modernbert",
@@ -290,8 +297,9 @@ def _analyze_english(
     for t in doc.content.tokens:
         t.source = "en_modernbert"
     deps = _extract_deps(raw)
+    # English pipeline: SRL not extracted (empty list)
     return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, deps, _assess_quality(doc.content.tokens, raw))
+            doc.content.patterns, deps, [], _assess_quality(doc.content.tokens, raw))
 
 
 def _extract_deps(raw: dict) -> list[DependencyEdge]:
@@ -305,6 +313,53 @@ def _extract_deps(raw: dict) -> list[DependencyEdge]:
         rel = str(d[1])
         deps.append(DependencyEdge(child=i, head=head_idx, rel=rel))
     return deps
+
+
+def _validate_srl_frames(srl_data: list) -> list:
+    """Validate and sanitize SRL frames from HanLP output.
+
+    Expected format: list of frames, each frame is a list of tuples:
+        [(text, role, tok_start, tok_end), ...]
+
+    Filters out frames that:
+    - Are not lists
+    - Don't have at least 2 items
+    - Contain items that aren't tuples/lists of length >= 4
+
+    Returns a clean list of valid frames.
+    """
+    if not isinstance(srl_data, list):
+        logger.debug("SRL data is not a list, skipping SRL enrichment")
+        return []
+
+    valid_frames = []
+    for frame in srl_data:
+        if not isinstance(frame, list) or len(frame) < 2:
+            continue
+        # Validate each item in the frame
+        valid_items = []
+        for item in frame:
+            if not isinstance(item, (list, tuple)) or len(item) < 4:
+                continue
+            try:
+                # Validate that positions are numeric
+                text = str(item[0])
+                role = str(item[1])
+                tok_start = int(item[2])
+                tok_end = int(item[3])
+                valid_items.append((text, role, tok_start, tok_end))
+            except (ValueError, TypeError):
+                continue
+        if valid_items:
+            valid_frames.append(valid_items)
+
+    if len(valid_frames) != len(srl_data):
+        logger.debug(
+            "SRL frames sanitized: %d original → %d valid",
+            len(srl_data), len(valid_frames),
+        )
+
+    return valid_frames
 
 
 def _apply_offset(doc: NarrativeDocument, offset: int):
@@ -577,7 +632,7 @@ def analyze(
             })
 
     # Process each segment
-    all_tokens, all_entities, all_relations, all_patterns, all_deps = [], [], [], [], []
+    all_tokens, all_entities, all_relations, all_patterns, all_deps, all_srl = [], [], [], [], [], []
     token_offset = 0  # Global token index offset for dep remapping
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
@@ -592,8 +647,10 @@ def analyze(
                 )
                 token_offset += len(tokens)
                 continue
+            # Classical pipeline has no SRL
+            seg_srl: list = []
         elif lang == "english":
-            tokens, entities, relations, patterns, deps, ok = _analyze_english(
+            tokens, entities, relations, patterns, deps, seg_srl, ok = _analyze_english(
                 seg_text, seg_offset, mapper, entity_categories,
                 auto_discover_entities,
             )
@@ -604,8 +661,9 @@ def analyze(
                 )
                 token_offset += len(tokens)
                 continue
+            # Note: seg_srl from English pipeline is always empty (SRL not yet supported)
         else:
-            tokens, entities, relations, patterns, deps, ok = _analyze_modern(
+            tokens, entities, relations, patterns, deps, seg_srl, ok = _analyze_modern(
                 seg_text, seg_offset, mapper, dict_combine, entity_categories,
                 auto_discover_entities,
             )
@@ -628,11 +686,26 @@ def analyze(
         all_entities.extend(entities)
         all_relations.extend(relations)
         all_patterns.extend(patterns)
+        all_srl.extend(seg_srl)
         token_offset += len(tokens)
 
     # Re-number token IDs globally, sorted by position
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
         t.id = i
+
+    # Event Extraction from Relation clustering (V3)
+    # Entity → Relation → Event pipeline:
+    # Groups relations by (sentence, predicate_verb) to form events,
+    # enriched by SRL frames for richer argument roles.
+    event_extractor = EventExtractor()
+    sentence_objects = [SentenceLanguage(**s) for s in language_sentences]
+    all_events = event_extractor.extract(
+        text, all_relations, all_entities,
+        sentence_objects, all_patterns,
+        srl_frames=all_srl,
+        deps=all_deps,
+        tokens=all_tokens,
+    )
 
     # Classical Chinese pattern extraction (post-processing)
     # Extract relations using regex patterns for classical Chinese sentence structures
@@ -674,8 +747,6 @@ def analyze(
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
-    sentence_objects = [SentenceLanguage(**s) for s in language_sentences]
-
     return NarrativeDocument(
         meta=NarrativeMeta(
             source=meta_source,
@@ -684,8 +755,9 @@ def analyze(
         ),
         content=NarrativeContent(
             tokens=all_tokens, entities=all_entities,
-            relations=all_relations, deps=all_deps,
-            patterns=all_patterns, coreferences=all_coreferences,
+            relations=all_relations, events=all_events,
+            deps=all_deps, patterns=all_patterns,
+            coreferences=all_coreferences,
             sentences=sentence_objects, structural={},
         ),
     )

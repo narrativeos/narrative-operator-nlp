@@ -518,6 +518,12 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 .sample-card .lang-tag.classical{background:#3a2a1a;color:#e3b341}
 .sample-card .lang-tag.english{background:#1a1a3a;color:#79c0ff}
 .sample-card .preview{color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Event Table Styles */
+.event-table{width:100%;border-collapse:collapse;font-size:12px}
+.event-table th{text-align:left;padding:6px 8px;color:#8b949e;border-bottom:1px solid #30363d;font-weight:normal;font-size:11px}
+.event-table td{padding:6px 8px;border-bottom:1px solid #21262d;vertical-align:middle}
+.event-table .event-row:hover{background:#1a2030}
+.event-table .event-toggle:hover{color:#79c0ff}
 </style>
 </head>
 <body>
@@ -751,6 +757,92 @@ function renderNSP(data){
 
     const entities = renderEntityHierarchy();
 
+    // Events rendering — table with collapsible sub-events
+    const events = c.events && c.events.length
+        ? (() => {
+            // Separate main events and sub-events
+            const mainEvents = c.events.filter(ev => ev.is_main_event);
+            const subEventMap = {};
+            c.events.filter(ev => !ev.is_main_event).forEach(sub => {
+                for (const main of mainEvents) {
+                    if (main.sub_events && main.sub_events.includes(sub.id)) {
+                        if (!subEventMap[main.id]) subEventMap[main.id] = [];
+                        subEventMap[main.id].push(sub);
+                    }
+                }
+            });
+
+            // Build args HTML for an event
+            const buildArgs = (ev) => {
+                const agent = (ev.arguments || []).find(a => a.role === 'Agent');
+                const patient = (ev.arguments || []).find(a => ['Patient','Result','Product'].includes(a.role));
+                const time = (ev.arguments || []).find(a => a.role === 'Time');
+                const location = (ev.arguments || []).find(a => a.role === 'Location');
+                const others = (ev.arguments || []).filter(a =>
+                    a.role !== 'Agent' && !['Patient','Result','Product'].includes(a.role)
+                    && a.role !== 'Time' && a.role !== 'Location'
+                );
+                const argTag = (a) => a
+                    ? `<span class="tag" style="background:#e3b341;color:#0d1117">${esc(a.role)}: ${esc(a.text)}</span>`
+                    : '<span style="color:#484f58">-</span>';
+                const othersHtml = others.map(a =>
+                    `<span class="tag" style="background:#30363d;color:#8b949e">${esc(a.role)}: ${esc(a.text)}</span>`
+                ).join(' ') || '<span style="color:#484f58">-</span>';
+                return { agent: argTag(agent), patient: argTag(patient), time: argTag(time), location: argTag(location), othersHtml };
+            };
+
+            const rowHtml = (ev, isSub) => {
+                const rowStyle = isSub ? 'style="background:#161b22;display:none"' : '';
+                const firstCellStyle = isSub ? 'style="padding-left:24px"' : '';
+                const arrow = ev.sub_events && ev.sub_events.length > 0
+                    ? `<span class="event-toggle" onclick="toggleEventRow(this, '${ev.id}')" style="cursor:pointer;color:#58a6ff;margin-right:4px;user-select:none">▶</span>`
+                    : (isSub ? '<span style="margin-right:14px;color:#484f58">└ </span>' : '<span style="margin-right:14px"></span>');
+                const mainBadge = ev.is_main_event && !isSub ? '<span class="tag" style="background:#1a3a5c;color:#58a6ff;margin-right:4px">主</span>' : '';
+                const subBadge = isSub ? '<span class="tag" style="background:#30363d;color:#8b949e;margin-right:4px">子</span>' : '';
+                const args = buildArgs(ev);
+
+                return `<tr ${rowStyle} class="event-row" data-event-id="${ev.id}" ${isSub ? '' : `data-main-event="${ev.id}"`}><td ${firstCellStyle}>${arrow}${mainBadge}${subBadge}<span class="cat" style="background:#58a6ff">${esc(ev.event_type)}</span></td>
+                    <td><span style="color:#7ee787;font-weight:600">${esc(ev.trigger)}</span></td>
+                    <td><small style="color:#484f58">[${ev.trigger_span[0]}:${ev.trigger_span[1]}]</small></td>
+                    <td>${args.agent}</td>
+                    <td>${args.patient}</td>
+                    <td>${args.time}</td>
+                    <td>${args.location}</td>
+                    <td style="font-size:11px">${args.othersHtml}</td>
+                    <td><small style="color:#7ee787">${Math.round(ev.confidence*100)}%</small></td>
+                    <td><small style="color:#484f58">${esc(ev.source)}</small></td>
+                </tr>`;
+            };
+
+            let html = `<table class="event-table">
+                <thead><tr>
+                    <th>类型</th><th>触发词</th><th>位置</th>
+                    <th>Agent</th><th>Patient/Result</th><th>Time</th><th>Location</th>
+                    <th>其他参数</th><th>置信度</th><th>来源</th>
+                </tr></thead><tbody>`;
+
+            // If all events are main events (no sub-events), just render them all
+            if (mainEvents.length === 0) {
+                c.events.forEach(ev => { html += rowHtml(ev, false); });
+            } else {
+                mainEvents.forEach(ev => {
+                    html += rowHtml(ev, false);
+                    const subs = subEventMap[ev.id] || [];
+                    subs.forEach(sub => {
+                        html += rowHtml(sub, true);
+                    });
+                });
+                // Orphan sub-events (not linked to any main event)
+                c.events.filter(ev =>
+                    !ev.is_main_event && !mainEvents.some(m => m.sub_events && m.sub_events.includes(ev.id))
+                ).forEach(ev => { html += rowHtml(ev, false); });
+            }
+
+            html += '</tbody></table>';
+            return html;
+        })()
+        : '<span style="color:#484f58">未提取到事件（此文本暂不支持事件分析，或无明显的动作型关系三元组）</span>';
+
     const relations=c.relations.map(r=>{
         const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<br><small style="color:#484f58">raw: ${esc(r.subject_raw)}</small>` : '';
         const objRaw = r.object_raw && r.object_raw !== r.object ? `<br><small style="color:#484f58">raw: ${esc(r.object_raw)}</small>` : '';
@@ -786,13 +878,15 @@ function renderNSP(data){
     <div class="stat"><b>${c.tokens.length}</b> tokens</div>
     <div class="stat"><b>${c.entities.length}</b> entities</div>
     <div class="stat"><b>${c.relations.length}</b> relations</div>
+    <div class="stat"><b>${(c.events||[]).length}</b> events</div>
     <div class="stat">source: <b>${data.meta.source}</b></div>
     ${langStats}
     </div>
     ${newWordsHtml}
     <div class="card"><h3>📝 分词 & POS <span style="font-size:11px;color:#484f58">●蓝=现代 · ●黄=古汉语 · ●浅蓝=英文</span></h3><div style="line-height:2">${tokens}</div></div>
     <div class="card"><h3>🏷️ 实体 Entities</h3><div>${entities}</div></div>
-    <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>`;
+    <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>
+    <div class="card"><h3>⚡ 事件 Events <small style="color:#484f58;font-weight:normal">(从 SRL 语义角色标注派生)</small></h3><div>${events}</div></div>`;
 }
 
 function renderPretty(data){
@@ -1158,6 +1252,34 @@ window.toggleEndpoint=function(i){
     const expand=body.parentElement.querySelector('.expand');
     expand.textContent=body.classList.contains('open')?'▲':'▼';
 }
+
+// Toggle sub-event rows under a main event
+// Sub-events are rendered immediately after their parent main event row,
+// and are identified by NOT having data-main-event attribute.
+window.toggleEventRow=function(el, eventId){
+    const mainRow = document.querySelector(`tr.event-row[data-event-id="${eventId}"]`);
+    if (!mainRow) return;
+    
+    // Collect consecutive sibling rows that are sub-events (no data-main-event attribute)
+    let next = mainRow.nextElementSibling;
+    const subRows = [];
+    while (next && next.classList.contains('event-row') && !next.hasAttribute('data-main-event')) {
+        subRows.push(next);
+        next = next.nextElementSibling;
+    }
+    
+    if (subRows.length === 0) return;
+    
+    // Determine current visibility from the first sub-row
+    const isCurrentlyVisible = subRows[0].style.display !== 'none';
+    
+    subRows.forEach(row => {
+        row.style.display = isCurrentlyVisible ? 'none' : '';
+    });
+    
+    // Toggle arrow direction
+    el.textContent = isCurrentlyVisible ? '▶' : '▼';
+};
 
 function escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 const esc=escapeHtml;
