@@ -107,6 +107,13 @@ message EventArgument {
   string text = 2;            // Argument surface text
   string entity_id = 3;       // Linked entity ID (optional)
   Span span = 4;              // Character offset
+  // Syntactic dimensions (Step 4)
+  string syntactic_role = 5;  // Subject, Object, Adverbial, Attributive
+  string governing_verb = 6;  // First V-head ancestor in dependency tree
+  Span token_span = 7;       // Token index range [start, end)
+  // Spatial dimensions (Step 4b)
+  string spatial_role = 8;       // CONTAINER, TARGET, ORIGIN, PATH, ACTOR, MODIFIER, STATIC
+  string verb_spatial_class = 9; // MOVE_TO, MOVE_FROM, MOVE_ALONG, STATIC_EXIST, STATIC_ACTION, VIEW, NONE
 }
 
 message Event {

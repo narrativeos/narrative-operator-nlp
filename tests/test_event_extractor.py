@@ -697,6 +697,360 @@ def test_dep_only_extraction():
     print("  PASS: dependency-driven event extraction works (引发 case)\n")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Spatial Role & Verb Spatial Class Tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _make_arg(text, role, span):
+    """Helper: create an EventArgument with minimal required fields."""
+    return EventArgument(role=role, text=text, span=span)
+
+
+def _make_event(trigger, args, sent_idx=0):
+    """Helper: create an Event with given trigger and arguments."""
+    return Event(
+        id="evt_001",
+        event_type=trigger,
+        trigger=trigger,
+        trigger_span=(0, len(trigger)),
+        arguments=args,
+        sentence_index=sent_idx,
+        is_main_event=True,
+        sub_events=[],
+        source_relation_ids=["rel_001"],
+        confidence=0.75,
+        source="relation_cluster",
+    )
+
+
+def test_spatial_lobj_loc_container():
+    """lobj/loc dep → CONTAINER spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "停在河边" → 边/LC has lobj dep to 在/P
+    tokens = [
+        Token(id=0, text="停", pos="VV", span=(0, 1)),
+        Token(id=1, text="在", pos="P", span=(1, 2)),
+        Token(id=2, text="河", pos="NN", span=(2, 3)),
+        Token(id=3, text="边", pos="LC", span=(3, 4)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=-1, rel="root"),      # 停 → root
+        DependencyEdge(child=1, head=0, rel="prep"),       # 在 → prep → 停
+        DependencyEdge(child=2, head=3, rel="nn"),         # 河 → nn → 边
+        DependencyEdge(child=3, head=1, rel="lobj"),       # 边 → lobj → 在
+    ]
+
+    # arg span exactly matches token 3 ("边"), which has lobj→在
+    arg = _make_arg("边", "Location", (3, 4))
+    evt = _make_event("停", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "CONTAINER", f"Expected CONTAINER, got {arg.spatial_role}"
+    assert arg.governing_verb == "停"
+    print(f"  lobj → CONTAINER: governing_verb={arg.governing_verb}, spatial_role={arg.spatial_role}")
+    print("  PASS: lobj/loc → CONTAINER\n")
+
+
+def test_spatial_dobj_move_to_target():
+    """dobj + MOVE_TO verb → TARGET spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "前往北京"
+    tokens = [
+        Token(id=0, text="前往", pos="VV", span=(0, 2)),
+        Token(id=1, text="北京", pos="NR", span=(2, 4)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=-1, rel="root"),    # 前往 → root
+        DependencyEdge(child=1, head=0, rel="dobj"),     # 北京 → dobj → 前往
+    ]
+
+    arg = _make_arg("北京", "Destination", (2, 4))
+    evt = _make_event("前往", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "TARGET", f"Expected TARGET, got {arg.spatial_role}"
+    assert arg.verb_spatial_class == "MOVE_TO"
+    print(f"  dobj+MOVE_TO → TARGET: verb={arg.governing_verb}, vclass={arg.verb_spatial_class}, srole={arg.spatial_role}")
+    print("  PASS: dobj + MOVE_TO → TARGET\n")
+
+
+def test_spatial_dobj_move_from_origin():
+    """dobj + MOVE_FROM verb → ORIGIN spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "离开北京"
+    tokens = [
+        Token(id=0, text="离开", pos="VV", span=(0, 2)),
+        Token(id=1, text="北京", pos="NR", span=(2, 4)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=-1, rel="root"),    # 离开 → root
+        DependencyEdge(child=1, head=0, rel="dobj"),     # 北京 → dobj → 离开
+    ]
+
+    arg = _make_arg("北京", "Origin", (2, 4))
+    evt = _make_event("离开", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "ORIGIN", f"Expected ORIGIN, got {arg.spatial_role}"
+    assert arg.verb_spatial_class == "MOVE_FROM"
+    print(f"  dobj+MOVE_FROM → ORIGIN: verb={arg.governing_verb}, vclass={arg.verb_spatial_class}, srole={arg.spatial_role}")
+    print("  PASS: dobj + MOVE_FROM → ORIGIN\n")
+
+
+def test_spatial_pobj_origin():
+    """pobj + 从 preposition → ORIGIN spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "从山东出发"
+    tokens = [
+        Token(id=0, text="从", pos="P", span=(0, 1)),
+        Token(id=1, text="山东", pos="NR", span=(1, 3)),
+        Token(id=2, text="出发", pos="VV", span=(3, 5)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=2, rel="advmod"),   # 从 → advmod → 出发
+        DependencyEdge(child=1, head=0, rel="pobj"),     # 山东 → pobj → 从
+        DependencyEdge(child=2, head=-1, rel="root"),    # 出发 → root
+    ]
+
+    arg = _make_arg("山东", "Origin", (1, 3))
+    evt = _make_event("出发", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "ORIGIN", f"Expected ORIGIN, got {arg.spatial_role}"
+    assert arg.governing_verb == "出发"
+    assert arg.verb_spatial_class == "MOVE_FROM"
+    print(f"  pobj+从 → ORIGIN: gov={arg.governing_verb}, vclass={arg.verb_spatial_class}, srole={arg.spatial_role}")
+    print("  PASS: pobj + 从 → ORIGIN\n")
+
+
+def test_spatial_pobj_path():
+    """pobj + 沿 preposition → PATH spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "沿运河南下"
+    tokens = [
+        Token(id=0, text="沿", pos="P", span=(0, 1)),
+        Token(id=1, text="运河", pos="NN", span=(1, 3)),
+        Token(id=2, text="南下", pos="VV", span=(3, 5)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=2, rel="advmod"),   # 沿 → advmod → 南下
+        DependencyEdge(child=1, head=0, rel="pobj"),     # 运河 → pobj → 沿
+        DependencyEdge(child=2, head=-1, rel="root"),    # 南下 → root
+    ]
+
+    arg = _make_arg("运河", "Path", (1, 3))
+    evt = _make_event("南下", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "PATH", f"Expected PATH, got {arg.spatial_role}"
+    print(f"  pobj+沿 → PATH: gov={arg.governing_verb}, srole={arg.spatial_role}")
+    print("  PASS: pobj + 沿 → PATH\n")
+
+
+def test_spatial_nsubj_actor():
+    """nsubj dep → ACTOR spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "故宫举行了典礼"
+    tokens = [
+        Token(id=0, text="故宫", pos="NR", span=(0, 2)),
+        Token(id=1, text="举行", pos="VV", span=(2, 4)),
+        Token(id=2, text="了", pos="AS", span=(4, 5)),
+        Token(id=3, text="典礼", pos="NN", span=(5, 7)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=1, rel="nsubj"),    # 故宫 → nsubj → 举行
+        DependencyEdge(child=1, head=-1, rel="root"),    # 举行 → root
+        DependencyEdge(child=2, head=1, rel="dep"),      # 了 → dep → 举行
+        DependencyEdge(child=3, head=1, rel="dobj"),     # 典礼 → dobj → 举行
+    ]
+
+    arg_agent = _make_arg("故宫", "Agent", (0, 2))
+    arg_patient = _make_arg("典礼", "Patient", (5, 7))
+    evt = _make_event("举行", [arg_agent, arg_patient])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg_agent.spatial_role == "ACTOR", f"Expected ACTOR, got {arg_agent.spatial_role}"
+    assert arg_agent.syntactic_role == "Subject"
+    assert arg_agent.verb_spatial_class == "STATIC_ACTION"
+    # The patient (dobj) should NOT be TARGET since 举行 is STATIC_ACTION
+    assert arg_patient.spatial_role == "STATIC", f"Expected STATIC for dobj+STATIC_ACTION, got {arg_patient.spatial_role}"
+    print(f"  nsubj → ACTOR: vclass={arg_agent.verb_spatial_class}")
+    print(f"  dobj+STATIC_ACTION → STATIC (not TARGET): {arg_patient.spatial_role}")
+    print("  PASS: nsubj → ACTOR, dobj+non-move → STATIC\n")
+
+
+def test_spatial_nn_amod_modifier():
+    """nn/amod dep → MODIFIER spatial_role."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "江南丝绸畅销" → 江南/NR → nn → 丝绸/NN
+    tokens = [
+        Token(id=0, text="江南", pos="NR", span=(0, 2)),
+        Token(id=1, text="丝绸", pos="NN", span=(2, 4)),
+        Token(id=2, text="畅销", pos="VV", span=(4, 6)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=1, rel="nn"),       # 江南 → nn → 丝绸
+        DependencyEdge(child=1, head=2, rel="nsubj"),    # 丝绸 → nsubj → 畅销
+        DependencyEdge(child=2, head=-1, rel="root"),    # 畅销 → root
+    ]
+
+    arg = _make_arg("江南", "Modifier", (0, 2))
+    evt = _make_event("畅销", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    assert arg.spatial_role == "MODIFIER", f"Expected MODIFIER, got {arg.spatial_role}"
+    assert arg.syntactic_role == "Attributive"
+    print(f"  nn → MODIFIER: syn_role={arg.syntactic_role}, srole={arg.spatial_role}")
+    print("  PASS: nn/amod → MODIFIER\n")
+
+
+def test_spatial_role_default_static():
+    """No matching dep → STATIC (default)."""
+    from core.schema import DependencyEdge, Token
+
+    # Sentence: "结果显著" — "结果" dep is nsubj but we'll test an arg with no dep
+    tokens = [
+        Token(id=0, text="结果", pos="NN", span=(0, 2)),
+        Token(id=1, text="显著", pos="VA", span=(2, 4)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=1, rel="nsubj"),    # 结果 → nsubj → 显著
+        DependencyEdge(child=1, head=-1, rel="root"),    # 显著 → root
+    ]
+
+    # This argument has a span that doesn't overlap any token → no token match
+    arg = _make_arg("未知", "Unknown", (10, 12))  # span outside token range
+    evt = _make_event("显著", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    # No token match → verb_spatial_class = NONE, spatial_role stays None
+    assert arg.verb_spatial_class == "NONE", f"Expected NONE, got {arg.verb_spatial_class}"
+    # spatial_role is not set when no token found (no dep to infer from)
+    assert arg.spatial_role is None, f"Expected None (no token), got {arg.spatial_role}"
+    print(f"  no-token-match: spatial_role={arg.spatial_role}, verb_spatial_class={arg.verb_spatial_class}")
+    print("  PASS: no token → verb_spatial_class=NONE, spatial_role=None\n")
+
+
+def test_spatial_dobj_no_governing_verb():
+    """dobj with no governing_verb → STATIC (no movement inference)."""
+    from core.schema import DependencyEdge, Token
+
+    # Tokens without any V-pos ancestor reachable from the argument
+    tokens = [
+        Token(id=0, text="北京", pos="NR", span=(0, 2)),
+        Token(id=1, text="的", pos="DEG", span=(2, 3)),
+        Token(id=2, text="风景", pos="NN", span=(3, 5)),
+    ]
+    deps = [
+        DependencyEdge(child=0, head=2, rel="nn"),       # 北京 → nn → 风景
+        DependencyEdge(child=1, head=0, rel="dep"),      # 的 → dep → 北京
+        DependencyEdge(child=2, head=-1, rel="root"),    # 风景 → root
+    ]
+
+    arg = _make_arg("北京", "Modifier", (0, 2))
+    evt = _make_event("风景", [arg])
+
+    extractor = EventExtractor()
+    extractor._assign_syntactic_roles([evt], deps, tokens)
+    extractor._assign_spatial_roles([evt], deps, tokens)
+
+    # 风景 is NN not V, so no governing_verb → _assign_syntactic_roles won't set it
+    assert arg.governing_verb is None, f"Expected no governing_verb, got {arg.governing_verb}"
+    assert arg.verb_spatial_class == "NONE"
+    assert arg.spatial_role == "MODIFIER", f"Expected MODIFIER (nn dep), got {arg.spatial_role}"
+    print(f"  nn+no-verb: spatial_role={arg.spatial_role}, verb_spatial_class={arg.verb_spatial_class}")
+    print("  PASS: nn → MODIFIER with verb_spatial_class=NONE\n")
+
+
+def test_verb_spatial_class_sampling():
+    """Spot-check verb_spatial_class mapping for key verbs."""
+    from core.event_extractor import _SPATIAL_VERB_CLASSES
+
+    # MOVE_TO samples
+    assert _SPATIAL_VERB_CLASSES.get("赴") == "MOVE_TO"
+    assert _SPATIAL_VERB_CLASSES.get("到达") == "MOVE_TO"
+    assert _SPATIAL_VERB_CLASSES.get("进入") == "MOVE_TO"
+
+    # MOVE_FROM samples
+    assert _SPATIAL_VERB_CLASSES.get("撤离") == "MOVE_FROM"
+    assert _SPATIAL_VERB_CLASSES.get("辞别") == "MOVE_FROM"
+
+    # MOVE_ALONG samples
+    assert _SPATIAL_VERB_CLASSES.get("循") == "MOVE_ALONG"
+    assert _SPATIAL_VERB_CLASSES.get("绕行") == "MOVE_ALONG"
+
+    # STATIC_EXIST samples
+    assert _SPATIAL_VERB_CLASSES.get("坐落") == "STATIC_EXIST"
+    assert _SPATIAL_VERB_CLASSES.get("位于") == "STATIC_EXIST"
+
+    # STATIC_ACTION samples
+    assert _SPATIAL_VERB_CLASSES.get("建造") == "STATIC_ACTION"
+    assert _SPATIAL_VERB_CLASSES.get("举办") == "STATIC_ACTION"
+
+    # VIEW samples
+    assert _SPATIAL_VERB_CLASSES.get("俯瞰") == "VIEW"
+    assert _SPATIAL_VERB_CLASSES.get("鸟瞰") == "VIEW"
+
+    # Unknown verb → KeyError (not in map)
+    assert "不知所云" not in _SPATIAL_VERB_CLASSES
+
+    print(f"  Total verb entries: {len(_SPATIAL_VERB_CLASSES)}")
+    print("  PASS: verb_spatial_class mapping spot-check\n")
+
+
+def test_preposition_sets():
+    """Verify preposition frozensets are correct."""
+    from core.event_extractor import _PREP_ORIGIN, _PREP_PATH
+
+    assert "从" in _PREP_ORIGIN
+    assert "自" in _PREP_ORIGIN
+    assert "由" in _PREP_ORIGIN
+    assert "源于" in _PREP_ORIGIN
+
+    assert "沿" in _PREP_PATH
+    assert "顺" in _PREP_PATH
+    assert "绕" in _PREP_PATH
+    assert "环绕" in _PREP_PATH
+
+    # Cross-contamination check
+    assert "从" not in _PREP_PATH
+    assert "沿" not in _PREP_ORIGIN
+
+    print("  PASS: preposition frozensets correct\n")
+
+
 if __name__ == '__main__':
     print("=== EventExtractor V4 Tests ===\n")
 
@@ -726,5 +1080,18 @@ if __name__ == '__main__':
 
     print("--- Dependency-Driven Extraction ---")
     test_dep_only_extraction()
+
+    print("--- Spatial Role & Verb Spatial Class ---")
+    test_spatial_lobj_loc_container()
+    test_spatial_dobj_move_to_target()
+    test_spatial_dobj_move_from_origin()
+    test_spatial_pobj_origin()
+    test_spatial_pobj_path()
+    test_spatial_nsubj_actor()
+    test_spatial_nn_amod_modifier()
+    test_spatial_role_default_static()
+    test_spatial_dobj_no_governing_verb()
+    test_verb_spatial_class_sampling()
+    test_preposition_sets()
 
     print("=== All tests passed! ===")

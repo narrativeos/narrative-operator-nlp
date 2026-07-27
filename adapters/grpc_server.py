@@ -104,8 +104,49 @@ def _doc_to_proto(doc) -> "narrative_pb2.AnalyzeResponse":
         for r in doc.content.relations
     ]
 
+    events = [
+        narrative_pb2.Event(
+            id=evt.id,
+            event_type=evt.event_type,
+            trigger=evt.trigger,
+            trigger_span=_build_span(evt.trigger_span[0], evt.trigger_span[1]),
+            arguments=[
+                narrative_pb2.EventArgument(
+                    role=a.role,
+                    text=a.text,
+                    entity_id=a.entity_id or "",
+                    span=_build_span(a.span[0], a.span[1]),
+                    syntactic_role=a.syntactic_role or "",
+                    governing_verb=a.governing_verb or "",
+                    token_span=_build_span(
+                        a.token_span[0] if a.token_span else 0,
+                        a.token_span[1] if a.token_span else 0,
+                    ),
+                    spatial_role=a.spatial_role or "",
+                    verb_spatial_class=a.verb_spatial_class or "",
+                )
+                for a in evt.arguments
+            ],
+            sentence_index=evt.sentence_index,
+            is_main_event=evt.is_main_event,
+            sub_events=evt.sub_events,
+            source_relation_ids=evt.source_relation_ids,
+            confidence=evt.confidence,
+            source=evt.source,
+        )
+        for evt in doc.content.events
+    ]
+
+    deps = [
+        narrative_pb2.DependencyEdge(
+            child=d.child, head=d.head, rel=d.rel,
+        )
+        for d in doc.content.deps
+    ]
+
     content = narrative_pb2.NarrativeContent(
         tokens=tokens, entities=entities, relations=relations,
+        events=events, deps=deps,
         structural_json=json.dumps(doc.content.structural, ensure_ascii=False),
     )
 

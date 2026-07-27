@@ -84,6 +84,47 @@ _PREDICATE_TO_ROLE: dict[str, str] = {
 }
 
 
+# ── Spatial verb semantic classes ──
+# Maps verbs to their spatial semantic class for inferring verb_spatial_class.
+_SPATIAL_VERB_CLASSES: dict[str, str] = {
+    # MOVE_TO — movement toward a target
+    "去": "MOVE_TO", "到": "MOVE_TO", "赴": "MOVE_TO", "前往": "MOVE_TO",
+    "来": "MOVE_TO", "进": "MOVE_TO", "入": "MOVE_TO", "到达": "MOVE_TO",
+    "抵达": "MOVE_TO", "奔": "MOVE_TO", "赶": "MOVE_TO", "回": "MOVE_TO",
+    "归": "MOVE_TO", "返": "MOVE_TO", "返回": "MOVE_TO", "回来": "MOVE_TO",
+    "进入": "MOVE_TO", "迁入": "MOVE_TO", "调往": "MOVE_TO", "派往": "MOVE_TO",
+    # MOVE_FROM — movement away from an origin
+    "从": "MOVE_FROM", "离": "MOVE_FROM", "离开": "MOVE_FROM", "出发": "MOVE_FROM",
+    "撤离": "MOVE_FROM", "退出": "MOVE_FROM", "撤": "MOVE_FROM",
+    "离去": "MOVE_FROM", "辞": "MOVE_FROM", "辞别": "MOVE_FROM",
+    "迁出": "MOVE_FROM", "调离": "MOVE_FROM", "出走": "MOVE_FROM",
+    "逃离": "MOVE_FROM", "摆脱": "MOVE_FROM",
+    # MOVE_ALONG — movement along a path
+    "沿": "MOVE_ALONG", "顺": "MOVE_ALONG", "循": "MOVE_ALONG", "沿着": "MOVE_ALONG",
+    "顺着": "MOVE_ALONG", "绕": "MOVE_ALONG", "环绕": "MOVE_ALONG",
+    "绕行": "MOVE_ALONG", "沿袭": "MOVE_ALONG",
+    # STATIC_EXIST — static existence/location
+    "坐落": "STATIC_EXIST", "位于": "STATIC_EXIST", "在": "STATIC_EXIST",
+    "存": "STATIC_EXIST", "存在": "STATIC_EXIST", "处": "STATIC_EXIST",
+    "立": "STATIC_EXIST", "置": "STATIC_EXIST", "安置": "STATIC_EXIST",
+    # STATIC_ACTION — events anchored at a location
+    "举行": "STATIC_ACTION", "建造": "STATIC_ACTION", "开设": "STATIC_ACTION",
+    "建立": "STATIC_ACTION", "创办": "STATIC_ACTION", "设立": "STATIC_ACTION",
+    "修建": "STATIC_ACTION", "搭建": "STATIC_ACTION", "兴修": "STATIC_ACTION",
+    "举办": "STATIC_ACTION", "开展": "STATIC_ACTION", "兴建": "STATIC_ACTION",
+    "修建": "STATIC_ACTION", "营造": "STATIC_ACTION",
+    # VIEW — visual perception with spatial direction
+    "看": "VIEW", "望": "VIEW", "眺": "VIEW", "俯瞰": "VIEW",
+    "眺望": "VIEW", "观望": "VIEW", "俯视": "VIEW", "远眺": "VIEW",
+    "瞻望": "VIEW", "环顾": "VIEW", "巡视": "VIEW", "鸟瞰": "VIEW",
+    "仰望": "VIEW", "凝视": "VIEW", "注视": "VIEW",
+}
+
+# ── Prepositions that indicate spatial direction (for pobj analysis) ──
+_PREP_ORIGIN: frozenset = frozenset({"从", "自", "由", "自从", "源于"})
+_PREP_PATH: frozenset = frozenset({"沿", "顺", "循", "沿着", "顺着", "绕", "环绕"})
+
+
 # ── SRL ARGM-* → Event argument role mapping ──
 _ARGM_ROLE_MAP: dict[str, str] = {
     "ARGM-TMP": "Time",
@@ -455,6 +496,10 @@ class EventExtractor:
         # ── Step 5b: Assign syntactic roles (Step 4) ──
         if deps and tokens_list:
             self._assign_syntactic_roles(events, deps, tokens_list)
+
+        # ── Step 5c: Assign spatial roles (Step 4b) ──
+        if deps and tokens_list:
+            self._assign_spatial_roles(events, deps, tokens_list)
 
         # ── Step 6: Build sub-event hierarchy ──
         self._build_sub_event_hierarchy(events)
@@ -1161,6 +1206,131 @@ class EventExtractor:
                             arg.governing_verb = getattr(tokens[head_idx], 'text', '')
                             break
                     current = head_idx
+
+    # ── Spatial role assignment (Step 4b) ──
+
+    @staticmethod
+    def _assign_spatial_roles(
+        events: list[Event],
+        deps: list[DependencyEdge],
+        tokens: list,
+    ) -> None:
+        """Assign spatial roles and verb spatial classes to all event arguments.
+
+        For each EventArgument that already has syntactic_role and governing_verb
+        (set by _assign_syntactic_roles), infers:
+        - spatial_role: CONTAINER / TARGET / ORIGIN / PATH / ACTOR / MODIFIER / STATIC
+        - verb_spatial_class: MOVE_TO / MOVE_FROM / MOVE_ALONG / STATIC_EXIST /
+          STATIC_ACTION / VIEW / NONE
+
+        Rules (spatial_role):
+        | dep_rel        | spatial_role | condition                          |
+        |----------------|--------------|------------------------------------|
+        | lobj, loc      | CONTAINER    | direct                             |
+        | dobj           | TARGET       | governing_verb in MOVE_TO          |
+        | dobj           | ORIGIN       | governing_verb in MOVE_FROM        |
+        | dobj           | STATIC       | other / no verb class              |
+        | pobj           | ORIGIN       | head is P and text in _PREP_ORIGIN |
+        | pobj           | PATH         | head is P and text in _PREP_PATH   |
+        | nsubj, nsubjpass | ACTOR     | direct                             |
+        | nn, amod       | MODIFIER     | direct                             |
+        | other / none   | STATIC       | default                            |
+
+        verb_spatial_class: lookup governing_verb in _SPATIAL_VERB_CLASSES,
+        default "NONE".
+
+        Modifies events in-place. Requires _assign_syntactic_roles() to run first.
+        """
+        if not deps or not tokens:
+            return
+
+        # Build parent lookup
+        parent_of: dict[int, tuple[int, str]] = {}
+        for dep in deps:
+            if dep.child >= 0:
+                parent_of[dep.child] = (dep.head, dep.rel)
+
+        def _find_token_idx(arg_span: tuple[int, int]) -> Optional[int]:
+            best_idx: Optional[int] = None
+            best_overlap = 0
+            for i, tok in enumerate(tokens):
+                tok_span = getattr(tok, 'span', (0, 0))
+                overlap_start = max(arg_span[0], tok_span[0])
+                overlap_end = min(arg_span[1], tok_span[1])
+                if overlap_end > overlap_start:
+                    overlap = overlap_end - overlap_start
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_idx = i
+            return best_idx
+
+        # Build token text lookup
+        tok_text: dict[int, str] = {}
+        tok_pos: dict[int, str] = {}
+        for i, tok in enumerate(tokens):
+            tok_text[i] = getattr(tok, 'text', '')
+            tok_pos[i] = getattr(tok, 'pos', '')
+
+        for evt in events:
+            for arg in evt.arguments:
+                token_idx = _find_token_idx(arg.span)
+                if token_idx is None:
+                    # No matching token → defaults remain None
+                    arg.verb_spatial_class = "NONE"
+                    continue
+
+                # Get dep relation to parent
+                dep_rel_lower = ""
+                if token_idx in parent_of:
+                    _head_idx, dep_rel = parent_of[token_idx]
+                    dep_rel_lower = dep_rel.lower() if dep_rel else ""
+
+                # ── Infer spatial_role from dep_rel ──
+                spatial_role: Optional[str] = None
+
+                if dep_rel_lower in ("lobj", "loc"):
+                    spatial_role = "CONTAINER"
+                elif dep_rel_lower in ("nsubj", "nsubjpass"):
+                    spatial_role = "ACTOR"
+                elif dep_rel_lower in ("nn", "amod"):
+                    spatial_role = "MODIFIER"
+                elif dep_rel_lower == "dobj":
+                    # dobj spatial role depends on governing verb class
+                    verb_class = _SPATIAL_VERB_CLASSES.get(
+                        arg.governing_verb or "", "NONE"
+                    )
+                    if verb_class == "MOVE_TO":
+                        spatial_role = "TARGET"
+                    elif verb_class == "MOVE_FROM":
+                        spatial_role = "ORIGIN"
+                    else:
+                        spatial_role = "STATIC"
+                elif dep_rel_lower == "pobj":
+                    # Check head token (preposition) text for spatial direction
+                    spatial_role = "STATIC"  # default
+                    if token_idx in parent_of:
+                        head_idx, _ = parent_of[token_idx]
+                        if 0 <= head_idx < len(tokens):
+                            head_text = tok_text.get(head_idx, '')
+                            head_pos_val = tok_pos.get(head_idx, '')
+                            if head_pos_val and head_pos_val.startswith('P'):
+                                if head_text in _PREP_ORIGIN:
+                                    spatial_role = "ORIGIN"
+                                elif head_text in _PREP_PATH:
+                                    spatial_role = "PATH"
+                else:
+                    # No matching dep relation → default STATIC
+                    spatial_role = "STATIC"
+
+                arg.spatial_role = spatial_role
+
+                # ── Infer verb_spatial_class from governing_verb ──
+                if arg.governing_verb:
+                    arg.verb_spatial_class = _SPATIAL_VERB_CLASSES.get(
+                        arg.governing_verb, "NONE"
+                    )
+                else:
+                    arg.verb_spatial_class = "NONE"
 
     # ── Token span filling (Step 5) ──
 

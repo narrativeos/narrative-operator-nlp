@@ -522,6 +522,11 @@ class EventArgument(BaseModel):
     - syntactic_role: Role in dependency tree (Subject/Object/Adverbial/Attributive)
     - governing_verb: First verb ancestor in the dependency tree
     - token_span: Token index range [start, end) in the global token list
+
+    Spatial dimensions (Step 4b):
+    - spatial_role: Spatial role inferred from dependency (CONTAINER/TARGET/ORIGIN/PATH/ACTOR/MODIFIER/STATIC)
+    - verb_spatial_class: Spatial semantic class of governing verb
+      (MOVE_TO/MOVE_FROM/MOVE_ALONG/STATIC_EXIST/STATIC_ACTION/VIEW/NONE)
     """
     role: str = Field(..., min_length=1, description="Argument role, e.g. Agent, Patient, Time, Location")
     text: str = Field(..., min_length=1, description="Argument surface text")
@@ -538,6 +543,14 @@ class EventArgument(BaseModel):
     token_span: Optional[tuple[int, int]] = Field(
         default=None,
         description="Token index range [start, end) in the global token list"
+    )
+    spatial_role: Optional[str] = Field(
+        default=None,
+        description="Spatial role inferred from dependency: CONTAINER, TARGET, ORIGIN, PATH, ACTOR, MODIFIER, STATIC"
+    )
+    verb_spatial_class: Optional[str] = Field(
+        default=None,
+        description="Spatial semantic class of governing verb: MOVE_TO, MOVE_FROM, MOVE_ALONG, STATIC_EXIST, STATIC_ACTION, VIEW, NONE"
     )
 
     @field_validator("span")

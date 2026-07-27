@@ -786,13 +786,30 @@ function renderNSP(data){
                     a.role !== 'Agent' && !['Patient','Result','Product'].includes(a.role)
                     && a.role !== 'Time' && a.role !== 'Location'
                 );
+                const spatialBadge = (sr) => {
+                    if (!sr || sr === 'STATIC') return '';
+                    const colors = {CONTAINER:'#79c0ff',TARGET:'#7ee787',ORIGIN:'#f97583',PATH:'#d2a8ff',ACTOR:'#ffa657',MODIFIER:'#8b949e'};
+                    const c = colors[sr] || '#8b949e';
+                    return ` <small style="color:${c}">[${sr}]</small>`;
+                };
                 const argTag = (a) => a
-                    ? `<span class="tag" style="background:#e3b341;color:#0d1117">${esc(a.role)}: ${esc(a.text)}</span>`
+                    ? `<span class="tag" style="background:#e3b341;color:#0d1117">${esc(a.role)}: ${esc(a.text)}${spatialBadge(a.spatial_role)}</span>`
                     : '<span style="color:#484f58">-</span>';
                 const othersHtml = others.map(a =>
-                    `<span class="tag" style="background:#30363d;color:#8b949e">${esc(a.role)}: ${esc(a.text)}</span>`
+                    `<span class="tag" style="background:#30363d;color:#8b949e">${esc(a.role)}: ${esc(a.text)}${spatialBadge(a.spatial_role)}</span>`
                 ).join(' ') || '<span style="color:#484f58">-</span>';
-                return { agent: argTag(agent), patient: argTag(patient), time: argTag(time), location: argTag(location), othersHtml };
+                // Verb spatial class: pick first non-NONE from any argument
+                const vsc = (ev.arguments || []).reduce((acc, a) => acc || (a.verb_spatial_class && a.verb_spatial_class !== 'NONE' ? a.verb_spatial_class : null), null);
+                const vscColors = {MOVE_TO:'#7ee787',MOVE_FROM:'#f97583',MOVE_ALONG:'#d2a8ff',STATIC_EXIST:'#79c0ff',STATIC_ACTION:'#ffa657',VIEW:'#e3b341'};
+                const verbClassHtml = vsc
+                    ? `<span class="tag" style="background:${vscColors[vsc]||'#30363d'};color:#0d1117;font-size:10px">${vsc}</span>`
+                    : '<span style="color:#484f58">-</span>';
+                // Spatial roles: collect unique non-STATIC roles
+                const spatialRoles = [...new Set((ev.arguments||[]).map(a=>a.spatial_role).filter(s=>s&&s!=='STATIC'))];
+                const spatialHtml = spatialRoles.length > 0
+                    ? spatialRoles.map(sr => `<span class="tag" style="background:#1a3a5c;color:#79c0ff;font-size:10px">${sr}</span>`).join(' ')
+                    : '<span style="color:#484f58">-</span>';
+                return { agent: argTag(agent), patient: argTag(patient), time: argTag(time), location: argTag(location), othersHtml, spatialHtml, verbClassHtml };
             };
 
             const rowHtml = (ev, isSub) => {
@@ -813,6 +830,8 @@ function renderNSP(data){
                     <td>${args.time}</td>
                     <td>${args.location}</td>
                     <td style="font-size:11px">${args.othersHtml}</td>
+                    <td>${args.spatialHtml}</td>
+                    <td>${args.verbClassHtml}</td>
                     <td><small style="color:#7ee787">${Math.round(ev.confidence*100)}%</small></td>
                     <td><small style="color:#484f58">${esc(ev.source)}</small></td>
                 </tr>`;
@@ -822,7 +841,7 @@ function renderNSP(data){
                 <thead><tr>
                     <th>类型</th><th>触发词</th><th>位置</th>
                     <th>Agent</th><th>Patient/Result</th><th>Time</th><th>Location</th>
-                    <th>其他参数</th><th>置信度</th><th>来源</th>
+                    <th>其他参数</th><th>空间角色</th><th>动词语义类</th><th>置信度</th><th>来源</th>
                 </tr></thead><tbody>`;
 
             // If all events are main events (no sub-events), just render them all

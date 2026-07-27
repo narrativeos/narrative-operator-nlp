@@ -164,7 +164,27 @@
           "type": "string",
           "description": "Linked entity ID (optional)"
         },
-        "span": { "$ref": "#/$defs/Span" }
+        "span": { "$ref": "#/$defs/Span" },
+        "syntactic_role": {
+          "type": "string",
+          "description": "Syntactic role in dependency tree: Subject, Object, Adverbial, Attributive"
+        },
+        "governing_verb": {
+          "type": "string",
+          "description": "First V-head ancestor in dependency tree"
+        },
+        "token_span": {
+          "$ref": "#/$defs/Span",
+          "description": "Token index range [start, end) in the global token list"
+        },
+        "spatial_role": {
+          "type": "string",
+          "description": "Spatial role inferred from dependency: CONTAINER, TARGET, ORIGIN, PATH, ACTOR, MODIFIER, STATIC"
+        },
+        "verb_spatial_class": {
+          "type": "string",
+          "description": "Spatial semantic class of governing verb: MOVE_TO, MOVE_FROM, MOVE_ALONG, STATIC_EXIST, STATIC_ACTION, VIEW, NONE"
+        }
       }
     },
     "Event": {
