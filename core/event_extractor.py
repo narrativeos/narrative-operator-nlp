@@ -190,6 +190,9 @@ class EventExtractor:
         # Build lookups
         entity_by_text: dict[str, Entity] = {e.text: e for e in entities}
 
+        # Store tokens as list for methods that need positional access
+        tokens_list: list = tokens if tokens else []
+
         # Build token index by span for dependency-driven extraction
         # Store (text, span, pos) for POS-aware filtering
         token_by_idx: dict[int, tuple[str, tuple[int, int], str]] = {}
@@ -286,23 +289,15 @@ class EventExtractor:
             key = (sent_idx, rel.predicate_verb, agent_key)
             groups[key].append(rel)
 
+        # ── Build entity_by_id lookup for NER conflict detection ──
+        entity_by_id: dict[str, Entity] = {e.id: e for e in entities}
+
         # ── Step 2: Convert groups to events ──
         events: list[Event] = []
 
         for (sent_idx, trigger_verb, agent_key), rels in sorted(groups.items()):
             if not rels:
                 continue
-
-            # Determine confidence based on sentence type
-            confidence = 0.8  # default for declarative
-            pat = pattern_by_idx.get(sent_idx)
-            if pat:
-                if pat.sentence_type == "declarative":
-                    confidence = 0.8
-                elif pat.sentence_type == "imperative":
-                    confidence = 0.7
-                elif pat.sentence_type == "exclamatory":
-                    confidence = 0.5
 
             # Build arguments from relations
             arguments: list[EventArgument] = []
@@ -386,12 +381,24 @@ class EventExtractor:
                     ):
                         srl_boost = True
 
-            if srl_boost:
-                confidence = min(1.0, confidence + 0.1)
-
             # Skip if no meaningful arguments
             if not arguments:
                 continue
+
+            # ── Dynamic confidence (Step 3) ──
+            rel_predicate = rels[0].predicate if rels else "RELATES_TO"
+            rel_sem_class = rels[0].semantic_class if rels else None
+            confidence = self._compute_confidence(
+                trigger_verb=trigger_verb,
+                arguments=arguments,
+                deps=deps or [],
+                tokens=tokens_list,
+                relation_predicate=rel_predicate,
+                semantic_class=rel_sem_class,
+                entities_by_id=entity_by_id,
+            )
+            if srl_boost:
+                confidence = min(1.0, confidence + 0.1)
 
             # Find trigger span from original text, using first relation's evidence_span as hint
             trigger_span = self._find_char_span(
@@ -427,7 +434,7 @@ class EventExtractor:
         # a corresponding Relation-based event.
         srl_events = self._extract_events_from_srl_only(
             text, srl_by_key, entity_by_text, sentences, sent_spans,
-            pattern_by_idx, events,
+            pattern_by_idx, events, tokens_list, entity_by_id,
         )
         events.extend(srl_events)
 
@@ -438,18 +445,23 @@ class EventExtractor:
         deps = deps or []
         dep_events = self._extract_events_from_deps(
             text, deps, token_by_idx, entity_by_text, sentences, sent_spans,
-            pattern_by_idx, events,
+            pattern_by_idx, events, tokens_list, entity_by_id,
         )
         events.extend(dep_events)
 
         # ── Step 5: Enrich with temporal/location entities from NER ──
-        # SRL may miss time/location expressions; use NER-detected DATE/LOCATION entities
-        # to fill in missing Time/Location arguments for events in the same sentence.
         self._enrich_with_temporal_entities(text, events, entities, sent_spans)
 
+        # ── Step 5b: Assign syntactic roles (Step 4) ──
+        if deps and tokens_list:
+            self._assign_syntactic_roles(events, deps, tokens_list)
+
         # ── Step 6: Build sub-event hierarchy ──
-        # Events with no Agent but same (sentence, trigger) are sub-events of the main event
         self._build_sub_event_hierarchy(events)
+
+        # ── Step 7: Fill token_span for all event arguments (Step 5) ──
+        if tokens_list:
+            self._fill_event_token_spans(events, tokens_list, entity_by_id)
 
         return events
 
@@ -463,6 +475,8 @@ class EventExtractor:
         sent_spans: list[tuple[int, int]],
         pattern_by_idx: dict[int, SentencePattern],
         existing_events: list[Event],
+        tokens_list: list,
+        entity_by_id: dict[str, Entity],
     ) -> list[Event]:
         """Extract events from dependency relations when SRL is missing.
 
@@ -612,6 +626,16 @@ class EventExtractor:
             if not arguments:
                 continue
 
+            # Dynamic confidence for DEP-only events (Step 3)
+            dep_confidence = self._compute_confidence(
+                trigger_verb=trigger_text,
+                arguments=arguments,
+                deps=deps,
+                tokens=tokens_list,
+                relation_predicate="RELATES_TO",
+                semantic_class=None,
+                entities_by_id=entity_by_id,
+            )
             self._counter += 1
             evt = Event(
                 id=f"evt_{self._counter:03d}",
@@ -623,7 +647,7 @@ class EventExtractor:
                 is_main_event=True,
                 sub_events=[],
                 source_relation_ids=[],
-                confidence=0.6,
+                confidence=dep_confidence,
                 source="dep_only",
             )
             dep_events.append(evt)
@@ -648,6 +672,8 @@ class EventExtractor:
         sent_spans: list[tuple[int, int]],
         pattern_by_idx: dict[int, SentencePattern],
         existing_events: list[Event],
+        tokens_list: list,
+        entity_by_id: dict[str, Entity],
     ) -> list[Event]:
         """Extract events directly from SRL frames when no Relation-based event exists.
 
@@ -749,6 +775,16 @@ class EventExtractor:
                     fallback=sent_spans[sent_idx] if sent_idx >= 0 and sent_idx < len(sent_spans) else (0, 0),
                 )
 
+                # Dynamic confidence for SRL-only events (Step 3)
+                srl_confidence = self._compute_confidence(
+                    trigger_verb=trigger_verb,
+                    arguments=arguments,
+                    deps=[],
+                    tokens=tokens_list,
+                    relation_predicate="RELATES_TO",
+                    semantic_class=None,
+                    entities_by_id=entity_by_id,
+                )
                 self._counter += 1
                 evt = Event(
                     id=f"evt_{self._counter:03d}",
@@ -760,7 +796,7 @@ class EventExtractor:
                     is_main_event=True,
                     sub_events=[],
                     source_relation_ids=[],
-                    confidence=0.7,  # Lower confidence for SRL-only events
+                    confidence=srl_confidence,
                     source="srl_only",
                 )
                 srl_events.append(evt)
@@ -949,7 +985,271 @@ class EventExtractor:
             for sub in sub_events:
                 sub.is_main_event = False
 
+    # ── Confidence scoring (Step 3) ──
+
+    # Tuneable coefficients (P0: extracted from magic numbers for maintainability)
+    _CONF_BASE: float = 0.70
+    _CONF_ROOT_VERB: float = 0.15
+    _CONF_AGENT_COMPLETE: float = 0.10
+    _CONF_PATIENT_COMPLETE: float = 0.10
+    _CONF_PENALTY_LONG_OBJ: float = 0.15
+    _CONF_PENALTY_PUNCT: float = 0.20
+    _CONF_PENALTY_NER_DISPUTED: float = 0.10
+    _CONF_PENALTY_GENERIC_PRED: float = 0.10
+    _CONF_LONG_OBJ_THRESHOLD: int = 15
+
+    # Only sentence-boundary punctuation signals a broken argument.
+    # Quotes, brackets, colons legitimately appear in event text
+    # (e.g. "曰：'学而时习之'"). 。！？ are the true red flags.
+    _CONF_SENTENCE_BOUNDARY_PUNCT_RE = re.compile(r'[。！？]')
+
+    @staticmethod
+    def _compute_confidence(
+        trigger_verb: str,
+        arguments: list[EventArgument],
+        deps: list[DependencyEdge],
+        tokens: list,
+        relation_predicate: str,
+        semantic_class: Optional[str],
+        entities_by_id: dict[str, Entity],
+    ) -> float:
+        """Compute dynamic confidence score based on structural completeness.
+
+        Formula (coefficients are class constants for tuneability):
+          base _CONF_BASE
+          +_CONF_ROOT_VERB : verb is root node (core predicate)
+          +_CONF_AGENT_COMPLETE : agent is complete (non-empty)
+          +_CONF_PATIENT_COMPLETE : patient is complete (non-empty)
+          -_CONF_PENALTY_LONG_OBJ : longest non-Agent arg > _CONF_LONG_OBJ_THRESHOLD chars
+          -_CONF_PENALTY_PUNCT : non-Agent arg contains sentence-boundary punctuation
+          -_CONF_PENALTY_NER_DISPUTED : NER multi-model conflict on linked entity
+          -_CONF_PENALTY_GENERIC_PRED : predicate is RELATES_TO with no semantic_class
+          → clamped to [0.0, 1.0]
+
+        Design rationale:
+        - Only sentence-boundary punctuation (。！？) is penalised because
+          quotes, brackets, colons legitimately appear in event arguments
+          (especially classical Chinese dialogue markers like "曰：").
+        - Coefficients are class-level constants so they can be overridden
+          or tuned without modifying method logic.
+        """
+        score = EventExtractor._CONF_BASE
+
+        # +root_verb
+        if deps and tokens:
+            is_root = any(
+                dep.head == -1
+                and 0 <= dep.child < len(tokens)
+                and getattr(tokens[dep.child], 'text', '') == trigger_verb
+                for dep in deps
+            )
+            if is_root:
+                score += EventExtractor._CONF_ROOT_VERB
+
+        # +agent_complete
+        has_agent = any(a.role == "Agent" and a.text for a in arguments)
+        if has_agent:
+            score += EventExtractor._CONF_AGENT_COMPLETE
+
+        # +patient_complete
+        has_patient = any(a.role != "Agent" and a.text for a in arguments)
+        if has_patient:
+            score += EventExtractor._CONF_PATIENT_COMPLETE
+
+        # -long_obj / -punct: non-Agent argument checks
+        non_agent_args = [a for a in arguments if a.role != "Agent"]
+        if non_agent_args:
+            max_len = max(len(a.text) for a in non_agent_args)
+            if max_len > EventExtractor._CONF_LONG_OBJ_THRESHOLD:
+                score -= EventExtractor._CONF_PENALTY_LONG_OBJ
+            if any(EventExtractor._CONF_SENTENCE_BOUNDARY_PUNCT_RE.search(a.text)
+                   for a in non_agent_args):
+                score -= EventExtractor._CONF_PENALTY_PUNCT
+
+        # -ner_disputed
+        for arg in arguments:
+            if arg.entity_id and arg.entity_id in entities_by_id:
+                ent = entities_by_id[arg.entity_id]
+                if getattr(ent, 'ner_disputed', False):
+                    score -= EventExtractor._CONF_PENALTY_NER_DISPUTED
+                    break
+
+        # -generic_pred
+        if relation_predicate == "RELATES_TO" and not semantic_class:
+            score -= EventExtractor._CONF_PENALTY_GENERIC_PRED
+
+        return max(0.0, min(1.0, score))
+
+    # ── Syntactic role assignment (Step 4) ──
+
+    @staticmethod
+    def _assign_syntactic_roles(
+        events: list[Event],
+        deps: list[DependencyEdge],
+        tokens: list,
+    ) -> None:
+        """Assign syntactic roles to all event arguments from the dependency tree.
+
+        For each EventArgument, finds its corresponding token and queries the
+        dependency relation to determine:
+        - syntactic_role: Subject (nsubj), Object (dobj), Adverbial (loc/lobj),
+          or Attributive (nn/amod).
+        - governing_verb: The first verb ancestor in the dependency tree.
+
+        Token matching strategy:
+        Uses maximum overlap to find the best-matching token. For multi-word
+        arguments (e.g., "张老三" tokenized as "张/NR 老三/NR"), this typically
+        selects the core noun ("老三") where dependency relations (nsubj/dobj)
+        are usually attached. This is acceptable because HanLP dependency parsers
+        typically attach relations to the head word within a noun phrase.
+
+        Modifies events in-place.
+        """
+        if not deps or not tokens:
+            return
+
+        parent_of: dict[int, tuple[int, str]] = {}
+        for dep in deps:
+            if dep.child >= 0:
+                parent_of[dep.child] = (dep.head, dep.rel)
+
+        def _find_token_idx(arg_span: tuple[int, int]) -> Optional[int]:
+            best_idx: Optional[int] = None
+            best_overlap = 0
+            for i, tok in enumerate(tokens):
+                tok_span = getattr(tok, 'span', (0, 0))
+                overlap_start = max(arg_span[0], tok_span[0])
+                overlap_end = min(arg_span[1], tok_span[1])
+                if overlap_end > overlap_start:
+                    overlap = overlap_end - overlap_start
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_idx = i
+            return best_idx
+
+        _DEP_TO_SYNTACTIC: dict[str, str] = {
+            "nsubj": "Subject", "nsubjpass": "Subject",
+            "dobj": "Object", "iobj": "Object",
+            "loc": "Adverbial", "lobj": "Adverbial",
+            "nn": "Attributive", "amod": "Attributive",
+        }
+
+        for evt in events:
+            for arg in evt.arguments:
+                token_idx = _find_token_idx(arg.span)
+                if token_idx is None:
+                    continue
+
+                if token_idx in parent_of:
+                    _head_idx, dep_rel = parent_of[token_idx]
+                    dep_rel_lower = dep_rel.lower() if dep_rel else ""
+                    syn_role = _DEP_TO_SYNTACTIC.get(dep_rel_lower)
+                    if syn_role is not None:
+                        arg.syntactic_role = syn_role
+
+                # Walk up to first V-pos ancestor
+                current = token_idx
+                visited: set[int] = set()
+                while current in parent_of and current not in visited:
+                    visited.add(current)
+                    head_idx, _rel = parent_of[current]
+                    if head_idx < 0:
+                        break
+                    if 0 <= head_idx < len(tokens):
+                        head_pos = getattr(tokens[head_idx], 'pos', '')
+                        if head_pos and head_pos[0] == 'V':
+                            arg.governing_verb = getattr(tokens[head_idx], 'text', '')
+                            break
+                    current = head_idx
+
+    # ── Token span filling (Step 5) ──
+
+    @staticmethod
+    def _fill_event_token_spans(
+        events: list[Event],
+        tokens: list,
+        entity_by_id: dict[str, Entity],
+    ) -> None:
+        """Fill EventArgument.token_span from entity lookup or span→token index.
+
+        For each EventArgument:
+        - If entity_id is set, copy token_span from the matching Entity.
+        - Otherwise, compute from character span → token index overlap.
+
+        Modifies events in-place.
+        """
+        if not events or not tokens:
+            return
+
+        token_spans: list[tuple[int, int]] = []
+        for tok in tokens:
+            # P2: defensive check — skip tokens without span attribute
+            if not hasattr(tok, 'span'):
+                continue
+            token_spans.append(tok.span)
+
+        for evt in events:
+            for arg in evt.arguments:
+                if arg.token_span is not None:
+                    continue
+
+                if arg.entity_id and arg.entity_id in entity_by_id:
+                    ent = entity_by_id[arg.entity_id]
+                    ent_ts = getattr(ent, 'token_span', None)
+                    if ent_ts is not None:
+                        arg.token_span = ent_ts
+                        continue
+
+                first_idx: int | None = None
+                last_idx: int | None = None
+                for i, (ts, te) in enumerate(token_spans):
+                    if ts < arg.span[1] and te > arg.span[0]:
+                        if first_idx is None:
+                            first_idx = i
+                        last_idx = i
+                if first_idx is not None and last_idx is not None:
+                    arg.token_span = (first_idx, last_idx + 1)
+
     # ── Helper methods ──
+
+    def _resolve_srl_arg_span(
+        self, text: str, arg_text: str, srl_tok_start: int, srl_tok_end: int,
+        tokens: list, hint_span: Optional[tuple[int, int]] = None,
+    ) -> Optional[tuple[int, int]]:
+        """Resolve SRL argument span with token-level fallback.
+
+        Strategy:
+        1. Try exact match via _find_char_span with hint
+        2. If result text doesn't match SRL arg_text, fallback to token boundary
+           text[tokens[ts].span[0] : tokens[te-1].span[1]]
+        3. Last resort: original _find_char_span behavior
+
+        Args:
+            text: Original text
+            arg_text: SRL argument text from HanLP
+            srl_tok_start: SRL token start index (0-based, inclusive) — matches HanLP's tok_start
+            srl_tok_end: SRL token end index (0-based, exclusive) — matches HanLP's tok_end
+            tokens: Token list from HanLP (0-based indexing)
+            hint_span: Optional character-level hint for search
+
+        Note: HanLP SRL outputs tok_start/tok_end as 0-based indices where
+        tok_start is inclusive and tok_end is exclusive (Python slice style).
+        See relation_mapper.py:520-523 for the same convention.
+        """
+        # Phase 1: Try precise match
+        span = self._find_char_span(text, arg_text, hint_span=hint_span)
+        if span and span != (0, 0):
+            extracted = text[span[0]:span[1]]
+            if extracted == arg_text:
+                return span
+
+        # Phase 2: Fallback to token boundary (SRL tokens are 0-based, te exclusive)
+        ts, te = srl_tok_start, srl_tok_end
+        if tokens and 0 <= ts < len(tokens) and 0 < te <= len(tokens):
+            return (tokens[ts].span[0], tokens[te - 1].span[1])
+
+        # Phase 3: Last resort - original behavior
+        return self._find_char_span(text, arg_text, hint_span=hint_span)
 
     def _find_char_span(
         self, text: str, target: str,

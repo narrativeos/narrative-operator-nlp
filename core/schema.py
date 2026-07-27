@@ -243,6 +243,25 @@ class Entity(BaseModel):
         default_factory=EntityEvidence,
         description="Evidence sources for entity recognition (tokenizer, seed_dict, cbdb)"
     )
+    # Step 5: Token index range [start, end) in the global token list
+    token_span: Optional[tuple[int, int]] = Field(
+        default=None,
+        description="Token index range [start, end) in the global token list"
+    )
+    # Step 8: NER conflict resolution
+    ner_disputed: bool = Field(
+        default=False,
+        description="Whether NER models disagree on this entity's label"
+    )
+    ner_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-source NER labels, e.g. {'ner/pku': 'LOCATION', 'ner/ontonotes': 'FACILITY'}"
+    )
+    # Step 9: Span deduplication tracking
+    merged_from: list[str] = Field(
+        default_factory=list,
+        description="IDs of entities merged into this one (cross-category containment)"
+    )
 
     @field_validator("span")
     @classmethod
@@ -276,6 +295,11 @@ class Relation(BaseModel):
     subject_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     predicate: str = Field(..., description="Relation type from predefined set")
     predicate_verb: str | None = Field(default=None, description="Original SRL predicate verb (e.g. '生产', '抛光')")
+    semantic_class: Optional[str] = Field(
+        default=None,
+        description="Semantic class for RELATES_TO fallback (e.g., CAUSATION, PERCEPTION, COMMUNICATION, MOVEMENT, EXISTENCE, CREATION). "
+                    "Used when predicate=RELATES_TO to provide finer-grained categorization without polluting the predicate enum."
+    )
     object: str = Field(..., min_length=1, description="Object text (canonical form after entity resolution)")
     object_raw: str = Field(default="", description="Original object surface mention (for traceability)")
     object_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
@@ -493,11 +517,28 @@ class EventArgument(BaseModel):
     - ARGM-ADJ → Adjunct (附加语)
     - ARGM-DIR → Direction (方向)
     - ARGM-PRP → Purpose (目的)
+
+    Syntactic dimensions (Step 4):
+    - syntactic_role: Role in dependency tree (Subject/Object/Adverbial/Attributive)
+    - governing_verb: First verb ancestor in the dependency tree
+    - token_span: Token index range [start, end) in the global token list
     """
     role: str = Field(..., min_length=1, description="Argument role, e.g. Agent, Patient, Time, Location")
     text: str = Field(..., min_length=1, description="Argument surface text")
     entity_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
     span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+    syntactic_role: Optional[str] = Field(
+        default=None,
+        description="Syntactic role in dependency tree: Subject, Object, Adverbial, Attributive"
+    )
+    governing_verb: Optional[str] = Field(
+        default=None,
+        description="The governing verb from the dependency tree (first V-head ancestor)"
+    )
+    token_span: Optional[tuple[int, int]] = Field(
+        default=None,
+        description="Token index range [start, end) in the global token list"
+    )
 
     @field_validator("span")
     @classmethod

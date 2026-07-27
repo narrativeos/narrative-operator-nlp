@@ -64,6 +64,84 @@ def _spans_overlap(
     return False
 
 
+def _compute_iou(span_a: tuple[int, int], span_b: tuple[int, int]) -> float:
+    """Compute Intersection-over-Union of two spans."""
+    inter_start = max(span_a[0], span_b[0])
+    inter_end = min(span_a[1], span_b[1])
+    if inter_end <= inter_start:
+        return 0.0
+    intersection = inter_end - inter_start
+    union = (span_a[1] - span_a[0]) + (span_b[1] - span_b[0]) - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _resolve_ner_conflicts(candidates: list[Entity]) -> None:
+    """Resolve NER multi-model conflicts in-place.
+
+    Groups candidates by span overlap (IoU > 0.8). When different NER models
+    assign different categories to the same span, marks the winner as
+    ner_disputed=True and records all labels in ner_labels.
+
+    Conflict resolution: keep the highest-confidence entity, discard others.
+    Non-conflicting groups (all labels agree) are left unchanged.
+
+    Modifies candidates list in-place (removes discarded entities).
+    """
+    if len(candidates) <= 1:
+        return
+
+    # Group by span overlap
+    groups: list[list[int]] = []  # list of lists of candidate indices
+    assigned: set[int] = set()
+
+    for i in range(len(candidates)):
+        if i in assigned:
+            continue
+        group = [i]
+        assigned.add(i)
+        for j in range(i + 1, len(candidates)):
+            if j in assigned:
+                continue
+            iou = _compute_iou(candidates[i].span, candidates[j].span)
+            # P1: supplement IoU with text containment for partial overlaps
+            # e.g. "北京市"[0,3] vs "北京"[0,2] has IoU=0.5 but clearly related
+            text_contained = (
+                candidates[i].text in candidates[j].text
+                or candidates[j].text in candidates[i].text
+            )
+            if iou > 0.8 or (iou > 0.5 and text_contained):
+                group.append(j)
+                assigned.add(j)
+        groups.append(group)
+
+    # Resolve each group
+    for group in groups:
+        if len(group) == 1:
+            continue
+
+        # Collect unique categories
+        categories: set[str] = set()
+        ner_labels: dict[str, str] = {}
+        for idx in group:
+            c = candidates[idx]
+            categories.add(c.category)
+            ner_labels[c.source] = c.category
+
+        if len(categories) == 1:
+            continue  # All models agree, no conflict
+
+        # Conflict: pick highest confidence, mark the rest for removal
+        best_idx = max(group, key=lambda idx: candidates[idx].confidence)
+        winner = candidates[best_idx]
+        winner.ner_disputed = True
+        winner.ner_labels = ner_labels
+
+        # Remove losers (iterate in reverse to preserve indices)
+        for idx in sorted(group, reverse=True):
+            if idx != best_idx:
+                candidates.pop(idx)
+
+
 class EntityMappingRules:
     """Orchestrates entity extraction from HanLP output.
 
@@ -169,12 +247,22 @@ class EntityMappingRules:
     ) -> list[Entity]:
         entities: list[Entity] = []
 
-        # ── Layer 1: NER models ──
+        # ── Layer 1: NER models (with conflict detection — Step 8) ──
+        # Phase A: Collect candidates from all NER sources
+        all_ner_candidates: list[Entity] = []
         for ner_key in self._label_mapper.ner_sources:
             for raw_ent in raw.get(ner_key, []):
                 mapped = self.map(raw_ent, ner_key, tokens, text)
-                if mapped and not EntityDeduplicator.is_duplicate(mapped, entities):
-                    entities.append(mapped)
+                if mapped:
+                    all_ner_candidates.append(mapped)
+
+        # Phase B: Resolve conflicts (IoU > 0.8, different labels)
+        _resolve_ner_conflicts(all_ner_candidates)
+
+        # Phase C: Deduplicate exact-text duplicates and add to entities
+        for candidate in all_ner_candidates:
+            if not EntityDeduplicator.is_duplicate(candidate, entities):
+                entities.append(candidate)
 
         # ── Layer 2: New word discovery ──
         if auto_discover_entities:

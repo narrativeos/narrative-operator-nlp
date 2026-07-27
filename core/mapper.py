@@ -13,8 +13,11 @@ Handles the real HanLP output structures:
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from .entity_mapper import EntityMappingRules
 from .entity_deduplicator import EntityDeduplicator
@@ -55,6 +58,7 @@ class HanlpSchemaMapper:
             text, raw, tokens, entity_dict, entity_categories,
             auto_discover_entities,
         )
+        _fill_entity_token_spans(raw_entities, tokens)
         self._assign_attributes(text, raw, tokens, raw_entities)
         # PARAMETERs are properties, not standalone entities
         raw_entities = [e for e in raw_entities if e.category != "PARAMETER"]
@@ -293,6 +297,88 @@ class HanlpSchemaMapper:
                     confidence=0.85,
                 )
                 a0_entity.attributes.append(attr)
+
+        # ── Step 6: Dep-based attribute extraction ──
+        # Extract entity attributes from dependency modifiers (amod, rcmod, assmod)
+        self._assign_dep_attributes(raw, tokens, entities, entity_by_text)
+
+    def _assign_dep_attributes(self, raw: dict, tokens: list,
+                                entities: list, entity_by_text: dict) -> None:
+        """Assign entity attributes from dependency modifiers.
+
+        Looks for dep relations where an entity token is the head and the
+        child token has a modifier relation (amod/rcmod/assmod).
+        """
+        from .schema import EntityAttribute
+
+        dep_list = raw.get("dep", [])
+        if not dep_list:
+            return
+
+        # P2: Validate dep format — HanLP outputs (head_1based, deprel) per token
+        if isinstance(dep_list[0], (tuple, list)) and len(dep_list[0]) < 2:
+            logger.warning(
+                "_assign_dep_attributes: unexpected dep format, "
+                "expected (head, rel) tuples, got len=%d items. "
+                "Skipping dep-based attribute extraction.",
+                len(dep_list[0]),
+            )
+            return
+
+        # Build token index → entity lookup
+        token_to_entity: dict[int, object] = {}
+        for ent in entities:
+            if not hasattr(ent, 'token_span') or ent.token_span is None:
+                continue
+            for ti in range(ent.token_span[0], ent.token_span[1]):
+                if ti < len(tokens):
+                    token_to_entity[ti] = ent
+
+        # Iterate: child_idx = position in dep_list, head = head_1based - 1
+        for child_idx, dep_item in enumerate(dep_list):
+            if child_idx >= len(tokens):
+                continue
+            if not isinstance(dep_item, (tuple, list)) or len(dep_item) < 2:
+                continue
+            try:
+                head_1based = int(dep_item[0])
+                dep_rel = str(dep_item[1]).lower()
+            except (ValueError, TypeError):
+                continue
+
+            if dep_rel not in ("amod", "rcmod", "assmod"):
+                continue
+
+            head_idx = head_1based - 1  # Convert to 0-based
+            if head_idx not in token_to_entity:
+                continue
+
+            entity = token_to_entity[head_idx]
+            child_text = tokens[child_idx].text if hasattr(tokens[child_idx], 'text') else str(tokens[child_idx])
+
+            # Build attribute
+            if dep_rel == "amod":
+                key = getattr(entity, 'category', 'UNKNOWN')
+                value = child_text
+                confidence = 0.75
+            elif dep_rel == "rcmod":
+                key = "description"
+                value = child_text
+                confidence = 0.60
+            else:  # assmod
+                key = "association"
+                value = child_text
+                confidence = 0.65
+
+            # Deduplicate
+            existing_keys = {(a.key, a.value) for a in entity.attributes}
+            if (key, value) not in existing_keys:
+                entity.attributes.append(EntityAttribute(
+                    key=key,
+                    value=value,
+                    predicate_verb="",
+                    confidence=confidence,
+                ))
 
     def _build_patterns(self, text: str, raw: dict, entities: list,
                         relations: list) -> list:
@@ -647,3 +733,40 @@ def _collect_limitations(text: str, frames: list) -> list[str]:
         limits.append("hint:rhetorical_question")  # 反问句
 
     return limits
+
+
+# ── Module-level helpers ──
+
+def _fill_entity_token_spans(entities: list, tokens: list) -> None:
+    """Fill Entity.token_span from character span → token index lookup.
+
+    For each entity, finds all tokens whose character spans fall within
+    the entity's span and sets token_span = (first_idx, last_idx+1).
+
+    Args:
+        entities: List of Entity objects (modified in-place).
+        tokens: List of Token objects with span attributes.
+    """
+    if not entities or not tokens:
+        return
+
+    # Build sorted token spans for binary search
+    token_spans: list[tuple[int, int]] = []
+    for tok in tokens:
+        # P2: defensive check — skip tokens without span attribute
+        if not hasattr(tok, 'span'):
+            continue
+        ts = tok.span
+        token_spans.append(ts)
+
+    for ent in entities:
+        first_idx: int | None = None
+        last_idx: int | None = None
+        for i, (ts, te) in enumerate(token_spans):
+            # Token overlaps with entity span
+            if ts < ent.span[1] and te > ent.span[0]:
+                if first_idx is None:
+                    first_idx = i
+                last_idx = i
+        if first_idx is not None and last_idx is not None:
+            ent.token_span = (first_idx, last_idx + 1)

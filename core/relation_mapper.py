@@ -93,6 +93,37 @@ _VERB_PREDICATE_MAP: dict[str, str] = {
     "和...合作": "INTERACTS_WITH",
 }
 
+# ── Semantic class mapping (Step 2: dual-track system) ──
+# Maps predicate_verb → semantic_class for RELATES_TO fallback.
+# This is an OPEN SET auxiliary annotation, NOT part of RelationPredicate enum.
+# Usage guide:
+# - predicate != "RELATES_TO" → use predicate directly (exact mapping)
+# - predicate == "RELATES_TO" and semantic_class is set → use semantic_class as edge type
+# - predicate == "RELATES_TO" and semantic_class is None → generic edge, keep predicate_verb
+_VERB_SEMANTIC_CLASS_MAP: dict[str, str] = {
+    # 使役 (Causation)
+    "让": "CAUSATION", "使": "CAUSATION", "令": "CAUSATION", "叫": "CAUSATION",
+    "导致": "CAUSATION", "引起": "CAUSATION", "造成": "CAUSATION",
+    # 感知 (Perception)
+    "看": "PERCEPTION", "见": "PERCEPTION", "听": "PERCEPTION", "闻": "PERCEPTION",
+    "触": "PERCEPTION", "观": "PERCEPTION",
+    # 言语 (Communication)
+    "说": "COMMUNICATION", "讲": "COMMUNICATION", "祝": "COMMUNICATION",
+    "问": "COMMUNICATION", "答": "COMMUNICATION", "曰": "COMMUNICATION",
+    "云": "COMMUNICATION", "谓": "COMMUNICATION",
+    # 移动 (Movement)
+    "去": "MOVEMENT", "来": "MOVEMENT", "进": "MOVEMENT", "出": "MOVEMENT",
+    "过": "MOVEMENT", "到": "MOVEMENT", "奔赴": "MOVEMENT", "至": "MOVEMENT",
+    "往": "MOVEMENT", "适": "MOVEMENT", "迁": "MOVEMENT", "赴": "MOVEMENT",
+    # 存在 (Existence)
+    "有": "EXISTENCE", "在": "EXISTENCE", "存": "EXISTENCE", "留": "EXISTENCE",
+    "坐落": "EXISTENCE",
+    # 创建 (Creation)
+    "建": "CREATION", "造": "CREATION", "修": "CREATION", "筑": "CREATION",
+    "写": "CREATION", "修建": "CREATION",
+}
+
+
 # ── Classical Chinese verb-based predicate mapping (minimal seed) ──
 # 古汉语动词谓词映射（最小种子，用于辅助推断）
 # 注意：这个映射只是辅助，主要依赖基于实体类型的动态推断
@@ -407,18 +438,35 @@ def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
     return text[start:end]
 
 
-def _resolve_predicate(pred_text: str, arg_role: str = "") -> str:
-    """Resolve predicate_verb to a more specific NSP predicate.
+def _resolve_predicate(pred_text: str, arg_role: str = "") -> tuple[str, Optional[str]]:
+    """Resolve predicate_verb to (predicate, semantic_class).
+
+    Dual-track system:
+    - predicate: NSP standard predicate (always from RelationPredicate enum)
+    - semantic_class: Open-set auxiliary annotation for RELATES_TO fallback
+
+    Decision chain:
+    1. _VERB_PREDICATE_MAP hit → (mapped_predicate, None)
+    2. _CLASSICAL_VERB_PREDICATE_MAP hit → (mapped_predicate, None)
+    3. Role-based mapping hit → (mapped_predicate, None)
+    4. Fallback → ("RELATES_TO", semantic_class or None)
 
     Args:
         pred_text: The verb/predicate text (e.g., "位于", "生产")
         arg_role: The argument role for context (e.g., "argm-loc")
-    """
-    # Direct verb mapping
-    if pred_text in _VERB_PREDICATE_MAP:
-        return _VERB_PREDICATE_MAP[pred_text]
 
-    # Role-based mapping
+    Returns:
+        (predicate, semantic_class) tuple
+    """
+    # Phase 1: Direct verb mapping (exact predicate, no semantic_class)
+    if pred_text in _VERB_PREDICATE_MAP:
+        return (_VERB_PREDICATE_MAP[pred_text], None)
+
+    # Phase 2: Classical verb mapping
+    if pred_text in _CLASSICAL_VERB_PREDICATE_MAP:
+        return (_CLASSICAL_VERB_PREDICATE_MAP[pred_text], None)
+
+    # Phase 3: Role-based mapping
     role_map = {
         "argm-loc": "LOCATED_AT",
         "argm-tmp": "TEMPORAL_AT",
@@ -430,9 +478,11 @@ def _resolve_predicate(pred_text: str, arg_role: str = "") -> str:
         "argm-src": "DEPARTED_FROM",
     }
     if arg_role in role_map:
-        return role_map[arg_role]
+        return (role_map[arg_role], None)
 
-    return "RELATES_TO"
+    # Phase 4: Fallback to RELATES_TO + semantic_class
+    semantic_class = _VERB_SEMANTIC_CLASS_MAP.get(pred_text)
+    return ("RELATES_TO", semantic_class)
 
 
 class RelationExtractionRules:
@@ -547,7 +597,7 @@ class RelationExtractionRules:
 
         relations = []
         for subj, obj, role in pairs:
-            predicate = _resolve_predicate(pred_text, role)
+            predicate, semantic_class = _resolve_predicate(pred_text, role)
             evidence = _span_between(subj[1], obj[1], text)
             if not evidence:
                 evidence = f"{subj[0]} {pred_text} {obj[0]}"
@@ -558,6 +608,7 @@ class RelationExtractionRules:
                 subject=subj[0].strip(),
                 predicate=predicate,
                 predicate_verb=pred_text,
+                semantic_class=semantic_class,
                 object=obj[0].strip(),
                 evidence=evidence,
                 evidence_span=(min(subj[1][0], obj[1][0]), max(subj[1][1], obj[1][1])),

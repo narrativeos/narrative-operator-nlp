@@ -29,6 +29,10 @@ class EntityDeduplicator:
         Improved: preserves containment relationships.
         - If A fully contains B (same category) → keep both (hierarchy will handle)
         - If A crosses B (partial overlap) → keep higher-confidence one
+
+        Step 9: Cross-category containment deduplication:
+        - If A (category X) fully contains B (category Y, X != Y) and B.text in A.text
+          → keep A, discard B, record B.id in A.merged_from
         """
         if not entities:
             return []
@@ -43,6 +47,39 @@ class EntityDeduplicator:
         kept_spans: list[tuple[int, int]] = []
 
         for ent in sorted_entities:
+            # ── Step 9: Cross-category containment (P0 hardened) ──
+            # Multi-condition strategy to avoid false merges:
+            # 1. Span containment: k fully contains ent
+            # 2. Text substring: ent.text is a substring of k.text
+            # 3. Length ratio >= 0.5: prevents "天" subset of "天津" false merge
+            # 4. Minimum 2 chars: single-char noise is common in Chinese
+            # 5. Confidence gap >= 0.2: natural model variance is ~0.1, so 0.2 is safer
+            merged_into = None
+            for k in kept:
+                if k.category == ent.category:
+                    continue  # Same category handled by existing logic below
+                if not (k.span[0] <= ent.span[0] and k.span[1] >= ent.span[1]):
+                    continue
+                if ent.text not in k.text:
+                    continue
+                k_len = len(k.text)
+                ent_len = len(ent.text)
+                if ent_len < 2:
+                    continue
+                if ent_len / k_len < 0.5:
+                    continue
+                if ent.confidence >= k.confidence - 0.2:
+                    continue
+                merged_into = k
+                break
+
+            if merged_into is not None:
+                # Discard ent, record in merged_from
+                if ent.id not in merged_into.merged_from:
+                    merged_into.merged_from.append(ent.id)
+                continue
+
+            # ── Original same-category containment logic ──
             # Check if this entity is fully contained by any kept entity (same category)
             is_contained = False
             for k in kept:

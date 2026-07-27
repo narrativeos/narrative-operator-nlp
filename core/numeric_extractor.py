@@ -55,6 +55,55 @@ _QUANTITY_PATTERNS = [
 ]
 
 
+def _normalize_date(text: str) -> str:
+    """Convert Chinese date expression to ISO format (YYYY-MM-DD / YYYY-MM / YYYY).
+    
+    Supports:
+    - 2024年1月15日 → 2024-01-15
+    - 2024年1月 → 2024-01
+    - 2024年 → 2024
+    - 2024-01-15 → 2024-01-15 (already ISO)
+    - 2024/01/15 → 2024-01-15
+    - 2024.01.15 → 2024-01-15
+    - 20240115 → 2024-01-15
+    """
+    # 2024年1月15日 (must match 日 to avoid group(3) being None)
+    m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", text)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    
+    # 2024年1月
+    m = re.match(r"(\d{4})年(\d{1,2})月", text)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    
+    # 2024年
+    m = re.match(r"(\d{4})年", text)
+    if m:
+        return m.group(1)
+    
+    # 2024-01-15 (already ISO)
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    
+    # 2024/01/15 → 2024-01-15
+    m = re.match(r"(\d{4})[/.](\d{1,2})[/.](\d{1,2})", text)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    
+    # 20240115 → 2024-01-15 (with validation)
+    m = re.match(r"(\d{4})(\d{2})(\d{2})", text)
+    if m:
+        month = int(m.group(2))
+        day = int(m.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        # Invalid date: fall through to return original
+    
+    return text  # Fallback: return original
+
+
 def extract_numeric_entities(
     text: str,
     existing_spans: set[tuple[int, int]],
@@ -88,12 +137,14 @@ def extract_numeric_entities(
                 ent_id = id_gen.generate(ent_text, span, "NUMBER")
                 if ent_id is None:
                     continue
+                # Step 7: Normalize date expressions
+                normalized = _normalize_date(ent_text) if source_name == "numeric/date" else ent_text
                 entities.append(Entity(
                     id=ent_id,
                     text=ent_text,
                     category="NUMBER",
                     span=span,
-                    normalized=ent_text,
+                    normalized=normalized,
                     source=source_name,
                     confidence=0.75,
                 ))

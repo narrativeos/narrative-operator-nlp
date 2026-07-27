@@ -538,48 +538,52 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
 </div>
 <div class="sample-cards" id="sampleCards">
-<!-- 现代汉语 -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('张三来到北京，他在清华大学攻读博士学位。该校位于海淀区，是中国最著名的大学之一。','modern')">
-  <span class="lang-tag">📄 现代-指代</span>
-  <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区……</span>
+<!-- 现代汉语（5卡 × 多句合并） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。','auto')">
+  <span class="lang-tag">📄 基础+新词</span>
+  <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndDict('苹果公司推出了iPhone，这款手机采用了最新的芯片技术。该公司总部位于加州库比蒂诺。','modern','库比蒂诺 加州库比蒂诺')">
-  <span class="lang-tag">📄 现代-指代+层级</span>
-  <span class="preview">苹果公司推出了iPhone，这款手机采用了最新的芯片技术……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('张三来到北京，他在清华大学攻读博士学位。该校位于海淀区，是中国最著名的大学之一。在这届世界杯上，中日韩三国的球队都踢得很出色，其中日本队的表现最为亮眼。','modern')">
+  <span class="lang-tag">📄 指代+层级+限定</span>
+  <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区。在这届世界杯上……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。','auto')">
-  <span class="lang-tag">📄 现代-基础</span>
-  <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('2024年3月15日，华为在上海发布了新一代芯片。该芯片采用7纳米工艺，性能提升50%。泰国总理于2024年1月访问北京，参观了清华大学并发表演讲。双方就清洁能源合作达成重要协议。','modern')">
+  <span class="lang-tag">📄 事件+时空+因果</span>
+  <span class="preview">2024年3月15日，华为在上海发布了新一代芯片。该芯片采用7纳米工艺。泰国总理……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('在这届世界杯中日韩都踢得很出色。','modern')">
-  <span class="lang-tag">📄 现代-限定词+层级</span>
-  <span class="preview">在这届世界杯中日韩都踢得很出色。</span>
+<div class="sample-card" onclick="setLanguageAndDict('苹果公司在加州库比蒂诺的总部发布了新款iPhone。该产品采用自研芯片，性能大幅提升。该公司总部位于加州，是全球最大的科技公司之一。','modern','iPhone 库比蒂诺 加州库比蒂诺')">
+  <span class="lang-tag">📄 冲突+去重</span>
+  <span class="preview">苹果公司在加州库比蒂诺的总部发布了新款iPhone。该产品采用自研芯片……</span>
 </div>
-<!-- 古汉语 -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕。','classical')">
-  <span class="lang-tag classical">🏯 古汉语-判断句</span>
-  <span class="preview">陈胜者，阳城人也，字涉。吴广者，阳夏人也……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('这种材料并非普通碳钢，而是具有极高的强度和极好的韧性，不易腐蚀，广泛应用于航空航天领域。北冥有鱼，其名为鲲。鲲之大，不知其几千里也。这种生物在传说中非常罕见。','auto')">
+  <span class="lang-tag">📄 修饰+否定+混语言</span>
+  <span class="preview">这种材料并非普通碳钢，而是具有极高的强度和极好的韧性，不易腐蚀。北冥有鱼……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。','classical')">
-  <span class="lang-tag classical">🏯 古汉语-指代</span>
-  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也……</span>
+<!-- 古汉语（3卡 × 多句合并） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕，辍耕之垄上。','classical')">
+  <span class="lang-tag classical">🏯 判断+表字</span>
+  <span class="preview">陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('见欺于王，何陋之有，不亦乐乎。孰与君少，非君子也。','classical')">
-  <span class="lang-tag classical">🏯 古汉语-句式</span>
-  <span class="preview">见欺于王，何陋之有，不亦乐乎。孰与君少……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。鹏之背，不知其几千里也。怒而飞，其翼若垂天之云。','classical')">
+  <span class="lang-tag classical">🏯 指代+名篇</span>
+  <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏……</span>
 </div>
-<!-- 英文 -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in California. He later started Pixar, which became a major animation studio.','english')">
-  <span class="lang-tag english">🇬🇧 英文-指代</span>
-  <span class="preview">Apple was founded by Steve Jobs in California. He later started Pixar……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('见欺于王，何陋之有？不亦乐乎？孰与君少，非君子也。十年春，齐师伐我。公将战，曹刿请见。其乡人曰：\'肉食者谋之，又何间焉？\'','classical')">
+  <span class="lang-tag classical">🏯 被动+句式+事件</span>
+  <span class="preview">见欺于王，何陋之有？不亦乐乎？十年春，齐师伐我。公将战，曹刿请见……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('Microsoft is based in Redmond. The company was founded by Bill Gates and Paul Allen.','english')">
-  <span class="lang-tag english">🇬🇧 英文-指代</span>
-  <span class="preview">Microsoft is based in Redmond. The company was founded by Bill Gates……</span>
+<!-- 英文（2卡 × 多句合并） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in 1976. He later started Pixar, which became a major animation studio. The company revolutionized the technology industry.','english')">
+  <span class="lang-tag english">🇬🇧 指代+事件</span>
+  <span class="preview">Apple was founded by Steve Jobs in 1976. He later started Pixar……</span>
+</div>
+<div class="sample-card" onclick="setLanguageAndAnalyze('Microsoft was founded by Bill Gates and Paul Allen. They developed Windows, which became the most popular operating system. The system transformed personal computing.','english')">
+  <span class="lang-tag english">🇬🇧 因果+产物</span>
+  <span class="preview">Microsoft was founded by Bill Gates and Paul Allen. They developed Windows……</span>
 </div>
 </div>
 <div class="input-area">
-<textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。</textarea>
+<textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。</textarea>
 <div style="display:flex;flex-direction:column;gap:6px">
 <button id="analyzeBtn" onclick="analyze()">🔍 分析</button>
 <select id="discoverMode" onchange="analyze()" style="padding:4px 8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;cursor:pointer">
@@ -590,7 +594,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 </div>
 </div>
 <div class="input-area" style="margin-bottom:16px">
-<input id="dictInput" value="碳钢 高强度 高韧性 立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
+<input id="dictInput" value="立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;font-family:inherit">
 </div>
 <div class="lang-selector">
 <label>📖 语言模式:</label>
@@ -603,12 +607,12 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
 <div class="tab" onclick="switchTab('pretty')">🎨 HanLP 原生可视化</div>
 <div class="tab" onclick="switchTab('depsvg')">🧬 依存树 SVG</div>
-<div class="tab" onclick="switchTab('discover')">🔍 新词发现</div>
+<div class="tab" onclick="switchTab('discover')">� 新词发现</div>
 <div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
 <div class="tab" onclick="switchTab('coref')">🔗 指代消解</div>
 <div class="tab" onclick="switchTab('langdetect')">🏯 语言检测</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
-<div class="tab" onclick="switchTab('api')">📋 API 接口</div>
+<div class="tab" onclick="switchTab('api')">�📋 API 接口</div>
 </div>
 <div id="nsp" class="panel active"></div>
 <div id="pretty" class="panel"></div>
@@ -1292,7 +1296,7 @@ window.onload=async function(){
 
     // Modern Chinese
     try{
-        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。',language:'auto'})});
+        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼。',language:'auto'})});
         const d=await r.json();
         _setModelStatus('modern','ready','✅ 已就绪');
         _renderResults(d);
@@ -1313,7 +1317,7 @@ window.onload=async function(){
     }catch(e){_setModelStatus('english','error','❌ 失败');}
 
     // Restore input to modern sample
-    document.getElementById('input').value='碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。';
+    document.getElementById('input').value='碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。';
     setLanguage('auto');
 };
 
