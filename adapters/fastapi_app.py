@@ -180,6 +180,31 @@ class AnalyzeRequest(BaseModel):
                     "control the recall/precision tradeoff. "
                     "Score threshold: 3.0+ (PMI). Source field: 'discover'.",
     )
+    # Summary options
+    summarize: bool = Field(
+        default=False,
+        description="If True, generate an extractive summary attached to content.summary",
+    )
+    summary_mode: str = Field(
+        default="chars",
+        description="Summary budget mode: 'chars' (fixed length) or 'ratio' (percentage of text)",
+    )
+    summary_chars: int = Field(
+        default=30,
+        description="Target character count for summary (used when summary_mode='chars')",
+    )
+    summary_ratio: float = Field(
+        default=0.2,
+        description="Target ratio of original text for summary (used when summary_mode='ratio')",
+    )
+    nsp_weight: float | None = Field(
+        default=None,
+        description="Override NSP feature weight for summary scoring (0.0-1.0)",
+    )
+    textrank_weight: float | None = Field(
+        default=None,
+        description="Override TextRank weight for summary scoring (0.0-1.0)",
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -238,6 +263,12 @@ async def analyze_endpoint(request: AnalyzeRequest):
             entity_dict=user_entity_dict,
             entity_categories=user_entity_categories,
             auto_discover_entities=request.auto_discover_entities,
+            summarize=request.summarize,
+            summary_mode=request.summary_mode,
+            summary_chars=request.summary_chars,
+            summary_ratio=request.summary_ratio,
+            nsp_weight=request.nsp_weight,
+            textrank_weight=request.textrank_weight,
         )
 
         true_new_words: list[str] | None = None
@@ -255,6 +286,12 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     entity_dict=user_entity_dict,
                     entity_categories=user_entity_categories,
                     auto_discover_entities=request.auto_discover_entities,
+                    summarize=request.summarize,
+                    summary_mode=request.summary_mode,
+                    summary_chars=request.summary_chars,
+                    summary_ratio=request.summary_ratio,
+                    nsp_weight=request.nsp_weight,
+                    textrank_weight=request.textrank_weight,
                 )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
@@ -264,6 +301,41 @@ async def analyze_endpoint(request: AnalyzeRequest):
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Extractive Summary Endpoint (standalone, no full analysis required)
+# ---------------------------------------------------------------------------
+
+class SummaryRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Raw text to summarize")
+    mode: str = Field(default="chars", description="Budget mode: 'chars' or 'ratio'")
+    target_chars: int = Field(default=30, description="Target character count (mode=chars)")
+    target_ratio: float = Field(default=0.2, description="Target ratio (mode=ratio)")
+    language: str = Field(default="auto", description="Language: auto, modern, classical, english")
+
+
+@app.post("/analyze/summary")
+async def analyze_summary(request: SummaryRequest):
+    """Generate an extractive summary without full NLP analysis.
+
+    Uses TextRank + position prior on raw text (no entities/events required).
+    For NSP-enhanced summarization, use /analyze with summarize=True.
+    """
+    try:
+        from core.summarizer import summarize_text
+        summary = summarize_text(
+            request.text,
+            mode=request.mode,
+            target_chars=request.target_chars,
+            target_ratio=request.target_ratio,
+            language=request.language,
+        )
+        return summary.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
 
@@ -538,52 +610,52 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
 </div>
 <div class="sample-cards" id="sampleCards">
-<!-- 现代汉语（5卡 × 多句合并） -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。','auto')">
-  <span class="lang-tag">📄 基础+新词</span>
-  <span class="preview">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是……</span>
+<!-- 现代汉语（5卡 × 长文本适合摘要） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务，为中小企业提供在线交易平台。2003年，阿里巴巴推出淘宝网，进军C2C电商领域，迅速成为中国最大的网上购物平台。2004年，支付宝成立，解决了网络交易的信任问题，后来发展为全球最大的第三方支付平台之一。2009年，阿里云成立，致力于打造云计算基础设施，现已成为中国最大的公有云服务商。2014年，阿里巴巴在纽约证券交易所上市，成为当时全球最大的IPO。此后，阿里巴巴持续拓展业务版图，涵盖电商、云计算、数字媒体、物流和本地生活等多个领域。2023年，阿里巴巴宣布启动"1+6+N"组织变革，将业务拆分为六大业务集团，以提升各业务单元的灵活性和竞争力。', 'auto')">
+  <span class="lang-tag">📄 企业+摘要</span>
+  <span class="preview">阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('张三来到北京，他在清华大学攻读博士学位。该校位于海淀区，是中国最著名的大学之一。在这届世界杯上，中日韩三国的球队都踢得很出色，其中日本队的表现最为亮眼。','modern')">
-  <span class="lang-tag">📄 指代+层级+限定</span>
-  <span class="preview">张三来到北京，他在清华大学攻读博士学位。该校位于海淀区。在这届世界杯上……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('张三于2020年从清华大学计算机系毕业，获得博士学位。他的研究方向是自然语言处理和知识图谱。毕业后，他加入百度研究院，担任高级算法工程师。在百度工作期间，他主导开发了新一代中文分词系统，准确率提升了15%。2022年，他参与构建了百度知识图谱2.0，覆盖实体超过10亿。2023年，他转投阿里巴巴达摩院，继续深耕大语言模型方向。目前，他负责阿里通义千问模型的优化工作，在推理速度和生成质量方面取得了显著进展。', 'modern')">
+  <span class="lang-tag">📄 人物+摘要</span>
+  <span class="preview">张三于2020年从清华大学计算机系毕业，获得博士学位。他的研究方向是自然语言处理……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('2024年3月15日，华为在上海发布了新一代芯片。该芯片采用7纳米工艺，性能提升50%。泰国总理于2024年1月访问北京，参观了清华大学并发表演讲。双方就清洁能源合作达成重要协议。','modern')">
-  <span class="lang-tag">📄 事件+时空+因果</span>
-  <span class="preview">2024年3月15日，华为在上海发布了新一代芯片。该芯片采用7纳米工艺。泰国总理……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('2024年5月28日，百度在北京举办了AI开发者大会。大会上，百度正式发布了文心大模型4.0专业版，支持超长上下文窗口，可处理超过25万字的文档。百度CEO李彦宏表示，文心大模型已在金融、医疗、法律等多个行业落地应用。同日，百度还发布了飞桨深度学习框架6.0版本，新增了对多模态任务的全面支持。在自动驾驶领域，百度Apollo宣布累计测试里程突破1000万公里，已在10个城市开展Robotaxi商业化运营。此外，百度还发布了智能云新战略，提出"云智一体"理念，将AI能力深度融入云计算服务。百度还与清华大学联合成立了AI联合实验室，聚焦大模型基础研究和产业应用。', 'modern')">
+  <span class="lang-tag">📄 事件+摘要</span>
+  <span class="preview">2024年5月28日，百度在北京举办了AI开发者大会。大会上，百度正式发布了文心大模型……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndDict('苹果公司在加州库比蒂诺的总部发布了新款iPhone。该产品采用自研芯片，性能大幅提升。该公司总部位于加州，是全球最大的科技公司之一。','modern','iPhone 库比蒂诺 加州库比蒂诺')">
-  <span class="lang-tag">📄 冲突+去重</span>
-  <span class="preview">苹果公司在加州库比蒂诺的总部发布了新款iPhone。该产品采用自研芯片……</span>
+<div class="sample-card" onclick="setLanguageAndDict('苹果公司在加州库比蒂诺的总部发布了新款iPhone 16 Pro。该产品搭载A18 Pro芯片，采用台积电3纳米工艺，CPU性能提升25%，GPU性能提升40%。iPhone 16 Pro配备6.3英寸和6.9英寸两种尺寸的OLED屏幕，支持120Hz自适应刷新率。在AI方面，苹果推出了Apple Intelligence，深度集成于Siri和系统级应用中。该产品起售价为799美元，于9月20日正式开售。分析师预计，iPhone 16系列首季度销量将超过8000万台，同比增长10%。苹果公司总部位于加州库比蒂诺，是全球市值最高的科技公司之一。', 'modern', 'iPhone 16 Pro A18 Pro 库比蒂诺 Apple Intelligence')">
+  <span class="lang-tag">📄 产品+摘要</span>
+  <span class="preview">苹果公司在加州库比蒂诺的总部发布了新款iPhone 16 Pro。该产品搭载A18 Pro芯片……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('这种材料并非普通碳钢，而是具有极高的强度和极好的韧性，不易腐蚀，广泛应用于航空航天领域。北冥有鱼，其名为鲲。鲲之大，不知其几千里也。这种生物在传说中非常罕见。','auto')">
-  <span class="lang-tag">📄 修饰+否定+混语言</span>
-  <span class="preview">这种材料并非普通碳钢，而是具有极高的强度和极好的韧性，不易腐蚀。北冥有鱼……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('北京立方庭位于海淀区中关村核心区域，是一栋甲级写字楼。总建筑面积约5万平方米，地上28层，地下3层。建筑高度120米，于2018年竣工投入使用。立方庭采用全玻璃幕墙设计，获得LEED金级认证。该建筑配备智能楼宇管理系统，可实现能耗自动优化。周边交通便利，距离地铁4号线中关村站仅200米。立方庭入驻企业包括多家知名科技公司和金融机构。物业管理由仲量联行负责，提供24小时安保和前台服务。', 'auto')">
+  <span class="lang-tag">📄 建筑+摘要</span>
+  <span class="preview">北京立方庭位于海淀区中关村核心区域，是一栋甲级写字楼。总建筑面积约5万平方米……</span>
 </div>
-<!-- 古汉语（3卡 × 多句合并） -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕，辍耕之垄上。','classical')">
-  <span class="lang-tag classical">🏯 判断+表字</span>
+<!-- 古汉语（3卡 × 长文本适合摘要） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕，辍耕之垄上，怅恨久之，曰：'苟富贵，无相忘。'佣者笑而应曰：'若为佣耕，何富贵也？'陈涉太息曰：'嗟乎，燕雀安知鸿鹄之志哉！'二世元年七月，发闾左適戍渔阳，九百人屯大泽乡。陈胜吴广皆次当行，为屯长。会天大雨，道不通，度已失期。失期，法皆斩。陈胜吴广乃谋曰：'今亡亦死，举大计亦死，等死，死国可乎？'陈胜曰：'天下苦秦久矣。'卒买鱼烹食，得鱼腹中书，曰'陈胜王'。卒皆夜惊恐。又间令吴广之次所旁丛祠中，夜篝火，狐鸣呼曰：'大楚兴，陈胜王。'卒皆夜惊恐。旦日，卒中往往语，皆指目陈胜。', 'classical')">
+  <span class="lang-tag classical">🏯 陈涉世家+摘要</span>
   <span class="preview">陈胜者，阳城人也，字涉。吴广者，阳夏人也，字叔。陈涉少时，尝与人佣耕……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。鹏之背，不知其几千里也。怒而飞，其翼若垂天之云。','classical')">
-  <span class="lang-tag classical">🏯 指代+名篇</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。鹏之背，不知其几千里也。怒而飞，其翼若垂天之云。是鸟也，海运则将徙于南冥。南冥者，天池也。《齐谐》者，志怪者也。《谐》之言曰：'鹏之徙于南冥也，水击三千里，抟扶摇而上者九万里，绝云气，负青天，然后图南，且适南冥也。'斥鴳笑之曰：'彼且奚适也？我腾跃而上，不过数仞而下，翱翔蓬蒿之间，此亦飞之至也。'而彼且奚适也？此小大之辩也。', 'classical')">
+  <span class="lang-tag classical">🏯 逍遥游+摘要</span>
   <span class="preview">北冥有鱼，其名为鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('见欺于王，何陋之有？不亦乐乎？孰与君少，非君子也。十年春，齐师伐我。公将战，曹刿请见。其乡人曰：\'肉食者谋之，又何间焉？\'','classical')">
-  <span class="lang-tag classical">🏯 被动+句式+事件</span>
-  <span class="preview">见欺于王，何陋之有？不亦乐乎？十年春，齐师伐我。公将战，曹刿请见……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('十年春，齐师伐我。公将战，曹刿请见。其乡人曰：'肉食者谋之，又何间焉？'刿曰：'肉食者鄙，未能远谋。'乃入见。问：'何以战？'公曰：'衣食所安，弗敢专也，必以分人。'对曰：'小惠未遍，民弗从也。'公曰：'牺牲玉帛，弗敢加也，必以信。'对曰：'小信未孚，神弗福也。'公曰：'小大之狱，虽不能察，必以情。'对曰：'忠之属也，可以一战。战则请从。'公与之乘，战于长勺。公将鼓之。刿曰：'未可。'齐人三鼓。刿曰：'可矣。'齐师败绩。公将驰之。刿曰：'未可。'下视其辙，登轼而望之，曰：'可矣。'遂逐齐师。既克，公问其故。对曰：'夫战，勇气也。一鼓作气，再而衰，三而竭。彼竭我盈，故克之。' ', 'classical')">
+  <span class="lang-tag classical">🏯 曹刿论战+摘要</span>
+  <span class="preview">十年春，齐师伐我。公将战，曹刿请见。其乡人曰：'肉食者谋之……</span>
 </div>
-<!-- 英文（2卡 × 多句合并） -->
-<div class="sample-card" onclick="setLanguageAndAnalyze('Apple was founded by Steve Jobs in 1976. He later started Pixar, which became a major animation studio. The company revolutionized the technology industry.','english')">
-  <span class="lang-tag english">🇬🇧 指代+事件</span>
-  <span class="preview">Apple was founded by Steve Jobs in 1976. He later started Pixar……</span>
+<!-- 英文（2卡 × 长文本适合摘要） -->
+<div class="sample-card" onclick="setLanguageAndAnalyze('Apple Inc. was founded by Steve Jobs, Steve Wozniak, and Ronald Wayne on April 1, 1976, in Cupertino, California. The company initially focused on personal computers, with the Apple I and Apple II becoming commercial successes. In 1984, Apple introduced the Macintosh, the first mass-market computer with a graphical user interface. After Jobs was ousted in 1985, he returned in 1997 and transformed the company. Under his leadership, Apple launched the iMac, iPod, iPhone, and iPad, revolutionizing multiple industries. The iPhone, released in 2007, became the best-selling smartphone worldwide. As of 2024, Apple is the world\'s most valuable company, with a market capitalization exceeding $3 trillion. The company generates over $380 billion in annual revenue, with services including Apple Music, iCloud, and the App Store contributing significantly to its growth.', 'english')">
+  <span class="lang-tag english">🇬🇧 Apple+Summary</span>
+  <span class="preview">Apple Inc. was founded by Steve Jobs, Steve Wozniak, and Ronald Wayne……</span>
 </div>
-<div class="sample-card" onclick="setLanguageAndAnalyze('Microsoft was founded by Bill Gates and Paul Allen. They developed Windows, which became the most popular operating system. The system transformed personal computing.','english')">
-  <span class="lang-tag english">🇬🇧 因果+产物</span>
-  <span class="preview">Microsoft was founded by Bill Gates and Paul Allen. They developed Windows……</span>
+<div class="sample-card" onclick="setLanguageAndAnalyze('Microsoft Corporation was founded by Bill Gates and Paul Allen on April 4, 1975, in Albuquerque, New Mexico. The company\'s first product was an interpreter for the BASIC programming language. In 1981, Microsoft developed MS-DOS for IBM\'s first personal computer, which became the industry standard. Windows 3.0, released in 1990, was the first truly successful graphical operating system. Windows 95 introduced the Start menu and taskbar, becoming a cultural phenomenon. In 2014, Satya Nadella became CEO and shifted Microsoft\'s focus to cloud computing and AI. Azure, launched in 2010, became the second-largest cloud platform globally. Microsoft acquired LinkedIn in 2016 and GitHub in 2018, expanding its developer ecosystem. The company\'s Copilot AI assistant, powered by OpenAI\'s GPT models, has been integrated across its product suite. As of 2024, Microsoft is valued at over $3 trillion.', 'english')">
+  <span class="lang-tag english">🇬🇧 Microsoft+Summary</span>
+  <span class="preview">Microsoft Corporation was founded by Bill Gates and Paul Allen……</span>
 </div>
 </div>
 <div class="input-area">
-<textarea id="input" placeholder="输入中文文本进行分析...">碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。</textarea>
+<textarea id="input" placeholder="输入中文文本进行分析...">阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务，为中小企业提供在线交易平台。2003年，阿里巴巴推出淘宝网，进军C2C电商领域，迅速成为中国最大的网上购物平台。2004年，支付宝成立，解决了网络交易的信任问题，后来发展为全球最大的第三方支付平台之一。2009年，阿里云成立，致力于打造云计算基础设施，现已成为中国最大的公有云服务商。2014年，阿里巴巴在纽约证券交易所上市，成为当时全球最大的IPO。此后，阿里巴巴持续拓展业务版图，涵盖电商、云计算、数字媒体、物流和本地生活等多个领域。2023年，阿里巴巴宣布启动"1+6+N"组织变革，将业务拆分为六大业务集团，以提升各业务单元的灵活性和竞争力。</textarea>
 <div style="display:flex;flex-direction:column;gap:6px">
 <button id="analyzeBtn" onclick="analyze()">🔍 分析</button>
 <select id="discoverMode" onchange="analyze()" style="padding:4px 8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:11px;cursor:pointer">
@@ -603,6 +675,11 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <label class="lang-option" id="langClassical" onclick="setLanguage('classical')"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
 <label class="lang-option" id="langEnglish" onclick="setLanguage('english')"><input type="radio" name="lang" value="english">🇬🇧 English</label>
 </div>
+<div class="lang-selector">
+<label>📝 摘要:</label>
+<label class="lang-option active" id="sumChars" onclick="setSummaryMode('chars')"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> 字</label>
+<label class="lang-option" id="sumRatio" onclick="setSummaryMode('ratio')"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> (20%)</label>
+</div>
 <div class="tabs">
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
 <div class="tab" onclick="switchTab('pretty')">🎨 HanLP 原生可视化</div>
@@ -611,8 +688,9 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('patterns')">📊 句式模式</div>
 <div class="tab" onclick="switchTab('coref')">🔗 指代消解</div>
 <div class="tab" onclick="switchTab('langdetect')">🏯 语言检测</div>
+<div class="tab" onclick="switchTab('summary')">📝 摘要</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
-<div class="tab" onclick="switchTab('api')">�📋 API 接口</div>
+<div class="tab" onclick="switchTab('api')">📋 API 接口</div>
 </div>
 <div id="nsp" class="panel active"></div>
 <div id="pretty" class="panel"></div>
@@ -621,6 +699,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div id="patterns" class="panel"></div>
 <div id="coref" class="panel"></div>
 <div id="langdetect" class="panel"></div>
+<div id="summary" class="panel"></div>
 <div id="json" class="panel"></div>
 <div id="api" class="panel"></div>
 </main>
@@ -628,7 +707,18 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 let _currentLang='auto';
 function setLanguage(lang){
     _currentLang=lang;
-    document.querySelectorAll('.lang-option').forEach(el=>el.classList.toggle('active', el.id==='lang'+lang.charAt(0).toUpperCase()+lang.slice(1)));
+    ['langAuto','langModern','langClassical','langEnglish'].forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.classList.toggle('active', id==='lang'+lang.charAt(0).toUpperCase()+lang.slice(1));
+    });
+    analyze();
+}
+
+let _summaryMode='chars';
+function setSummaryMode(mode){
+    _summaryMode=mode;
+    document.getElementById('sumChars').classList.toggle('active', mode==='chars');
+    document.getElementById('sumRatio').classList.toggle('active', mode==='ratio');
     analyze();
 }
 
@@ -641,10 +731,14 @@ async function analyze(){
     const discover=mode==='discover';
     const enhance=mode==='enhance';
     const language=_currentLang;
-    const body={text, dict_combine: dictCombine, discover, enhance, language, entity_dict: {}};
+    const summarize=true;
+    const summary_mode=_summaryMode;
+    const summary_chars=parseInt(document.getElementById('sumCharsVal').value)||30;
+    const summary_ratio=parseFloat(document.getElementById('sumRatioVal').value)||0.2;
+    const body={text, dict_combine: dictCombine, discover, enhance, language, entity_dict: {}, summarize, summary_mode, summary_chars, summary_ratio};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
-    ['nsp','pretty','depsvg','discover','patterns','langdetect','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
+    ['nsp','pretty','depsvg','discover','patterns','langdetect','summary','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
@@ -666,6 +760,7 @@ async function analyze(){
     if(patData&&patData.length) renderPatterns(patData); else document.getElementById('patterns').innerHTML='<div class="card"><h3>📊 句式模式</h3><span style="color:#484f58">无模式数据</span></div>';
     renderLangDetect(r1);
     renderCoref(r1);
+    renderSummary(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
@@ -1166,6 +1261,43 @@ function renderCoref(data){
     document.getElementById('coref').innerHTML=`<div class="card"><h3>🔗 指代消解 <small style="color:#484f58;font-weight:normal">${chains.length} 条指代链</small></h3>${html}</div>`;
 }
 
+function renderSummary(data){
+    if(!data||!data.content||!data.content.summary){
+        document.getElementById('summary').innerHTML='<div class="card"><h3>📝 摘要</h3><span style="color:#484f58">未生成摘要（文本过短或无句子结构）</span></div>';
+        return;
+    }
+    const s=data.content.summary;
+    const methodLabel=s.method==='nsp+textrank'?'NSP+TextRank 融合':s.method==='textrank'?'TextRank':'未知';
+    const modeLabel=s.mode==='chars'?`按字数 (${s.target_chars}字)`:s.mode==='ratio'?`按比例 (${(s.target_ratio*100).toFixed(0)}%)`:'';
+    const ratio=s.total_sentences>0?Math.round((s.key_sentences.length/s.total_sentences)*100):0;
+    const fusionInfo=s.fusion_weights?`<div style="margin-top:8px;font-size:11px;color:#8b949e">权重: NSP=${(s.fusion_weights.nsp_weight||0).toFixed(2)} / TextRank=${(s.fusion_weights.textrank_weight||0).toFixed(2)}</div>`:'';
+
+    // Key sentences with scores
+    const sentencesHtml=(s.key_sentences||[]).map((ks,i)=>{
+        const nsp=ks.nsp_score!==undefined?`<span style="color:#e3b341;margin-left:4px">NSP:${ks.nsp_score.toFixed(2)}</span>`:'';
+        const tr=ks.textrank_score!==undefined?`<span style="color:#79c0ff;margin-left:4px">TR:${ks.textrank_score.toFixed(2)}</span>`:'';
+        const entities=(ks.entities||[]).map(e=>`<span style="background:#1a3a1a;color:#7ee787;padding:1px 4px;border-radius:2px;font-size:10px;margin:1px">${esc(e)}</span>`).join('');
+        const events=(ks.events||[]).map(e=>`<span style="background:#1a1a3a;color:#79c0ff;padding:1px 4px;border-radius:2px;font-size:10px;margin:1px">${esc(e)}</span>`).join('');
+        return `<div style="padding:8px 12px;margin:4px 0;background:#0d1117;border-radius:4px;border-left:3px solid #58a6ff">
+            <div style="font-size:13px;color:#c9d1d9">${esc(ks.text)}</div>
+            <div style="font-size:11px;color:#8b949e;margin-top:4px">
+                <span style="color:#7ee787">综合:${(ks.score||0).toFixed(3)}</span>${nsp}${tr}
+                <span style="margin-left:8px;color:#484f58">[句${ks.sentence_index+1}]</span>
+            </div>
+            ${entities||events?`<div style="margin-top:4px">${entities}${events}</div>`:''}
+        </div>`;
+    }).join('');
+
+    document.getElementById('summary').innerHTML=`
+    <div class="card">
+        <h3>📝 摘要 <small style="color:#484f58;font-weight:normal">${methodLabel} · ${modeLabel} · ${s.key_sentences.length}/${s.total_sentences} 句 (${ratio}%)</small></h3>
+        ${fusionInfo}
+        ${s.summary_text?`<div style="padding:12px;background:#0d1117;border-radius:4px;margin-bottom:12px;font-size:14px;line-height:1.8;color:#c9d1d9;border:1px solid #30363d">${esc(s.summary_text)}</div>`:''}
+        <h4 style="font-size:12px;color:#8b949e;margin-bottom:8px">关键句 (按综合得分排序)</h4>
+        ${sentencesHtml||'<span style="color:#484f58">无关键句</span>'}
+    </div>`;
+}
+
 function renderJSON(data){
     document.getElementById('json').innerHTML=`<div class="card"><pre class="pretty">${escapeHtml(JSON.stringify(data,null,2))}</pre></div>`;
 }
@@ -1315,7 +1447,7 @@ window.onload=async function(){
 
     // Modern Chinese
     try{
-        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼。',language:'auto'})});
+        const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务，为中小企业提供在线交易平台。2003年，阿里巴巴推出淘宝网，进军C2C电商领域，迅速成为中国最大的网上购物平台。2004年，支付宝成立，解决了网络交易的信任问题，后来发展为全球最大的第三方支付平台之一。2009年，阿里云成立，致力于打造云计算基础设施，现已成为中国最大的公有云服务商。2014年，阿里巴巴在纽约证券交易所上市，成为当时全球最大的IPO。此后，阿里巴巴持续拓展业务版图，涵盖电商、云计算、数字媒体、物流和本地生活等多个领域。2023年，阿里巴巴宣布启动"1+6+N"组织变革，将业务拆分为六大业务集团，以提升各业务单元的灵活性和竞争力。',language:'auto'})});
         const d=await r.json();
         _setModelStatus('modern','ready','✅ 已就绪');
         _renderResults(d);
@@ -1336,7 +1468,7 @@ window.onload=async function(){
     }catch(e){_setModelStatus('english','error','❌ 失败');}
 
     // Restore input to modern sample
-    document.getElementById('input').value='碳钢是钢的一种，具有高强度和高韧性。北京立方庭位于海淀区。立方庭是一栋现代化办公楼，总建筑面积约5万平方米。';
+    document.getElementById('input').value='阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务，为中小企业提供在线交易平台。2003年，阿里巴巴推出淘宝网，进军C2C电商领域，迅速成为中国最大的网上购物平台。2004年，支付宝成立，解决了网络交易的信任问题，后来发展为全球最大的第三方支付平台之一。2009年，阿里云成立，致力于打造云计算基础设施，现已成为中国最大的公有云服务商。2014年，阿里巴巴在纽约证券交易所上市，成为当时全球最大的IPO。此后，阿里巴巴持续拓展业务版图，涵盖电商、云计算、数字媒体、物流和本地生活等多个领域。2023年，阿里巴巴宣布启动"1+6+N"组织变革，将业务拆分为六大业务集团，以提升各业务单元的灵活性和竞争力。';
     setLanguage('auto');
 };
 
@@ -1350,6 +1482,7 @@ function _setModelStatus(model,state,label){
 function _renderResults(data){
     renderNSP(data);
     renderJSON(data);
+    renderSummary(data);
     const patData=data.content&&data.content.patterns;
     if(patData&&patData.length) renderPatterns(patData);
     renderLangDetect(data);

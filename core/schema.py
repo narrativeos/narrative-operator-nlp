@@ -593,6 +593,38 @@ class Event(BaseModel):
         return v
 
 
+class KeySentence(BaseModel):
+    """A key sentence selected for extractive summary."""
+    sentence_index: int = Field(..., description="Index into content.sentences list")
+    text: str = Field(..., description="Sentence text")
+    span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+    score: float = Field(..., description="Fused importance score [0,1]")
+    reasons: list[str] = Field(default_factory=list, description="Human-readable reasons for selection")
+    source: str = Field(default="summarizer", description="Extraction source, e.g. summarizer")
+
+    @field_validator("span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+
+class Summary(BaseModel):
+    """Extractive summary result attached to NarrativeContent."""
+    key_sentences: list[KeySentence] = Field(default_factory=list, description="Selected key sentences in order")
+    summary_text: str = Field(default="", description="Concatenated summary text")
+    method: str = Field(default="nsp_textrank", description="Summarization method, e.g. nsp_textrank")
+    mode: str = Field(default="chars", description="Budget mode: chars or ratio")
+    target_chars: int = Field(default=30, description="Target character count (mode=chars)")
+    target_ratio: float = Field(default=0.2, description="Target ratio of original text (mode=ratio)")
+    fusion_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description="Actual effective weights used: {nsp, textrank, language, nsp_weight, textrank_weight}",
+    )
+    total_sentences: int = Field(default=0, description="Total number of sentences in source text")
+
+
 class NarrativeContent(BaseModel):
     """Content payload of a NarrativeDocument."""
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
@@ -612,4 +644,8 @@ class NarrativeContent(BaseModel):
     structural: dict = Field(
         default_factory=dict,
         description="Raw NLP engine output (for debugging only)",
+    )
+    summary: Summary | None = Field(
+        default=None,
+        description="Extractive summary of the document (optional, populated when summarize=True)",
     )

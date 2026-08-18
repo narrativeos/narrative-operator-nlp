@@ -551,6 +551,12 @@ def analyze(
     entity_dict: dict[str, str] | None = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
+    summarize: bool = False,
+    summary_mode: str = "chars",
+    summary_chars: int = 30,
+    summary_ratio: float = 0.2,
+    nsp_weight: Optional[float] = None,
+    textrank_weight: Optional[float] = None,
 ) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
@@ -574,6 +580,13 @@ def analyze(
             Keywords with categories not in EntityCategory.ALL are mapped to UNKNOWN.
         auto_discover_entities: If True, run new word discovery (PMI+MTL)
             and promote high-score candidates to UNKNOWN entities. Default False.
+        summarize: If True, generate an extractive summary and attach to
+            ``content.summary``. Default False.
+        summary_mode: "chars" (fixed character count) or "ratio" (percentage).
+        summary_chars: Target character count (default 30, used when mode="chars").
+        summary_ratio: Target ratio of original text (default 0.2, used when mode="ratio").
+        nsp_weight: Override NSP weight for summary scoring.
+        textrank_weight: Override TextRank weight for summary scoring.
 
     Modern Chinese  -> MTL (ELECTRA-small)
     Classical Chinese -> LZH (KYOTO-EVAHAN)
@@ -747,7 +760,7 @@ def analyze(
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
-    return NarrativeDocument(
+    doc = NarrativeDocument(
         meta=NarrativeMeta(
             source=meta_source,
             text_length=len(text),
@@ -761,3 +774,17 @@ def analyze(
             sentences=sentence_objects, structural={},
         ),
     )
+
+    # Optional extractive summary (computed after doc is fully built)
+    if summarize:
+        from .summarizer import summarize as _summarize
+        doc.content.summary = _summarize(
+            doc,
+            mode=summary_mode,
+            target_chars=summary_chars,
+            target_ratio=summary_ratio,
+            nsp_weight=nsp_weight,
+            textrank_weight=textrank_weight,
+        )
+
+    return doc

@@ -64,6 +64,33 @@ class TestFastAPIAdapter:
         assert "/analyze" in schema["paths"]
         assert "/health" in schema["paths"]
 
+    def test_analyze_summary_endpoint(self, client):
+        response = client.post("/analyze/summary", json={
+            "text": "张三来了。李四走了。王五到了。",
+            "mode": "chars",
+            "target_chars": 10,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert "key_sentences" in data
+        assert "summary_text" in data
+        assert "fusion_weights" in data
+
+    def test_analyze_summary_ratio_mode(self, client):
+        response = client.post("/analyze/summary", json={
+            "text": "aaaaaaa。bbbbbbb。ccccccc。",
+            "mode": "ratio",
+            "target_ratio": 0.5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mode"] == "ratio"
+        assert data["target_ratio"] == 0.5
+
+    def test_analyze_summary_empty_text(self, client):
+        response = client.post("/analyze/summary", json={"text": ""})
+        assert response.status_code == 422 or response.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # MCP Adapter Tests
@@ -153,6 +180,56 @@ class TestMCPAdapter:
         assert "inputSchema" in TOOL_DEFINITION
         assert "text" in TOOL_DEFINITION["inputSchema"]["properties"]
         assert "text" in TOOL_DEFINITION["inputSchema"]["required"]
+
+    def test_summarize_tool_definition(self):
+        """Verify the summarize_text tool is defined."""
+        from adapters.mcp_server import SUMMARIZE_TOOL_DEFINITION
+        assert SUMMARIZE_TOOL_DEFINITION["name"] == "summarize_text"
+        assert "inputSchema" in SUMMARIZE_TOOL_DEFINITION
+        assert "text" in SUMMARIZE_TOOL_DEFINITION["inputSchema"]["properties"]
+        assert "mode" in SUMMARIZE_TOOL_DEFINITION["inputSchema"]["properties"]
+
+    def test_tools_list_includes_summarize(self, handler):
+        """tools/list should include both analyze_text and summarize_text."""
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/list",
+        })
+        assert response is not None
+        tools = response["result"]["tools"]
+        names = [t["name"] for t in tools]
+        assert "analyze_text" in names
+        assert "summarize_text" in names
+
+    def test_summarize_text_missing_text(self, handler):
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "summarize_text", "arguments": {}},
+        })
+        assert response is not None
+        assert "error" in response
+
+    def test_summarize_text_basic(self, handler):
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "summarize_text",
+                "arguments": {
+                    "text": "张三来了。李四走了。王五到了。",
+                    "mode": "chars",
+                    "target_chars": 10,
+                },
+            },
+        })
+        assert response is not None
+        assert "result" in response
+        content = response["result"]["content"][0]["text"]
+        assert "key_sentences" in content
 
 
 # ---------------------------------------------------------------------------

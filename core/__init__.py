@@ -14,6 +14,24 @@ Protocol-Free NLP analysis core. Contains:
 - relation_mapper.py: Relation extraction rules (dependency + SRL → triples)
 """
 
+from core.schema import (
+    NarrativeDocument,
+    NarrativeMeta,
+    Token,
+    Entity,
+    Relation,
+    KeySentence,
+    Summary,
+)
+from core.analyzer import analyze, HanlpSchemaMapper
+from core.summarizer import summarize, summarize_text
+from core.entity_mapper import EntityMappingRules
+from core.ner_label_mapper import NerLabelMapper
+from core.keyword_extractor import KeywordExtractor
+from core.entity_merger import EntityMerger
+from core.entity_deduplicator import EntityDeduplicator
+from core.entity_id_generator import EntityIdGenerator
+
 __all__ = [
     # Schema
     "NarrativeDocument",
@@ -21,9 +39,14 @@ __all__ = [
     "Token",
     "Entity",
     "Relation",
+    "KeySentence",
+    "Summary",
     # Analysis
     "analyze",
     "HanlpSchemaMapper",
+    # Summarization
+    "summarize",
+    "summarize_text",
     # Entity extraction components
     "EntityMappingRules",
     "NerLabelMapper",

@@ -62,6 +62,10 @@
         "structural": {
           "type": "object",
           "description": "Raw NLP engine output (debug only)"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary",
+          "description": "Extractive summary of the document (optional)"
         }
       }
     }
@@ -239,6 +243,42 @@
           "type": "string",
           "description": "Extraction source, e.g. dep (dependency), srl"
         }
+      }
+    },
+    "KeySentence": {
+      "type": "object",
+      "required": ["text", "score", "sentence_index"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "score": { "type": "number" },
+        "sentence_index": { "type": "integer", "minimum": 0 },
+        "nsp_score": { "type": "number" },
+        "textrank_score": { "type": "number" },
+        "entities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "events": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "Summary": {
+      "type": "object",
+      "description": "Extractive summary of the document",
+      "properties": {
+        "key_sentences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/KeySentence" }
+        },
+        "summary_text": { "type": "string" },
+        "method": { "type": "string" },
+        "mode": { "type": "string", "enum": ["chars", "ratio"] },
+        "target_chars": { "type": "integer", "minimum": 0 },
+        "target_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "fusion_weights": { "type": "object" },
+        "total_sentences": { "type": "integer", "minimum": 0 }
       }
     }
   }
