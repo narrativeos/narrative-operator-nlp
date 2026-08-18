@@ -22,9 +22,11 @@ from core.schema import (
     Relation,
     KeySentence,
     Summary,
+    Title,
 )
 from core.analyzer import analyze, HanlpSchemaMapper
 from core.summarizer import summarize, summarize_text
+from core.titler import generate_title, generate_title_text
 from core.entity_mapper import EntityMappingRules
 from core.ner_label_mapper import NerLabelMapper
 from core.keyword_extractor import KeywordExtractor
@@ -47,6 +49,10 @@ __all__ = [
     # Summarization
     "summarize",
     "summarize_text",
+    # Title Generation
+    "Title",
+    "generate_title",
+    "generate_title_text",
     # Entity extraction components
     "EntityMappingRules",
     "NerLabelMapper",

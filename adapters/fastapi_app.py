@@ -205,6 +205,23 @@ class AnalyzeRequest(BaseModel):
         default=None,
         description="Override TextRank weight for summary scoring (0.0-1.0)",
     )
+    # Title options
+    generate_title: bool = Field(
+        default=False,
+        description="If True, generate a title attached to content.title",
+    )
+    title_mode: str = Field(
+        default="chars",
+        description="Title budget mode: 'chars' (fixed length) or 'ratio' (percentage of text)",
+    )
+    title_chars: int = Field(
+        default=14,
+        description="Target character count for title (used when title_mode='chars')",
+    )
+    title_ratio: float = Field(
+        default=0.05,
+        description="Target ratio of original text for title (used when title_mode='ratio')",
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -269,6 +286,10 @@ async def analyze_endpoint(request: AnalyzeRequest):
             summary_ratio=request.summary_ratio,
             nsp_weight=request.nsp_weight,
             textrank_weight=request.textrank_weight,
+            generate_title=request.generate_title,
+            title_mode=request.title_mode,
+            title_chars=request.title_chars,
+            title_ratio=request.title_ratio,
         )
 
         true_new_words: list[str] | None = None
@@ -292,6 +313,10 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     summary_ratio=request.summary_ratio,
                     nsp_weight=request.nsp_weight,
                     textrank_weight=request.textrank_weight,
+                    generate_title=request.generate_title,
+                    title_mode=request.title_mode,
+                    title_chars=request.title_chars,
+                    title_ratio=request.title_ratio,
                 )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)
@@ -334,6 +359,41 @@ async def analyze_summary(request: SummaryRequest):
             language=request.language,
         )
         return summary.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Title Generation Endpoint (standalone, no full analysis required)
+# ---------------------------------------------------------------------------
+
+class TitleRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Raw text to generate title for")
+    mode: str = Field(default="chars", description="Budget mode: 'chars' or 'ratio'")
+    target_chars: int = Field(default=14, description="Target character count (mode=chars)")
+    target_ratio: float = Field(default=0.05, description="Target ratio (mode=ratio)")
+    language: str = Field(default="auto", description="Language: auto, modern, classical, english")
+
+
+@app.post("/analyze/title")
+async def analyze_title(request: TitleRequest):
+    """Generate a title from raw text without full NLP analysis.
+
+    Uses TextRank to find the most important sentence, then truncates.
+    For entity-composition titles, use /analyze with generate_title=True.
+    """
+    try:
+        from core.titler import generate_title_text
+        title = generate_title_text(
+            request.text,
+            mode=request.mode,
+            target_chars=request.target_chars,
+            target_ratio=request.target_ratio,
+            language=request.language,
+        )
+        return title.model_dump()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -680,6 +740,11 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <label class="lang-option active" id="sumChars" onclick="setSummaryMode('chars')"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> 字</label>
 <label class="lang-option" id="sumRatio" onclick="setSummaryMode('ratio')"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> (20%)</label>
 </div>
+<div class="lang-selector">
+<label>🏷️ 标题:</label>
+<label class="lang-option active" id="ttlChars" onclick="setTitleMode('chars')"><input type="radio" name="ttlmode" value="chars" checked>按字数: <input id="ttlCharsVal" type="number" value="14" min="5" max="100" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> 字</label>
+<label class="lang-option" id="ttlRatio" onclick="setTitleMode('ratio')"><input type="radio" name="ttlmode" value="ratio">按比例: <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" style="width:50px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#c9d1d9;font-size:11px;padding:1px 4px" onchange="analyze()"> (5%)</label>
+</div>
 <div class="tabs">
 <div class="tab active" onclick="switchTab('nsp')">📊 NSP 结构化</div>
 <div class="tab" onclick="switchTab('pretty')">🎨 HanLP 原生可视化</div>
@@ -689,6 +754,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div class="tab" onclick="switchTab('coref')">🔗 指代消解</div>
 <div class="tab" onclick="switchTab('langdetect')">🏯 语言检测</div>
 <div class="tab" onclick="switchTab('summary')">📝 摘要</div>
+<div class="tab" onclick="switchTab('title')">🏷️ 标题</div>
 <div class="tab" onclick="switchTab('json')">{ } JSON Raw</div>
 <div class="tab" onclick="switchTab('api')">📋 API 接口</div>
 </div>
@@ -700,6 +766,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <div id="coref" class="panel"></div>
 <div id="langdetect" class="panel"></div>
 <div id="summary" class="panel"></div>
+<div id="title" class="panel"></div>
 <div id="json" class="panel"></div>
 <div id="api" class="panel"></div>
 </main>
@@ -722,6 +789,14 @@ function setSummaryMode(mode){
     analyze();
 }
 
+let _titleMode='chars';
+function setTitleMode(mode){
+    _titleMode=mode;
+    document.getElementById('ttlChars').classList.toggle('active', mode==='chars');
+    document.getElementById('ttlRatio').classList.toggle('active', mode==='ratio');
+    analyze();
+}
+
 async function analyze(){
     const text=document.getElementById('input').value.trim();
     if(!text) return;
@@ -735,10 +810,14 @@ async function analyze(){
     const summary_mode=_summaryMode;
     const summary_chars=parseInt(document.getElementById('sumCharsVal').value)||30;
     const summary_ratio=parseFloat(document.getElementById('sumRatioVal').value)||0.2;
-    const body={text, dict_combine: dictCombine, discover, enhance, language, entity_dict: {}, summarize, summary_mode, summary_chars, summary_ratio};
+    const generate_title=true;
+    const title_mode=_titleMode;
+    const title_chars=parseInt(document.getElementById('ttlCharsVal').value)||14;
+    const title_ratio=parseFloat(document.getElementById('ttlRatioVal').value)||0.05;
+    const body={text, dict_combine: dictCombine, discover, enhance, language, entity_dict: {}, summarize, summary_mode, summary_chars, summary_ratio, generate_title, title_mode, title_chars, title_ratio};
     const btn=document.getElementById('analyzeBtn');
     btn.disabled=true; btn.textContent='分析中...';
-    ['nsp','pretty','depsvg','discover','patterns','langdetect','summary','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
+    ['nsp','pretty','depsvg','discover','patterns','langdetect','summary','title','json'].forEach(id=>document.getElementById(id).innerHTML='<div class=\"loading\">⏳ 分析中...</div>');
 
     // Independent fetches — one failure doesn't block others
     const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({_error:e.message}));
@@ -761,6 +840,7 @@ async function analyze(){
     renderLangDetect(r1);
     renderCoref(r1);
     renderSummary(r1);
+    renderTitle(r1);
     btn.disabled=false; btn.textContent='🔍 分析';
 }
 
@@ -1295,6 +1375,30 @@ function renderSummary(data){
         ${s.summary_text?`<div style="padding:12px;background:#0d1117;border-radius:4px;margin-bottom:12px;font-size:14px;line-height:1.8;color:#c9d1d9;border:1px solid #30363d">${esc(s.summary_text)}</div>`:''}
         <h4 style="font-size:12px;color:#8b949e;margin-bottom:8px">关键句 (按综合得分排序)</h4>
         ${sentencesHtml||'<span style="color:#484f58">无关键句</span>'}
+    </div>`;
+}
+
+function renderTitle(data){
+    if(!data||!data.content||!data.content.title){
+        document.getElementById('title').innerHTML='<div class="card"><h3>🏷️ 标题</h3><span style="color:#484f58">未生成标题（文本过短或无实体）</span></div>';
+        return;
+    }
+    const ti=data.content.title;
+    const methodLabel=ti.method==='entity_composition'?'实体组合':ti.method==='textrank_truncate'?'TextRank截断':ti.method==='textrank_fallback'?'TextRank回退':'未知';
+    const modeLabel=ti.mode==='chars'?`按字数 (${ti.target_chars}字)`:ti.mode==='ratio'?`按比例 (${(ti.target_ratio*100).toFixed(0)}%)`:'';
+    const entitiesHtml=(ti.entities_used||[]).map(e=>`<span style="background:#1a3a1a;color:#7ee787;padding:2px 6px;border-radius:3px;font-size:11px;margin:2px">${esc(e)}</span>`).join('');
+    const predsHtml=(ti.predicates_used||[]).map(p=>`<span style="background:#3a1a1a;color:#f97583;padding:2px 6px;border-radius:3px;font-size:11px;margin:2px">${esc(p)}</span>`).join('');
+    const reasonsHtml=(ti.reasons||[]).map(r=>`<span style="color:#8b949e;font-size:10px;margin-right:6px">${esc(r)}</span>`).join('');
+
+    document.getElementById('title').innerHTML=`
+    <div class="card">
+        <h3>🏷️ 标题 <small style="color:#484f58;font-weight:normal">${methodLabel} · ${modeLabel}</small></h3>
+        ${ti.title_text?`<div style="padding:16px;background:#0d1117;border-radius:4px;margin-bottom:12px;font-size:20px;font-weight:bold;line-height:1.4;color:#e6edf3;border:1px solid #30363d;text-align:center">${esc(ti.title_text)}</div>`:'<div style="color:#484f58">无标题文本</div>'}
+        ${entitiesHtml?`<div style="margin-bottom:8px"><span style="color:#8b949e;font-size:11px">实体: </span>${entitiesHtml}</div>`:''}
+        ${predsHtml?`<div style="margin-bottom:8px"><span style="color:#8b949e;font-size:11px">谓词: </span>${predsHtml}</div>`:''}
+        ${ti.source_text?`<div style="margin-bottom:8px;font-size:11px;color:#484f58">源句: ${esc(ti.source_text)}</div>`:''}
+        ${ti.score>0?`<div style="font-size:11px;color:#8b949e">得分: ${ti.score.toFixed(4)}</div>`:''}
+        <div style="margin-top:8px">${reasonsHtml}</div>
     </div>`;
 }
 

@@ -49,6 +49,8 @@ message NarrativeContent {
   repeated Event events = 5;
   // Raw NLP engine output (JSON string, for debugging).
   string structural_json = 4;
+  // Generated title of the document (optional).
+  Title title = 6;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,4 +130,22 @@ message Event {
   repeated string source_relation_ids = 9;  // Source relation IDs (traceability: Event ← Relation)
   float confidence = 10;       // [0, 1]
   string source = 11;         // Extraction source, e.g. "relation_cluster"
+}
+
+// ---------------------------------------------------------------------------
+// Title
+// ---------------------------------------------------------------------------
+
+message Title {
+  string title_text = 1;       // Generated title text
+  string method = 2;           // e.g. "entity_composition", "textrank_truncate"
+  string mode = 3;             // "chars" or "ratio"
+  int32 target_chars = 4;     // Target character count
+  float target_ratio = 5;     // Target ratio of original text
+  int32 source_sentence_index = 6;  // Source sentence index (-1 if composed)
+  string source_text = 7;     // Source sentence text
+  float score = 8;            // Importance score
+  repeated string entities_used = 9;   // Entity texts used
+  repeated string predicates_used = 10; // Predicate types used
+  repeated string reasons = 11;        // Human-readable reasons
 }

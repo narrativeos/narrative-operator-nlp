@@ -188,7 +188,7 @@ class TestTitle:
         assert t.title_text == ""
         assert t.method == "entity_composition"
         assert t.mode == "chars"
-        assert t.target_chars == 20
+        assert t.target_chars == 14
         assert t.target_ratio == 0.05
 
     def test_serialization_roundtrip(self):

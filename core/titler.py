@@ -21,7 +21,7 @@ from .schema import (
     SentenceLanguage, Title,
 )
 
-_DEFAULT_CHARS = 20
+_DEFAULT_CHARS = 14
 _DEFAULT_RATIO = 0.05
 _EMPTY_RE = re.compile(r"^[^\w\s]*$")
 

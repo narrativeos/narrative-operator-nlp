@@ -557,6 +557,10 @@ def analyze(
     summary_ratio: float = 0.2,
     nsp_weight: Optional[float] = None,
     textrank_weight: Optional[float] = None,
+    generate_title: bool = False,
+    title_mode: str = "chars",
+    title_chars: int = 14,
+    title_ratio: float = 0.05,
 ) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
@@ -785,6 +789,16 @@ def analyze(
             target_ratio=summary_ratio,
             nsp_weight=nsp_weight,
             textrank_weight=textrank_weight,
+        )
+
+    # Optional title generation (computed after doc is fully built)
+    if generate_title:
+        from .titler import generate_title as _generate_title
+        doc.content.title = _generate_title(
+            doc,
+            mode=title_mode,
+            target_chars=title_chars,
+            target_ratio=title_ratio,
         )
 
     return doc

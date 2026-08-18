@@ -113,7 +113,24 @@ def main():
             print(f"   ❌ Request failed: {exc}")
         print()
 
-    # 4. Pretty-print full output for first classical text
+    # 4. Title generation example
+    print("=== Title Generation ===")
+    import requests as _req
+    title_resp = _req.post(
+        f"{base_url}/analyze/title",
+        json={"text": "阿里巴巴集团成立于1999年，由马云等人在杭州创立。公司最初专注于B2B电子商务。2014年在纽交所上市。2023年启动1+6+N组织变革。", "mode": "chars", "target_chars": 20},
+        timeout=30,
+    )
+    if title_resp.status_code == 200:
+        title_data = title_resp.json()
+        print(f"   Title: {title_data.get('title_text', '')}")
+        print(f"   Method: {title_data.get('method', '')}")
+        print(f"   Entities: {title_data.get('entities_used', [])}")
+    else:
+        print(f"   Failed: {title_resp.status_code}")
+    print()
+
+    # 5. Pretty-print full output for first classical text
     print("=== Full NSP Output (Classical Chinese) ===")
     result = call_analyze(classical_texts[0], base_url)
     print(json.dumps(result, ensure_ascii=False, indent=2))

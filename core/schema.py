@@ -625,6 +625,21 @@ class Summary(BaseModel):
     total_sentences: int = Field(default=0, description="Total number of sentences in source text")
 
 
+class Title(BaseModel):
+    """Generated title for the document."""
+    title_text: str = Field(default="", description="Generated title text")
+    method: str = Field(default="entity_composition", description="Method: entity_composition or textrank_truncate")
+    mode: str = Field(default="chars", description="Budget mode: chars or ratio")
+    target_chars: int = Field(default=14, description="Target character count (mode=chars)")
+    target_ratio: float = Field(default=0.05, description="Target ratio of original text (mode=ratio)")
+    source_sentence_index: int = Field(default=-1, description="Source sentence index (-1 if composed from entities)")
+    source_text: str = Field(default="", description="Source sentence text (if from textrank_truncate)")
+    score: float = Field(default=0.0, description="Importance score of source sentence")
+    entities_used: list[str] = Field(default_factory=list, description="Entity texts used in composition")
+    predicates_used: list[str] = Field(default_factory=list, description="Predicate types used in composition")
+    reasons: list[str] = Field(default_factory=list, description="Human-readable reasons for title choice")
+
+
 class NarrativeContent(BaseModel):
     """Content payload of a NarrativeDocument."""
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
@@ -648,4 +663,8 @@ class NarrativeContent(BaseModel):
     summary: Summary | None = Field(
         default=None,
         description="Extractive summary of the document (optional, populated when summarize=True)",
+    )
+    title: Title | None = Field(
+        default=None,
+        description="Generated title of the document (optional, populated when generate_title=True)",
     )

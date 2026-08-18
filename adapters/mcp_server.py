@@ -93,6 +93,46 @@ SUMMARIZE_TOOL_DEFINITION = {
     },
 }
 
+TITLE_TOOL_DEFINITION = {
+    "name": "generate_title",
+    "description": (
+        "Generate a concise title from raw text using TextRank + position prior. "
+        "No full NLP analysis required. Supports 'chars' (fixed length) or "
+        "'ratio' (percentage of text) budget modes. For entity-composition titles, "
+        "use analyze_text with generate_title=True."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": "Raw text to generate title for.",
+            },
+            "mode": {
+                "type": "string",
+                "description": "Budget mode: 'chars' (fixed length) or 'ratio' (percentage).",
+                "default": "chars",
+            },
+            "target_chars": {
+                "type": "integer",
+                "description": "Target character count (used when mode='chars').",
+                "default": 20,
+            },
+            "target_ratio": {
+                "type": "number",
+                "description": "Target ratio of original text (used when mode='ratio').",
+                "default": 0.05,
+            },
+            "language": {
+                "type": "string",
+                "description": "Language: auto, modern, classical, english.",
+                "default": "auto",
+            },
+        },
+        "required": ["text"],
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # MCP JSON-RPC Handler
@@ -125,7 +165,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
     if method == "tools/list":
         return _response(req_id, {
-            "tools": [TOOL_DEFINITION, SUMMARIZE_TOOL_DEFINITION],
+            "tools": [TOOL_DEFINITION, SUMMARIZE_TOOL_DEFINITION, TITLE_TOOL_DEFINITION],
         })
 
     if method == "tools/call":
@@ -137,6 +177,8 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             return _handle_analyze(req_id, arguments)
         if tool_name == "summarize_text":
             return _handle_summarize(req_id, arguments)
+        if tool_name == "generate_title":
+            return _handle_title(req_id, arguments)
 
         return _error(req_id, -32601, f"Unknown tool: {tool_name}")
 
@@ -188,6 +230,38 @@ def _handle_summarize(req_id, arguments: dict) -> dict[str, Any]:
             target_ratio=target_ratio, language=language,
         )
         result = summary.model_dump()
+        return _response(req_id, {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(result, ensure_ascii=False, indent=2),
+                }
+            ],
+        })
+    except ValueError as exc:
+        return _error(req_id, -32000, str(exc))
+    except Exception as exc:
+        return _error(req_id, -32603, f"Internal error: {exc}")
+
+
+def _handle_title(req_id, arguments: dict) -> dict[str, Any]:
+    """Execute the generate_title tool."""
+    text = arguments.get("text", "")
+    mode = arguments.get("mode", "chars")
+    target_chars = arguments.get("target_chars", 14)
+    target_ratio = arguments.get("target_ratio", 0.05)
+    language = arguments.get("language", "auto")
+
+    if not text:
+        return _error(req_id, -32602, "Missing required parameter: text")
+
+    try:
+        from core.titler import generate_title_text
+        title = generate_title_text(
+            text, mode=mode, target_chars=target_chars,
+            target_ratio=target_ratio, language=language,
+        )
+        result = title.model_dump()
         return _response(req_id, {
             "content": [
                 {

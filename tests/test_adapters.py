@@ -91,6 +91,33 @@ class TestFastAPIAdapter:
         response = client.post("/analyze/summary", json={"text": ""})
         assert response.status_code == 422 or response.status_code == 400
 
+    def test_analyze_title_endpoint(self, client):
+        response = client.post("/analyze/title", json={
+            "text": "张三来了。李四走了。王五到了。",
+            "mode": "chars",
+            "target_chars": 10,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert "title_text" in data
+        assert "method" in data
+        assert data["method"] == "textrank_truncate"
+
+    def test_analyze_title_ratio_mode(self, client):
+        response = client.post("/analyze/title", json={
+            "text": "aaaaaaa。bbbbbbb。ccccccc。",
+            "mode": "ratio",
+            "target_ratio": 0.5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mode"] == "ratio"
+        assert data["target_ratio"] == 0.5
+
+    def test_analyze_title_empty_text(self, client):
+        response = client.post("/analyze/title", json={"text": ""})
+        assert response.status_code == 422 or response.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # MCP Adapter Tests
@@ -230,6 +257,57 @@ class TestMCPAdapter:
         assert "result" in response
         content = response["result"]["content"][0]["text"]
         assert "key_sentences" in content
+
+    def test_title_tool_definition(self):
+        """Verify the generate_title tool is defined."""
+        from adapters.mcp_server import TITLE_TOOL_DEFINITION
+        assert TITLE_TOOL_DEFINITION["name"] == "generate_title"
+        assert "inputSchema" in TITLE_TOOL_DEFINITION
+        assert "text" in TITLE_TOOL_DEFINITION["inputSchema"]["properties"]
+        assert "mode" in TITLE_TOOL_DEFINITION["inputSchema"]["properties"]
+
+    def test_tools_list_includes_title(self, handler):
+        """tools/list should include analyze_text, summarize_text, and generate_title."""
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/list",
+        })
+        assert response is not None
+        tools = response["result"]["tools"]
+        names = [t["name"] for t in tools]
+        assert "analyze_text" in names
+        assert "summarize_text" in names
+        assert "generate_title" in names
+
+    def test_generate_title_missing_text(self, handler):
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "generate_title", "arguments": {}},
+        })
+        assert response is not None
+        assert "error" in response
+
+    def test_generate_title_basic(self, handler):
+        response = handler({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "generate_title",
+                "arguments": {
+                    "text": "张三来了。李四走了。王五到了。",
+                    "mode": "chars",
+                    "target_chars": 10,
+                },
+            },
+        })
+        assert response is not None
+        assert "result" in response
+        content = response["result"]["content"][0]["text"]
+        assert "title_text" in content
 
 
 # ---------------------------------------------------------------------------

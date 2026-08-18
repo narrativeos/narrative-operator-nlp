@@ -66,6 +66,10 @@
         "summary": {
           "$ref": "#/$defs/Summary",
           "description": "Extractive summary of the document (optional)"
+        },
+        "title": {
+          "$ref": "#/$defs/Title",
+          "description": "Generated title of the document (optional)"
         }
       }
     }
@@ -279,6 +283,23 @@
         "target_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
         "fusion_weights": { "type": "object" },
         "total_sentences": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Title": {
+      "type": "object",
+      "description": "Generated title of the document",
+      "properties": {
+        "title_text": { "type": "string" },
+        "method": { "type": "string", "enum": ["entity_composition", "textrank_truncate", "textrank_fallback"] },
+        "mode": { "type": "string", "enum": ["chars", "ratio"] },
+        "target_chars": { "type": "integer", "minimum": 0 },
+        "target_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source_sentence_index": { "type": "integer" },
+        "source_text": { "type": "string" },
+        "score": { "type": "number" },
+        "entities_used": { "type": "array", "items": { "type": "string" } },
+        "predicates_used": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
       }
     }
   }
