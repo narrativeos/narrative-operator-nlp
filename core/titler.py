@@ -291,46 +291,69 @@ def _compose_title_from_entities(
                 break
 
     # --- Step 4: build description ---
+    # Detect likely NER misclassification early, used in both branches below.
+    _name = main_entity.text
+    _looks_org = any(kw in _name for kw in ("公司", "集团", "网", "科技", "银行", "保险", "证券", "股份"))
+    _looks_person = any(kw in _name for kw in ("先生", "女士", "博士", "教授"))
+    # Also check if entity is connected to orgs via relations (strong signal of misclassification)
+    _connected_to_org = any(
+        (entity_map.get(eid) or {}).category == "ORGANIZATION"
+        for eid in (r.object_ent_id if r.subject_ent_id == main_eid else r.subject_ent_id
+                    for r in rels_for_entity)
+    )
+    _category_mismatch = (
+        (main_entity.category == "PERSON" and (_looks_org or _connected_to_org)) or
+        (main_entity.category == "ORGANIZATION" and _looks_person)
+    )
+
     if not primary_parts:
         # No primary description — use category or raw object as fallback
         cat_cn = _CATEGORY_CN.get(main_entity.category, "")
-        if main_entity.category == "LOCATION" and location:
-            # For LOCATION with only LOCATED_AT, just use the location object directly
+        # When only LOCATED_AT exists, just use location — no category suffix.
+        _only_location = (location is not None and all(
+            pred == "LOCATED_AT" for _, pred, _, _ in scored_rels))
+
+        if _category_mismatch and location:
             desc = location
-        elif location and cat_cn:
+        elif main_entity.category == "LOCATION" and location:
+            desc = location
+        elif _only_location:
+            desc = location
+        elif location and cat_cn and not _category_mismatch:
             desc = f"{location}{cat_cn}"
         elif location:
             desc = location
-        elif cat_cn:
+        elif cat_cn and not _category_mismatch:
             desc = cat_cn
         else:
             desc = scored_rels[0][2]
     else:
-        # Decide whether location modifier makes sense:
-        # Good: "中国科技公司" (country + generic description)
-        # Bad:  "深圳微信" (city + proper product name)
-        # Rule: only add location when primary description looks like a category
-        # (contains category keywords) or location is clearly country-level.
-        add_location = False
-        if location:
-            if main_entity.category == "LOCATION":
-                add_location = True
-            elif main_entity.category in ("ORGANIZATION", "PERSON", "FACILITY"):
-                # Only add location if primary description contains category-like words
-                # or location is country-level (2-3 chars, common countries)
-                _country_like = len(location) <= 3 and location not in ("深圳", "上海", "北京", "广州", "杭州")
-                _is_category_like = any(kw in primary_parts[0] for kw in
-                    ("公司", "企业", "人物", "组织", "机构", "人物", "作家", "画家",
-                     "科学家", "企业家", "政治家", "学者"))
-                if _country_like or _is_category_like:
-                    add_location = True
-
-        if add_location:
-            desc = f"{location}{primary_parts[0]}"
-            if len(primary_parts) > 1:
-                desc = f"{desc}与{primary_parts[1]}"
-        else:
+        # When NER is wrong, prefer location over noisy primary parts
+        if _category_mismatch and location:
+            desc = location
+        elif _category_mismatch:
             desc = "、".join(primary_parts[:2])
+        else:
+            # Good: "中国科技公司" (country + generic description)
+            # Bad:  "深圳微信" (city + proper product name)
+            add_location = False
+            if location:
+                if main_entity.category == "LOCATION":
+                    add_location = True
+                elif main_entity.category in ("ORGANIZATION", "PERSON", "FACILITY"):
+                    _country_like = len(location) <= 3 and location not in ("深圳", "上海", "北京", "广州", "杭州")
+                    _is_category_like = any(kw in primary_parts[0] for kw in
+                        ("公司", "企业", "人物", "组织", "机构", "作家", "画家",
+                         "科学家", "企业家", "政治家", "学者"))
+                    if _country_like or _is_category_like:
+                        add_location = True
+
+            if add_location:
+                desc = f"{location}{primary_parts[0]}"
+                if len(primary_parts) > 1:
+                    desc = f"{desc}与{primary_parts[1]}"
+            else:
+                desc = "、".join(primary_parts[:2])
 
     # --- Step 5: choose format based on best predicate ---
     best_pred = used_predicates[0] if used_predicates else scored_rels[0][1]

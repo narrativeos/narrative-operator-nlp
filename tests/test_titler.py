@@ -358,6 +358,31 @@ class TestTitleFormat:
         title, ents, preds, reasons = _compose_title_from_entities(content, 30)
         assert title.count("科技公司") == 1
 
+    def test_ner_misclassification_org_as_person(self):
+        """When org is misclassified as PERSON, avoid '中国人物' garbage."""
+        ent1 = Entity(id="ent_0", text="阿里巴巴", category="PERSON", span=(0, 4))  # NER错误
+        ent2 = Entity(id="ent_1", text="中国", category="LOCATION", span=(5, 7))
+        ent3 = Entity(id="ent_2", text="淘宝网", category="ORGANIZATION", span=(8, 11))
+        rel1 = Relation(
+            id="rel_0", subject="s", predicate="LOCATED_AT", object="o",
+            evidence="e", evidence_span=(0, 7),
+            subject_ent_id="ent_0", object_ent_id="ent_1",
+        )
+        rel2 = Relation(
+            id="rel_1", subject="s", predicate="PART_OF", object="o",
+            evidence="e", evidence_span=(0, 11),
+            subject_ent_id="ent_0", object_ent_id="ent_2",
+        )
+        content = _make_content(
+            [_make_sentence("阿里巴巴中国淘宝网", (0, 11))],
+            entities=[ent1, ent2, ent3], relations=[rel1, rel2],
+        )
+        title, ents, preds, reasons = _compose_title_from_entities(content, 20)
+        # Should NOT contain "人物" (category fallback when NER is wrong)
+        assert "人物" not in title
+        # Should use location as best available info
+        assert "中国" in title or "阿里巴巴" in title
+
 
 class TestTextRankPositionBonus:
     """Test that position bonus affects sentence selection."""
