@@ -53,6 +53,10 @@ material:
   - 磷
 
 # Standards (organization codes and keywords)
+# RC2: generic/ambiguous words (标准/规范) removed — they are the primary
+# STANDARD noise source and are not real standard codes. Specific standard
+# codes (GB/ISO/...) are kept; the F2 confidence layer additionally requires a
+# standard-code match (or injection) to keep a STANDARD entity.
 standard:
   - GB
   - GB/T
@@ -61,8 +65,6 @@ standard:
   - DIN
   - JIS
   - EN
-  - 标准
-  - 规范
 
 # Parameters (material properties and measurement keywords)
 parameter:

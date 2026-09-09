@@ -39,9 +39,10 @@ source_maps:
     TIME: DATE
     PERCENT: NUMBER
     MONEY: NUMBER
-    QUANTITY: NUMBER
-    CARDINAL: NUMBER
-    ORDINAL: NUMBER
+    # RC1: QUANTITY/CARDINAL/ORDINAL intentionally UNMAPPED (dropped). Bare
+    # numbers are the primary NUMBER noise source. Legit quantities (100个/50吨)
+    # are caught by the numeric_extractor (numeric/quantity); section refs are
+    # relabeled to SECTION_REF by the F1 shape layer.
     LAW: STANDARD
     EVENT: UNKNOWN
     WORK_OF_ART: UNKNOWN
@@ -60,9 +61,7 @@ source_maps:
     TIME: DATE
     MONEY: NUMBER
     PERCENT: NUMBER
-    QUANTITY: NUMBER
-    CARDINAL: NUMBER
-    ORDINAL: NUMBER
+    # RC1: QUANTITY/CARDINAL/ORDINAL unmapped (dropped) — bare-number noise.
     FAC: FACILITY
     PRODUCT: PRODUCT
     EVENT: UNKNOWN
@@ -84,9 +83,7 @@ source_maps:
     TIME: DATE
     MONEY: NUMBER
     PERCENT: NUMBER
-    QUANTITY: NUMBER
-    CARDINAL: NUMBER
-    ORDINAL: NUMBER
+    # RC1: QUANTITY/CARDINAL/ORDINAL unmapped (dropped) — bare-number noise.
     FAC: FACILITY
     PRODUCT: PRODUCT
     EVENT: UNKNOWN

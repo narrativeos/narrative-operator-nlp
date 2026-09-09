@@ -64,12 +64,17 @@
           "description": "Raw NLP engine output (debug only)"
         },
         "summary": {
-          "$ref": "#/$defs/Summary",
+          "anyOf": [{ "$ref": "#/$defs/Summary" }, { "type": "null" }],
           "description": "Extractive summary of the document (optional)"
         },
         "title": {
-          "$ref": "#/$defs/Title",
+          "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }],
           "description": "Generated title of the document (optional)"
+        },
+        "noun_signals": {
+          "type": "array",
+          "description": "Block-level noun-phrase signals (Step A/B). Populated when noun_signals.enabled=True.",
+          "items": { "$ref": "#/$defs/NounSignal" }
         }
       }
     }
@@ -96,13 +101,16 @@
           "enum": [
             "PERSON", "ORGANIZATION", "LOCATION", "FACILITY",
             "PRODUCT", "DATE", "NUMBER", "MATERIAL",
-            "STANDARD", "PARAMETER", "UNKNOWN"
+            "STANDARD", "PARAMETER", "SECTION_REF", "UNKNOWN"
           ]
         },
         "span": { "$ref": "#/$defs/Span" },
         "normalized": { "type": "string" },
         "source": { "type": "string" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "keep": { "type": "boolean", "default": true, "description": "Downstream consumes only keep=true (soft demotion, never physical removal)" },
+        "filter": { "type": ["string", "null"], "description": "Which quality layer demoted this entity (F1_shape/F2_confidence); null when kept" },
+        "filter_reason": { "type": ["string", "null"], "description": "Human-readable, auditable demotion reason" }
       }
     },
     "Relation": {
@@ -300,6 +308,19 @@
         "entities_used": { "type": "array", "items": { "type": "string" } },
         "predicates_used": { "type": "array", "items": { "type": "string" } },
         "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "NounSignal": {
+      "type": "object",
+      "required": ["text", "pos", "span"],
+      "description": "Block-level noun-phrase signal (Step A POS gating + Step B syntactic role). NOT an entity.",
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "pos": { "type": "string", "minLength": 1 },
+        "syntactic_role": { "type": "string", "description": "Subject/Object/Adverbial/Attributive/unknown" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1, "description": "Block-level salience score (POS + syntax, not global frequency)" },
+        "span": { "$ref": "#/$defs/Span" },
+        "evidence": { "type": "object", "description": "Linguistic evidence, e.g. {head_rel, governing_verb}" }
       }
     }
   }

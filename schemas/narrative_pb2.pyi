@@ -7,12 +7,16 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class AnalyzeRequest(_message.Message):
-    __slots__ = ("text", "source")
+    __slots__ = ("text", "source", "policy_json", "noun_signals_json")
     TEXT_FIELD_NUMBER: _ClassVar[int]
     SOURCE_FIELD_NUMBER: _ClassVar[int]
+    POLICY_JSON_FIELD_NUMBER: _ClassVar[int]
+    NOUN_SIGNALS_JSON_FIELD_NUMBER: _ClassVar[int]
     text: str
     source: str
-    def __init__(self, text: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
+    policy_json: str
+    noun_signals_json: str
+    def __init__(self, text: _Optional[str] = ..., source: _Optional[str] = ..., policy_json: _Optional[str] = ..., noun_signals_json: _Optional[str] = ...) -> None: ...
 
 class AnalyzeResponse(_message.Message):
     __slots__ = ("meta", "content")
@@ -35,18 +39,22 @@ class NarrativeMeta(_message.Message):
     def __init__(self, source: _Optional[str] = ..., version: _Optional[str] = ..., timestamp: _Optional[str] = ..., text_length: _Optional[int] = ...) -> None: ...
 
 class NarrativeContent(_message.Message):
-    __slots__ = ("tokens", "entities", "relations", "events", "structural_json")
+    __slots__ = ("tokens", "entities", "relations", "events", "structural_json", "title", "noun_signals")
     TOKENS_FIELD_NUMBER: _ClassVar[int]
     ENTITIES_FIELD_NUMBER: _ClassVar[int]
     RELATIONS_FIELD_NUMBER: _ClassVar[int]
     EVENTS_FIELD_NUMBER: _ClassVar[int]
     STRUCTURAL_JSON_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    NOUN_SIGNALS_FIELD_NUMBER: _ClassVar[int]
     tokens: _containers.RepeatedCompositeFieldContainer[Token]
     entities: _containers.RepeatedCompositeFieldContainer[Entity]
     relations: _containers.RepeatedCompositeFieldContainer[Relation]
     events: _containers.RepeatedCompositeFieldContainer[Event]
     structural_json: str
-    def __init__(self, tokens: _Optional[_Iterable[_Union[Token, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[Entity, _Mapping]]] = ..., relations: _Optional[_Iterable[_Union[Relation, _Mapping]]] = ..., events: _Optional[_Iterable[_Union[Event, _Mapping]]] = ..., structural_json: _Optional[str] = ...) -> None: ...
+    title: Title
+    noun_signals: _containers.RepeatedCompositeFieldContainer[NounSignal]
+    def __init__(self, tokens: _Optional[_Iterable[_Union[Token, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[Entity, _Mapping]]] = ..., relations: _Optional[_Iterable[_Union[Relation, _Mapping]]] = ..., events: _Optional[_Iterable[_Union[Event, _Mapping]]] = ..., structural_json: _Optional[str] = ..., title: _Optional[_Union[Title, _Mapping]] = ..., noun_signals: _Optional[_Iterable[_Union[NounSignal, _Mapping]]] = ...) -> None: ...
 
 class Token(_message.Message):
     __slots__ = ("id", "text", "pos", "span")
@@ -68,8 +76,24 @@ class Span(_message.Message):
     end: int
     def __init__(self, start: _Optional[int] = ..., end: _Optional[int] = ...) -> None: ...
 
+class NounSignal(_message.Message):
+    __slots__ = ("text", "pos", "syntactic_role", "score", "span", "evidence_json")
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    POS_FIELD_NUMBER: _ClassVar[int]
+    SYNTACTIC_ROLE_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    SPAN_FIELD_NUMBER: _ClassVar[int]
+    EVIDENCE_JSON_FIELD_NUMBER: _ClassVar[int]
+    text: str
+    pos: str
+    syntactic_role: str
+    score: float
+    span: Span
+    evidence_json: str
+    def __init__(self, text: _Optional[str] = ..., pos: _Optional[str] = ..., syntactic_role: _Optional[str] = ..., score: _Optional[float] = ..., span: _Optional[_Union[Span, _Mapping]] = ..., evidence_json: _Optional[str] = ...) -> None: ...
+
 class Entity(_message.Message):
-    __slots__ = ("id", "text", "category", "span", "normalized", "source", "confidence")
+    __slots__ = ("id", "text", "category", "span", "normalized", "source", "confidence", "keep", "filter", "filter_reason")
     ID_FIELD_NUMBER: _ClassVar[int]
     TEXT_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
@@ -77,6 +101,9 @@ class Entity(_message.Message):
     NORMALIZED_FIELD_NUMBER: _ClassVar[int]
     SOURCE_FIELD_NUMBER: _ClassVar[int]
     CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
+    KEEP_FIELD_NUMBER: _ClassVar[int]
+    FILTER_FIELD_NUMBER: _ClassVar[int]
+    FILTER_REASON_FIELD_NUMBER: _ClassVar[int]
     id: str
     text: str
     category: str
@@ -84,7 +111,10 @@ class Entity(_message.Message):
     normalized: str
     source: str
     confidence: float
-    def __init__(self, id: _Optional[str] = ..., text: _Optional[str] = ..., category: _Optional[str] = ..., span: _Optional[_Union[Span, _Mapping]] = ..., normalized: _Optional[str] = ..., source: _Optional[str] = ..., confidence: _Optional[float] = ...) -> None: ...
+    keep: bool
+    filter: str
+    filter_reason: str
+    def __init__(self, id: _Optional[str] = ..., text: _Optional[str] = ..., category: _Optional[str] = ..., span: _Optional[_Union[Span, _Mapping]] = ..., normalized: _Optional[str] = ..., source: _Optional[str] = ..., confidence: _Optional[float] = ..., keep: _Optional[bool] = ..., filter: _Optional[str] = ..., filter_reason: _Optional[str] = ...) -> None: ...
 
 class Relation(_message.Message):
     __slots__ = ("id", "subject", "subject_ent_id", "predicate", "object", "object_ent_id", "evidence", "evidence_span", "confidence", "source")

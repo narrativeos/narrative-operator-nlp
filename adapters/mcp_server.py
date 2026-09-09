@@ -49,6 +49,16 @@ TOOL_DEFINITION = {
                 "description": "NLP engine identifier.",
                 "default": "hanlp_v2",
             },
+            "policy": {
+                "type": "object",
+                "description": "Optional entity quality policy (F1 shape + F2 confidence/evidence). "
+                               "When omitted, F1/F2 are skipped (backward compatible).",
+            },
+            "noun_signals": {
+                "type": "object",
+                "description": "Optional noun-signal extraction config (Step A POS gating + "
+                               "Step B syntactic role). When omitted or enabled=false, no noun signals.",
+            },
         },
         "required": ["text"],
     },
@@ -189,12 +199,14 @@ def _handle_analyze(req_id, arguments: dict) -> dict[str, Any]:
     """Execute the analyze_text tool."""
     text = arguments.get("text", "")
     source = arguments.get("source", "hanlp_v2")
+    policy = arguments.get("policy")
+    noun_signals = arguments.get("noun_signals")
 
     if not text:
         return _error(req_id, -32602, "Missing required parameter: text")
 
     try:
-        doc = analyze(text, source=source)
+        doc = analyze(text, source=source, policy=policy, noun_signals=noun_signals)
         result = doc.model_dump()
         return _response(req_id, {
             "content": [

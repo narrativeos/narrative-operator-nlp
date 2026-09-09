@@ -94,15 +94,16 @@ class NerLabelMapper:
                 "PERSON": "PERSON", "NORP": "ORGANIZATION", "FAC": "FACILITY",
                 "ORG": "ORGANIZATION", "GPE": "LOCATION", "LOC": "LOCATION",
                 "PRODUCT": "PRODUCT", "DATE": "DATE", "TIME": "DATE",
-                "PERCENT": "NUMBER", "MONEY": "NUMBER", "QUANTITY": "NUMBER",
-                "CARDINAL": "NUMBER", "ORDINAL": "NUMBER", "LAW": "STANDARD",
+                "PERCENT": "NUMBER", "MONEY": "NUMBER",
+                # RC1: QUANTITY/CARDINAL/ORDINAL unmapped (dropped) — bare-number noise.
+                "LAW": "STANDARD",
                 "EVENT": "UNKNOWN", "WORK_OF_ART": "UNKNOWN", "LANGUAGE": "UNKNOWN",
             },
             "ner": {
                 "PER": "PERSON", "PERSON": "PERSON", "LOC": "LOCATION", "GPE": "LOCATION",
                 "ORG": "ORGANIZATION", "ORGANIZATION": "ORGANIZATION", "MISC": "UNKNOWN",
                 "DATE": "DATE", "TIME": "DATE", "MONEY": "NUMBER", "PERCENT": "NUMBER",
-                "QUANTITY": "NUMBER", "CARDINAL": "NUMBER", "ORDINAL": "NUMBER",
+                # RC1: QUANTITY/CARDINAL/ORDINAL unmapped (dropped) — bare-number noise.
                 "FAC": "FACILITY", "PRODUCT": "PRODUCT", "EVENT": "UNKNOWN",
                 "WORK_OF_ART": "UNKNOWN", "LAW": "STANDARD", "LANGUAGE": "UNKNOWN",
                 "NORP": "ORGANIZATION",
@@ -111,7 +112,7 @@ class NerLabelMapper:
                 "PER": "PERSON", "PERSON": "PERSON", "LOC": "LOCATION", "GPE": "LOCATION",
                 "ORG": "ORGANIZATION", "ORGANIZATION": "ORGANIZATION", "MISC": "UNKNOWN",
                 "DATE": "DATE", "TIME": "DATE", "MONEY": "NUMBER", "PERCENT": "NUMBER",
-                "QUANTITY": "NUMBER", "CARDINAL": "NUMBER", "ORDINAL": "NUMBER",
+                # RC1: QUANTITY/CARDINAL/ORDINAL unmapped (dropped) — bare-number noise.
                 "FAC": "FACILITY", "PRODUCT": "PRODUCT", "EVENT": "UNKNOWN",
                 "WORK_OF_ART": "UNKNOWN", "LAW": "STANDARD", "LANGUAGE": "UNKNOWN",
                 "NORP": "ORGANIZATION",

@@ -21,6 +21,8 @@ from .relation_classifier import RelationClassifier
 from .entity_hierarchy import EntityHierarchyBuilder
 from .classical_pattern_extractor import ClassicalPatternExtractor
 from .event_extractor import EventExtractor
+from .entity_quality import clean_html, QualityPolicy, apply_entity_quality
+from .noun_signal import NounSignalConfig, extract_noun_signals
 
 logger = logging.getLogger(__name__)
 
@@ -561,6 +563,8 @@ def analyze(
     title_mode: str = "chars",
     title_chars: int = 14,
     title_ratio: float = 0.05,
+    policy: Optional[dict] = None,
+    noun_signals: Optional[dict] = None,
 ) -> NarrativeDocument:
     """
     Analyze text with automatic language detection and model routing.
@@ -600,6 +604,9 @@ def analyze(
     """
     if not text or not text.strip():
         raise ValueError("Input text must not be empty.")
+
+    # F0: strip HTML tags from raw text (input hygiene, always runs).
+    text = clean_html(text)
 
     mapper = _get_mapper()
     sentences = _split_sentences(text)
@@ -761,6 +768,19 @@ def analyze(
     hierarchy_relations = hierarchy_builder.build(all_entities, text)
     all_relations.extend(hierarchy_relations)
 
+    # Entity quality pipeline (F1 shape + F2 confidence/evidence).
+    # No-op when policy is None (backward compatible).
+    quality_policy = QualityPolicy.from_dict(policy)
+    injected_keywords: set[str] = set()
+    if entity_categories:
+        for _kw_list in entity_categories.values():
+            injected_keywords.update(_kw_list)
+    apply_entity_quality(all_entities, quality_policy, injected_keywords)
+
+    # Noun signals (Step A POS gating + Step B syntactic role). No-op when disabled.
+    ns_config = NounSignalConfig.from_dict(noun_signals)
+    noun_signal_list = extract_noun_signals(all_tokens, all_deps, ns_config)
+
     sources = sorted(set(t.source for t in all_tokens if t.source))
     meta_source = "+".join(sources) if sources else "hanlp_v2"
 
@@ -776,6 +796,7 @@ def analyze(
             deps=all_deps, patterns=all_patterns,
             coreferences=all_coreferences,
             sentences=sentence_objects, structural={},
+            noun_signals=noun_signal_list,
         ),
     )
 

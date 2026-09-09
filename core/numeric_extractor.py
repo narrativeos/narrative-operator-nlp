@@ -30,8 +30,11 @@ _DATE_PATTERNS = [
     re.compile(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"),
     # 2024.01.15
     re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}"),
-    # 20240115 (8-digit date)
-    re.compile(r"\d{8}"),
+    # 20240115 (8-digit date) — validated: month 01-12, day 01-31, and the
+    # 8 digits must be standalone (not part of a longer digit run). This fixes
+    # the bug where any 8-digit string (e.g. an ID like 63906433) was treated
+    # as a date.
+    re.compile(r"(?<!\d)\d{4}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)"),
 ]
 
 # Currency patterns

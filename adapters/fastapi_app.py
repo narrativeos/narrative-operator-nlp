@@ -180,6 +180,23 @@ class AnalyzeRequest(BaseModel):
                     "control the recall/precision tradeoff. "
                     "Score threshold: 3.0+ (PMI). Source field: 'discover'.",
     )
+    # Entity quality pipeline (F0/F1/F2) — optional, backward compatible.
+    policy: dict | None = Field(
+        default=None,
+        description="Optional entity quality policy (F1 shape + F2 confidence/evidence). "
+                    "When absent, F1/F2 are skipped (backward compatible). "
+                    "Schema: {version, f1_shape: {section_ref: {enabled, patterns}, "
+                    "demote_bare_number}, f2_confidence: {enabled, min_confidence: "
+                    "{default, by_source}, demote_categories, keyword_require_injected}}.",
+    )
+    # Noun signal extraction (Step A/B) — optional, off by default.
+    noun_signals: dict | None = Field(
+        default=None,
+        description="Optional noun-signal extraction config (Step A POS gating + "
+                    "Step B syntactic role). When absent or enabled=false, no noun "
+                    "signals are produced. Schema: {enabled, min_score, max_per_block, "
+                    "pos_whitelist}.",
+    )
     # Summary options
     summarize: bool = Field(
         default=False,
@@ -290,6 +307,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
             title_mode=request.title_mode,
             title_chars=request.title_chars,
             title_ratio=request.title_ratio,
+            policy=request.policy,
+            noun_signals=request.noun_signals,
         )
 
         true_new_words: list[str] | None = None
@@ -317,6 +336,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
                     title_mode=request.title_mode,
                     title_chars=request.title_chars,
                     title_ratio=request.title_ratio,
+                    policy=request.policy,
+                    noun_signals=request.noun_signals,
                 )
         elif request.discover:
             true_new_words = _discover_true_new_words(request.text, doc, request.dict_combine)

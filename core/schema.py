@@ -60,6 +60,7 @@ class EntityCategory:
     MATERIAL = "MATERIAL"
     STANDARD = "STANDARD"
     PARAMETER = "PARAMETER"
+    SECTION_REF = "SECTION_REF"  # 章节/条款引用（如 4.3.2、第5章），由 F1 形状层重标
     UNKNOWN = "UNKNOWN"
     # Classical Chinese extensions
     TITLE = "TITLE"          # 官职、爵位
@@ -69,7 +70,7 @@ class EntityCategory:
 
     ALL = frozenset({
         PERSON, ORGANIZATION, LOCATION, FACILITY, PRODUCT,
-        DATE, NUMBER, MATERIAL, STANDARD, PARAMETER, UNKNOWN,
+        DATE, NUMBER, MATERIAL, STANDARD, PARAMETER, SECTION_REF, UNKNOWN,
         TITLE, ERA, INSTITUTION, ASTRONOMY,
     })
 
@@ -261,6 +262,21 @@ class Entity(BaseModel):
     merged_from: list[str] = Field(
         default_factory=list,
         description="IDs of entities merged into this one (cross-category containment)"
+    )
+    # Entity quality pipeline (F0/F1/F2) — soft demotion, never physical removal.
+    # When no policy is supplied these stay at their defaults (keep=True, filter=None),
+    # preserving full backward compatibility with existing callers.
+    keep: bool = Field(
+        default=True,
+        description="Whether downstream should consume this entity. False = soft-demoted by the quality pipeline."
+    )
+    filter: Optional[str] = Field(
+        default=None,
+        description="Which quality layer demoted this entity (e.g. 'F1_shape', 'F2_confidence'). None when kept."
+    )
+    filter_reason: Optional[str] = Field(
+        default=None,
+        description="Human-readable, auditable reason for demotion (e.g. '0.4 < 0.6 (ner/ontonotes)')."
     )
 
     @field_validator("span")
@@ -640,6 +656,38 @@ class Title(BaseModel):
     reasons: list[str] = Field(default_factory=list, description="Human-readable reasons for title choice")
 
 
+class NounSignal(BaseModel):
+    """A noun-phrase signal extracted via POS gating (Step A) + syntactic-role
+    weighting (Step B). Block-level only — global frequency/clustering/contexts
+    are the caller's responsibility (see main spec §6).
+
+    These are NOT entities: they are linguistic candidates surfaced for the
+    caller to aggregate, cluster, and audit (optionally via LLM).
+    """
+    text: str = Field(..., min_length=1, description="Noun surface text")
+    pos: str = Field(..., min_length=1, description="Part-of-speech tag (e.g. NN, NR)")
+    syntactic_role: str = Field(
+        default="unknown",
+        description="Step B syntactic role (Subject/Object/Adverbial/Attributive/unknown)"
+    )
+    score: float = Field(
+        default=0.0, ge=0.0, le=1.0,
+        description="Block-level salience score (POS + syntax, NOT global frequency)"
+    )
+    span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
+    evidence: dict = Field(
+        default_factory=dict,
+        description="Linguistic evidence for audit, e.g. {'head_rel': 'dobj', 'governing_verb': '测量'}"
+    )
+
+    @field_validator("span")
+    @classmethod
+    def span_valid(cls, v: tuple[int, int]) -> tuple[int, int]:
+        if len(v) != 2 or v[0] < 0 or v[1] < v[0]:
+            raise ValueError(f"span must be [start, end) with 0 <= start <= end, got {v}")
+        return v
+
+
 class NarrativeContent(BaseModel):
     """Content payload of a NarrativeDocument."""
     tokens: list[Token] = Field(default_factory=list, description="Normalized token list")
@@ -667,4 +715,8 @@ class NarrativeContent(BaseModel):
     title: Title | None = Field(
         default=None,
         description="Generated title of the document (optional, populated when generate_title=True)",
+    )
+    noun_signals: list[NounSignal] = Field(
+        default_factory=list,
+        description="Block-level noun-phrase signals (Step A/B). Populated when noun_signals.enabled=True.",
     )

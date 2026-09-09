@@ -89,6 +89,7 @@ def _doc_to_proto(doc) -> "narrative_pb2.AnalyzeResponse":
             id=e.id, text=e.text, category=e.category,
             span=_build_span(e.span[0], e.span[1]),
             normalized=e.normalized, source=e.source, confidence=e.confidence,
+            keep=e.keep, filter=e.filter or "", filter_reason=e.filter_reason or "",
         )
         for e in doc.content.entities
     ]
@@ -144,10 +145,20 @@ def _doc_to_proto(doc) -> "narrative_pb2.AnalyzeResponse":
         for d in doc.content.deps
     ]
 
+    noun_signals = [
+        narrative_pb2.NounSignal(
+            text=ns.text, pos=ns.pos, syntactic_role=ns.syntactic_role,
+            score=ns.score, span=_build_span(ns.span[0], ns.span[1]),
+            evidence_json=json.dumps(ns.evidence, ensure_ascii=False),
+        )
+        for ns in doc.content.noun_signals
+    ]
+
     content = narrative_pb2.NarrativeContent(
         tokens=tokens, entities=entities, relations=relations,
         events=events, deps=deps,
         structural_json=json.dumps(doc.content.structural, ensure_ascii=False),
+        noun_signals=noun_signals,
     )
 
     return narrative_pb2.AnalyzeResponse(meta=meta, content=content)
@@ -159,7 +170,15 @@ class NarrativeServiceServicer(narrative_pb2_grpc.NarrativeServiceServicer):
     def Analyze(self, request, context):
         """Handle Analyze RPC."""
         try:
-            doc = analyze(request.text, source=request.source)
+            import json
+            policy = json.loads(request.policy_json) if request.policy_json else None
+            noun_signals = (
+                json.loads(request.noun_signals_json) if request.noun_signals_json else None
+            )
+            doc = analyze(
+                request.text, source=request.source,
+                policy=policy, noun_signals=noun_signals,
+            )
             return _doc_to_proto(doc)
         except ValueError as exc:
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)

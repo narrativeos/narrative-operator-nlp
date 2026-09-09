@@ -28,6 +28,12 @@ message AnalyzeRequest {
   string text = 1;
   // Optional: NLP engine identifier (default: "hanlp_v2").
   string source = 2;
+  // Optional: entity quality policy (JSON). When absent, F1/F2 are skipped
+  // (full backward compatibility). Schema: see core/entity_quality.py.
+  string policy_json = 3;
+  // Optional: noun-signal extraction config (JSON). When absent or enabled=false,
+  // no noun signals are produced. Schema: see core/noun_signal.py.
+  string noun_signals_json = 4;
 }
 
 message AnalyzeResponse {
@@ -51,6 +57,8 @@ message NarrativeContent {
   string structural_json = 4;
   // Generated title of the document (optional).
   Title title = 6;
+  // Block-level noun-phrase signals (Step A/B).
+  repeated NounSignal noun_signals = 7;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +89,23 @@ message Entity {
   string normalized = 5;   // Canonical form
   string source = 6;       // Source NER model
   float confidence = 7;    // [0, 1]
+  // Entity quality pipeline (F0/F1/F2) — soft demotion, never physical removal.
+  bool keep = 8;           // Downstream consumes only keep=true (default true)
+  string filter = 9;       // Which layer demoted (F1_shape/F2_confidence); empty when kept
+  string filter_reason = 10; // Human-readable, auditable demotion reason
+}
+
+// ---------------------------------------------------------------------------
+// Noun Signal
+// ---------------------------------------------------------------------------
+
+message NounSignal {
+  string text = 1;              // Noun surface text
+  string pos = 2;               // Part-of-speech tag (e.g. NN, NR)
+  string syntactic_role = 3;    // Subject/Object/Adverbial/Attributive/unknown
+  float score = 4;              // Block-level salience score [0, 1]
+  Span span = 5;                // Character offset
+  string evidence_json = 6;     // Linguistic evidence (JSON), e.g. {"head_rel":"dobj","governing_verb":"测量"}
 }
 
 // ---------------------------------------------------------------------------
