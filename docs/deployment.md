@@ -26,7 +26,13 @@ cp .env.example .env          # 按需修改配置
 docker compose up -d --build  # 构建并启动
 ```
 
-首次启动会自动检查并下载 **MTL（现代汉语，必选，~500MB）** 模型；古汉语（LZH）与单任务（PIPELINE）模型需提前下载到模型卷中（在宿主机执行 `python scripts/setup_models.py --model LZH` 等，将 `~/.hanlp` 内容同步到卷，或临时挂载后下载）。模型缓存在命名卷 `narrative-operator-nlp-models`（挂载到容器内 `/root/.hanlp`），重启容器不会重复下载。
+启动时 entrypoint 会读取 `HANLP_MODEL_SET` 并自动下载对应模型集（已缓存的模型秒级加载，幂等）：
+
+- `MTL`（默认）：现代汉语，必选，~500MB — 下载失败时容器启动中止
+- `LZH` / `PIPELINE`：可选模型集 — 下载失败时打印警告并继续启动（相关功能降级）
+- `ALL`：全部模型，约 2-3 GB
+
+模型缓存在命名卷 `narrative-operator-nlp-models`（挂载到容器内 `/root/.hanlp`），重启容器不会重复下载。
 
 ## 配置（.env）
 
@@ -34,7 +40,7 @@ docker compose up -d --build  # 构建并启动
 |------|--------|------|
 | `HTTP_PORT` | `8000` | FastAPI 宿主机端口（容器内固定 8000） |
 | `GRPC_PORT` | `50051` | gRPC TCP 端口（宿主机 → 容器）；默认走 UDS 时不生效 |
-| `HANLP_MODEL_SET` | `ALL` | 期望的模型集：`MTL` / `LZH` / `PIPELINE` / `ALL`。⚠️ 目前仅作文档约定，entrypoint 实际只自动下载 MTL；其他模型集需预先放入模型卷（见上文） |
+| `HANLP_MODEL_SET` | `MTL` | 启动时自动下载的模型集：`MTL` / `LZH` / `PIPELINE` / `ALL`（未设置时默认 `MTL`） |
 | `HANLP_HOME` | `/root/.hanlp` | 容器内模型缓存目录 |
 | `PYTHONUNBUFFERED` | `1` | Python 日志实时输出 |
 | `TOKENIZERS_PARALLELISM` | `false` | 禁用 tokenizer 多进程（避免 fork 警告） |

@@ -121,7 +121,7 @@ docker compose up -d --build
 |----------|---------|-------------|
 | `HTTP_PORT` | `8000` | FastAPI host port |
 | `GRPC_PORT` | `50051` | gRPC TCP port (default uses Unix Domain Socket) |
-| `HANLP_MODEL_SET` | `ALL` | Desired models: MTL / LZH / PIPELINE / ALL (entrypoint auto-downloads MTL only, see [docs/deployment.md](docs/deployment.md)) |
+| `HANLP_MODEL_SET` | `MTL` | Model set auto-downloaded at startup: MTL / LZH / PIPELINE / ALL (see [docs/deployment.md](docs/deployment.md)) |
 
 ### Verify
 

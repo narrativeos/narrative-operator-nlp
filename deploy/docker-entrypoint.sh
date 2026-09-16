@@ -8,24 +8,39 @@ set -e
 
 MODE="${1:-fastapi}"
 GRPC_SOCKET="${GRPC_SOCKET:-/tmp/narrative-operator-nlp.sock}"
+MODEL_SET="${HANLP_MODEL_SET:-MTL}"
+
+case "$MODEL_SET" in
+    MTL|LZH|PIPELINE|ALL) ;;
+    *)
+        echo "❌ Invalid HANLP_MODEL_SET: '$MODEL_SET' (expected MTL | LZH | PIPELINE | ALL)"
+        exit 1
+        ;;
+esac
 
 echo "============================================"
 echo " Narrative Operator NLP"
 echo " Mode:       $MODE"
+echo " Models:     $MODEL_SET"
 echo " Python:     $(python --version)"
 echo " HanLP Home: $HANLP_HOME"
 echo "============================================"
 
-# ── Model Check & Auto-Download ───────────────────────────────
+# ── Model Setup & Auto-Download ───────────────────────────────
+# hanlp.load() is idempotent: cached models load in seconds,
+# missing models are downloaded on first run.
 echo ""
-echo "[1/2] Checking pre-trained models..."
+echo "[1/2] Setting up pre-trained models ($MODEL_SET)..."
 
-# MTL (modern Chinese) — required
-if python scripts/setup_models.py --check --model MTL 2>/dev/null; then
-    echo "  ✅ MTL (现代汉语) — found"
-else
-    echo "  ⬇️  MTL (现代汉语) — downloading (~500 MB)..."
-    python scripts/setup_models.py --model MTL
+if ! python scripts/setup_models.py --model "$MODEL_SET"; then
+    echo ""
+    echo "❌ Model setup reported failures."
+    if [ "$MODEL_SET" = "MTL" ] || [ "$MODEL_SET" = "ALL" ]; then
+        echo "   MTL (modern Chinese) is required — aborting startup."
+        exit 1
+    fi
+    echo "   ⚠️  Continuing anyway — features depending on the missing"
+    echo "      model set will degrade until models are available."
 fi
 
 echo "  Models cached at $HANLP_HOME"

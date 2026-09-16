@@ -245,8 +245,20 @@ if __name__ == "__main__":
         "ALL": {"mtl", "lzh", "pipeline"},
     }
 
-    setup_models(
+    results = setup_models(
         categories=category_map[args.model],
         check_only=args.check,
         verbose=True,
     )
+
+    # Exit non-zero on failure so callers (e.g., docker-entrypoint.sh)
+    # can detect it. Check-only mode exits 1 if any required model is
+    # missing; download mode exits 1 if any requested model failed.
+    if results:
+        if args.check:
+            failed = not all(
+                results.get(s.name, True) for s in MODELS if s.required
+            )
+        else:
+            failed = not all(results.values())
+        sys.exit(1 if failed else 0)
