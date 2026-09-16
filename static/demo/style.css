@@ -244,7 +244,7 @@ header span {
 .main-area { min-width: 0; }
 
 /* ── Input area ─────────────────────────────────────────── */
-.input-area { display: flex; gap: 12px; margin-bottom: 18px; align-items: stretch; }
+.input-area { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
 .input-area textarea {
   flex: 1;
   min-height: 140px;
@@ -263,7 +263,9 @@ header span {
   border-color: var(--accent);
   box-shadow: var(--glow-accent);
 }
-#analyzeBtn { align-self: center; }
+/* Full-width button below the textarea: label swaps between "🔍 分析"
+   and "分析中..." without changing size, so the page never jitters. */
+#analyzeBtn { width: 100%; }
 .dict-input:focus { outline: none; border-color: var(--accent); }
 .num-input {
   width: 50px;
@@ -343,6 +345,13 @@ button:disabled {
   color: var(--accent);
   margin-bottom: 12px;
   letter-spacing: 0.3px;
+}
+/* Dependency-tree SVG: keep natural width and scroll horizontally
+   for long sentences instead of shrinking the drawing. */
+.dep-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
 }
 
 /* ── Stats ──────────────────────────────────────────────── */

@@ -94,6 +94,22 @@ app.mount(
 )
 
 
+@app.middleware("http")
+async def _no_heuristic_cache(request, call_next):
+    """Force revalidation for demo/static assets.
+
+    Starlette's StaticFiles only sends ETag/Last-Modified; without an
+    explicit Cache-Control header browsers apply heuristic caching and
+    may serve stale JS/CSS after a deploy. ``no-cache`` keeps the disk
+    cache but requires an ETag round-trip, so unchanged files still
+    return a cheap 304.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith(("/demo", "/static/swagger-ui")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Custom Swagger UI (offline, no CDN dependency)
 # ---------------------------------------------------------------------------

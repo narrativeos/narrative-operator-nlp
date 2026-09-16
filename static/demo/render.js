@@ -217,56 +217,92 @@ export function renderPretty(data){
 
 export function renderDepSVG(data){
     if(!data||!data.tokens){ document.getElementById('depsvg').innerHTML='<div class="card">分析失败</div>'; return; }
-    const tokens=data.tokens, deps=data.deps;
+    const tokens=data.tokens, deps=data.deps||[];
     if(!tokens.length){ document.getElementById('depsvg').innerHTML='<div class="card">无数据</div>'; return; }
 
-    const W=Math.max(800,tokens.length*56), H=280, bottomY=H-30, charW=12;
     const colors={'nsubj':'#58a6ff','dobj':'#79c0ff','root':'#f78166','nn':'#7ee787','amod':'#d2a8ff',
         'advmod':'#ffa657','conj':'#e3b341','top':'#f78166','attr':'#56d364','assmod':'#a5d6ff','assm':'#a5d6ff',
         'punct':'#484f58','nummod':'#ff7b72','cc':'#8b949e','prep':'#c9d1d9','tmod':'#79c0ff','plmod':'#79c0ff',
         'rcmod':'#d2a8ff','nsubjpass':'#58a6ff'};
 
-    let svg=`<svg width="${W}" height="${H}" style="background:#0d1117;border-radius:6px;font-family:monospace;max-width:100%">`;
+    // Width-aware layout: spacing must fit the widest adjacent token pair so
+    // token boxes never overlap, and the side margins must fit the widest box
+    // so edge tokens are never clipped.
+    const charW=14, boxPad=16;
+    const tokenW=tokens.map(t=>t.text.length*charW+boxPad);
+    let minSpacing=44;
+    for(let i=0;i<tokenW.length-1;i++) minSpacing=Math.max(minSpacing,(tokenW[i]+tokenW[i+1])/2+10);
+    const margin=Math.max(20,Math.max(...tokenW)/2+6);
+    const W=Math.max(800,2*margin+(tokens.length-1)*minSpacing);
+    const spacing=(W-2*margin)/(tokens.length-1||1);
 
-    // Token nodes at bottom
-    const spacing=(W-40)/(tokens.length-1||1);
+    // Arc height assignment: longer span → higher arc; arcs whose x-ranges
+    // overlap (crossing / identical / enclosing) are pushed above the other
+    // so curves and labels never pile into a single band. Nested (inner) arcs
+    // stay lower, which the ascending-span sort guarantees.
+    const BASE=28, PER_SPAN=13, GAP=16;
+    const arcs=deps.filter(d=>d.head>=0&&d.head<tokens.length)
+        .map(d=>({child:d.child,head:d.head,rel:d.rel,span:Math.abs(d.child-d.head)}))
+        .sort((a,b)=>a.span-b.span||a.child-b.child);
+    const placed=[];
+    arcs.forEach(a=>{
+        const lo=Math.min(a.child,a.head), hi=Math.max(a.child,a.head);
+        let h=BASE+a.span*PER_SPAN;
+        placed.forEach(p=>{
+            const overlap=lo<p.hi&&p.lo<hi;
+            const pContainsA=p.lo<=lo&&p.hi>=hi;
+            if(overlap&&!pContainsA) h=Math.max(h,p.h+GAP);
+        });
+        a.h=h;
+        placed.push({lo,hi,h});
+    });
+
+    // Dynamic canvas height: room for the highest arc + its label on top,
+    // token boxes + ROOT label on the bottom.
+    const maxArcH=arcs.reduce((m,a)=>Math.max(m,a.h),0);
+    const H=Math.max(220,Math.ceil(maxArcH*0.75)+95);
+    const bottomY=H-44, sy=bottomY-17; // sy = top edge of token boxes
+
+    // Deduplicated arrowheads in a single <defs>
+    let defs='';
+    const seenMarkers={};
+    arcs.forEach(a=>{
+        const id=`arrow${a.child}_${a.head}_${a.rel}`;
+        if(seenMarkers[id]) return;
+        seenMarkers[id]=true;
+        defs+=`<marker id="${id}" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${colors[a.rel]||'#8b949e'}"/></marker>`;
+    });
+
+    let svg=`<svg width="${W}" height="${H}" style="background:#0d1117;border-radius:6px;font-family:monospace;display:block"><defs>${defs}</defs>`;
+
+    // Token nodes at bottom (word + POS stacked inside one box)
     tokens.forEach((t,i)=>{
-        const x=20+i*spacing, y=bottomY, tw=t.text.length*charW+16;
-        svg+=`<rect x="${x-tw/2}" y="${y-14}" width="${tw}" height="24" rx="4" fill="#21262d" stroke="#30363d"/>`;
-        svg+=`<text x="${x}" y="${y+3}" text-anchor="middle" fill="#c9d1d9" font-size="13">${esc(t.text)}</text>`;
-        svg+=`<text x="${x}" y="${y-18}" text-anchor="middle" fill="#484f58" font-size="9">${esc(t.pos)}</text>`;
+        const x=margin+i*spacing, tw=tokenW[i];
+        svg+=`<rect x="${x-tw/2}" y="${bottomY-17}" width="${tw}" height="34" rx="5" fill="#21262d" stroke="#30363d"/>`;
+        svg+=`<text x="${x}" y="${bottomY-2}" text-anchor="middle" fill="#c9d1d9" font-size="14">${esc(t.text)}</text>`;
+        svg+=`<text x="${x}" y="${bottomY+12}" text-anchor="middle" fill="#8b949e" font-size="10">${esc(t.pos)}</text>`;
     });
 
-    // Dependency arrows
-    const usedHeights={};
-    deps.forEach(d=>{
-        if(d.head<0||d.head>=tokens.length) return;
-        const cx=20+d.child*spacing, hx=20+d.head*spacing;
-        const key=Math.min(d.child,d.head)+'_'+Math.max(d.child,d.head);
-        usedHeights[key]=(usedHeights[key]||0)+1;
-        const arcH=Math.max(30,50-usedHeights[key]*12);
-        const mid=(cx+hx)/2, dir=d.head>d.child?1:-1;
-        const color=colors[d.rel]||'#8b949e';
-        const sy=bottomY-24;
-
-        // Curved arrow
-        const path=`M${cx},${sy} C${cx},${sy-arcH} ${hx},${sy-arcH} ${hx},${sy}`;
-        svg+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="1.5" marker-end="url(#arrow${d.child}_${d.head})" opacity="0.8"/>`;
-        // Arrowhead
-        svg+=`<defs><marker id="arrow${d.child}_${d.head}" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${color}"/></marker></defs>`;
-        // Label
-        svg+=`<text x="${mid}" y="${sy-arcH-4}" text-anchor="middle" fill="${color}" font-size="9">${esc(d.rel)}</text>`;
+    // Dependency arrows (cubic bezier; curve peak sits at 0.75*h above sy)
+    arcs.forEach(a=>{
+        const cx=margin+a.child*spacing, hx=margin+a.head*spacing;
+        const color=colors[a.rel]||'#8b949e';
+        const mid=(cx+hx)/2;
+        const path=`M${cx},${sy} C${cx},${sy-a.h} ${hx},${sy-a.h} ${hx},${sy}`;
+        svg+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="1.5" marker-end="url(#arrow${a.child}_${a.head}_${a.rel})" opacity="0.85"/>`;
+        // Label just above the curve peak
+        svg+=`<text x="${mid}" y="${sy-a.h*0.75-6}" text-anchor="middle" fill="${color}" font-size="11">${esc(a.rel)}</text>`;
     });
 
-    // Root marker
-    const rootDep=deps.find(d=>d.head<0);
-    if(rootDep){
-        const rx=20+rootDep.child*spacing;
-        svg+=`<text x="${rx}" y="${bottomY-40}" text-anchor="middle" fill="#f78166" font-size="10">ROOT</text>`;
-    }
+    // Root markers below the token row (one per sentence root)
+    deps.filter(d=>d.head<0).forEach(d=>{
+        if(d.child<0||d.child>=tokens.length) return;
+        const rx=margin+d.child*spacing;
+        svg+=`<text x="${rx}" y="${bottomY+32}" text-anchor="middle" fill="#f78166" font-size="11" font-weight="bold">ROOT</text>`;
+    });
 
     svg+=`</svg>`;
-    document.getElementById('depsvg').innerHTML=`<div class="card"><h3>🧬 依存句法树 (SVG)</h3><div style="overflow-x:auto">${svg}</div></div>`;
+    document.getElementById('depsvg').innerHTML=`<div class="card"><h3>🧬 依存句法树 (SVG)</h3><div class="dep-scroll">${svg}</div></div>`;
 }
 
 export function renderDiscover(data){
