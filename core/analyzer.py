@@ -652,12 +652,14 @@ def analyze(
             # inherit floor) but not enough to clear the classical bar
             # on its own. Modern sentences (raw <= ~0.12) are never
             # dragged into a classical document.
-            if (
-                doc_lang == "classical"
-                and lang == "modern"
-                and classical_confidence(sent_text) >= CLASSICAL_INHERIT_FLOOR
-            ):
-                lang = "classical"
+            if doc_lang == "classical" and lang == "modern":
+                raw_classical = classical_confidence(sent_text)
+                if raw_classical >= CLASSICAL_INHERIT_FLOOR:
+                    lang = "classical"
+                    # detect_language returned a *modern*-relative
+                    # confidence; re-express it relative to the new
+                    # "classical" label (the raw classical score).
+                    conf = raw_classical
             segments.append((sent_text, sent_offset, lang, conf))
             language_sentences.append({
                 "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
@@ -689,11 +691,11 @@ def analyze(
             })
     else:  # "modern"
         lang = "modern"
-        merged = [(text, 0, lang, 0.0)]
+        merged = [(text, 0, lang, 1.0)]
         for sent_text, sent_offset in sentences:
             language_sentences.append({
                 "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
-                "label": lang, "confidence": 0.0,
+                "label": lang, "confidence": 1.0,
             })
 
     # Process each segment

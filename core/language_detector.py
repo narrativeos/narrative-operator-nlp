@@ -68,14 +68,23 @@ _CLASSICAL_HONORIFIC: frozenset[str] = frozenset("陛下殿下阁下足下寡人
 # Classical quoting verbs
 _CLASSICAL_QUOTE: frozenset[str] = frozenset("曰云谓")
 
-# Modern Chinese particles (现代助词) — strong negative signal
-_MODERN_PARTICLES: frozenset[str] = frozenset("的了着们过吗吧呢啊嘛")
+# Modern Chinese particles (现代助词) — strong negative signal.
+# NOTE: "过" is deliberately excluded — it is a regular classical verb
+# (经过/超过, e.g. 不过数仞 / 过而能改), so it is not a reliable modern
+# marker. Modern text is still caught by 的/了/着/们/吗/吧/呢/啊/嘛.
+_MODERN_PARTICLES: frozenset[str] = frozenset("的了着们吗吧呢啊嘛")
 
-# Modern Chinese pronouns (现代人称代词)
-_MODERN_PRONOUNS: frozenset[str] = frozenset("我你他她它")
+# Modern Chinese pronouns (现代人称代词).
+# NOTE: "我" is deliberately excluded — it is the classical first-person
+# pronoun too (我所欲也 / 齐师伐我). Modern text is still caught by the
+# particles above and the 你/他/她/它 set.
+_MODERN_PRONOUNS: frozenset[str] = frozenset("你他她它")
 
-# Modern Chinese copula
-_MODERN_COPULA: frozenset[str] = frozenset("是")
+# Modern Chinese copula.
+# NOTE: bare "是" is deliberately excluded — it doubles as the classical
+# demonstrative "这" (是鸟也 / 斯是陋室). Modern "是" is still penalised
+# via the 是…的 template in _MODERN_TEMPLATES and the 你/他/她/它 pronouns.
+_MODERN_COPULA: frozenset[str] = frozenset()
 
 # Modern Chinese measure words
 _MODERN_MEASURE: frozenset[str] = frozenset("个只条张把块本次")
@@ -125,17 +134,20 @@ _CLASSICAL_TRIGRAMS: tuple[str, ...] = (
 )
 
 # Modern Chinese word patterns (strong negative signal)
+# NOTE: 可以 / 所以 / 其中 / 所谓 are deliberately absent — all four are
+# everyday classical Chinese (可以一战 / 所以动心忍性 / 其中往来种作 /
+# 所谓…者). Keeping them as "modern" markers misfired on classical texts.
 _MODERN_WORDS: tuple[str, ...] = (
     "我们", "你们", "他们", "她们", "它们",
     "这个", "那个", "哪个", "这些", "那些",
-    "因为", "所以", "而且", "但是", "虽然", "如果", "可以",
+    "因为", "而且", "但是", "虽然", "如果",
     "应该", "已经", "正在", "什么", "怎么", "为什么",
     "非常", "比较", "特别", "尤其", "更加",
     "通过", "根据", "按照", "对于", "关于",
     "一个", "一种", "一样", "一起", "一些",
     "进行", "实现", "发展", "建设", "提高",
     "记载", "认为", "研究", "表明", "分析",
-    "所谓", "其中", "例如", "包括",
+    "例如", "包括",
 )
 
 # Modern sentence-final particles (strong modern signal)
@@ -394,6 +406,32 @@ def classical_confidence(text: str) -> float:
         rhythm_score += 0.04
     score += min(rhythm_score, 0.10)
 
+    # 3g. Parallel prose / fu (骈文·赋体) — antithesis + rhythmic regularity.
+    # 骈文/赋体 is built from balanced, equal-length phrases (六王毕，四海一 /
+    # 豫章故郡，洪都新府) and carries very few function words, so the density
+    # features above under-score it. Detect it directly from phrase-length
+    # parallelism. Gated on zero modern particles so modern four-character
+    # compounds (云计算基础设施) never trigger it.
+    if modern_part_count == 0:
+        seg_lens = [
+            len(re.sub(r"[^\u4e00-\u9fff]", "", seg))
+            for seg in re.split(r"[，。；、！？,;]", text)
+            if re.search(r"[\u4e00-\u9fff]", seg)
+        ]
+        seg_lens = [l for l in seg_lens if l >= 2]
+        if len(seg_lens) >= 4:
+            pairs = sum(1 for i in range(len(seg_lens) - 1)
+                        if seg_lens[i] == seg_lens[i + 1])
+            parallel_ratio = pairs / (len(seg_lens) - 1)
+            if parallel_ratio >= 0.5:
+                score += min(0.08 + parallel_ratio * 0.12, 0.20)
+            # Strong antithesis (parallel_ratio >= 0.7) is the defining
+            # trait of 骈文/赋体 — add one more notch so dense fu/parallel
+            # prose clears the classical bar even with near-zero function
+            # words (e.g. 阿房宫赋: 廊腰缦回，檐牙高啄).
+            if parallel_ratio >= 0.7:
+                score += 0.03
+
     # 3c. Punctuation usage profile (0.0–0.04)
     comma_count = text.count("，") + text.count(",")
     period_count = text.count("。") + text.count(".")
@@ -435,7 +473,14 @@ def _apply_mixed_penalty(score: float, text: str, text_no_punct: str) -> float:
 
     This penalty ensures that mixed sentences default to modern unless
     classical signals are overwhelmingly dominant.
+
+    Strong classical texts (raw score >= 0.85) are exempt: a few stray
+    characters that also appear in modern Chinese (我/是/过/《》) must not
+    drag an otherwise unmistakably classical document down to "modern".
     """
+    if score >= 0.85:
+        return score
+
     # Count classical signal types present
     classical_present = 0
     if any(c in _CLASSICAL_FUNCTION for c in text_no_punct):
@@ -498,10 +543,11 @@ def detect_language(text: str) -> tuple[LanguageClass, float]:
     """
     Three-way language detection.
 
-    Returns (language, confidence):
-      ("english",   [0,1])   — English text
-      ("classical", [0,1])   — Classical Chinese
-      ("modern",    [0,1])   — Modern Chinese (default)
+    Returns (language, confidence) where ``confidence`` is the confidence
+    that the text is of the *returned* label, i.e. P(label | text):
+      ("english",   [0,1])   — confidence it is English
+      ("classical", [0,1])   — confidence it is Classical Chinese
+      ("modern",    [0,1])   — confidence it is Modern Chinese (default)
 
     Detection priority: english → classical → modern.
     """
@@ -528,9 +574,10 @@ def detect_language(text: str) -> tuple[LanguageClass, float]:
                 return ("english", 0.60)
 
     # ---------- Classical Chinese detection ----------
-    # Exclude English texts entirely
+    # Exclude English texts entirely. Heavy Latin content is definitively
+    # not classical Chinese, so report a high *modern* confidence.
     if total_content > 0 and letters / total_content > 0.3:
-        return ("modern", 0.0)
+        return ("modern", 0.9)
 
     conf = classical_confidence(text)
     text_no_punct = re.sub(r"[，。！？；、：\s]", "", text)
@@ -538,4 +585,6 @@ def detect_language(text: str) -> tuple[LanguageClass, float]:
 
     if conf >= CLASSICAL_THRESHOLD:
         return ("classical", conf)
-    return ("modern", conf)
+    # ``conf`` is the *classical* confidence; the modern confidence is its
+    # complement so the returned value is relative to the "modern" label.
+    return ("modern", 1.0 - conf)
