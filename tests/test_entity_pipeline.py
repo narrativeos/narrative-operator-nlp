@@ -238,6 +238,29 @@ class TestNumericExtractor:
         ents = extract_numeric_entities("编号63906433", set(), self.id_gen)
         assert ents == []
 
+    def test_bare_month_is_date(self):
+        # "3月" (March) is a month reference → source numeric/date with
+        # ISO normalization, not a numeric/quantity (all numeric
+        # expressions share the NUMBER category by design).
+        ents = extract_numeric_entities("会议定在3月举行", set(), self.id_gen)
+        months = [e for e in ents if e.text == "3月"]
+        assert len(months) == 1
+        assert months[0].source == "numeric/date"
+        assert months[0].normalized == "03"
+
+    def test_year_month_not_double_counted(self):
+        # "2024年3月" is matched whole by the 年 pattern; the bare-month
+        # pattern must not re-extract "3月" from inside it.
+        ents = extract_numeric_entities("2024年3月发布", set(), self.id_gen)
+        assert any(e.text == "2024年3月" for e in ents)
+        assert not any(e.text == "3月" for e in ents)
+
+    def test_duration_months_not_bare_month(self):
+        # "3个月" (3 months, a duration) — 月 is not directly preceded by
+        # a digit, so the bare-month pattern must not fire.
+        ents = extract_numeric_entities("工期3个月", set(), self.id_gen)
+        assert not any(e.text == "3月" for e in ents)
+
 
 class TestDeduplicatorSameSpan:
     """Identical span with different categories is a labeling conflict."""
@@ -464,4 +487,245 @@ class TestNerConflictUnionFind:
         d.source = "ner/msra"
         out = self._resolve([a, b, c, d])
         assert {e.id for e in out} == {"ent_001", "ent_003"}
+
+
+class TestDepGuard:
+    """The noun-chain dep guard must use real UD edge direction (fail-open).
+
+    Fixtures are real HanLP MTL (ELECTRA-small) dep outputs captured during
+    the 2026-09 audit. dep entries are (head_1based, deprel) indexed by
+    token position.
+    """
+
+    def setup_method(self):
+        self.merger = EntityMerger()
+
+    def _e(self, eid, text, cat, span, tspan):
+        return Entity(
+            id=eid, text=text, category=cat, span=span,
+            normalized=text, source="test", confidence=0.9,
+            token_span=tspan,
+        )
+
+    # 北京立方庭位于海淀区。
+    # tokens: 北京(0) 立方庭(1) 位于(2) 海淀区(3)
+    # dep: 北京→nn→立方庭, 立方庭→nsubj→位于, 海淀区→dobj→位于
+    _DEP_COMPOUND = [(2, "nn"), (3, "nsubj"), (0, "root"), (3, "dobj")]
+
+    # 海淀区中关村两地都有项目。
+    # tokens: 海淀区(0) 中关村(1) 两(2) 地(3) 都(4) 有(5) 项目(6)
+    # dep: 海淀区→nn→中关村→nn→地 (tight chain continues past the pair)
+    _DEP_CHAIN = [(2, "nn"), (4, "nn"), (4, "nummod"), (6, "nsubj"),
+                  (6, "advmod"), (0, "root"), (6, "dobj")]
+
+    def test_true_compound_merged_same_category(self):
+        e1 = self._e("ent_001", "北京", "LOCATION", (0, 2), (0, 1))
+        e2 = self._e("ent_002", "立方庭", "LOCATION", (2, 5), (1, 2))
+        out = self.merger.merge_same_category(
+            [e1, e2], "北京立方庭位于海淀区", dep=self._DEP_COMPOUND
+        )
+        assert len(out) == 1
+        assert out[0].text == "北京立方庭"
+
+    def test_independent_names_not_merged_same_category(self):
+        e1 = self._e("ent_001", "海淀区", "LOCATION", (0, 3), (0, 1))
+        e2 = self._e("ent_002", "中关村", "LOCATION", (3, 6), (1, 2))
+        out = self.merger.merge_same_category(
+            [e1, e2], "海淀区中关村两地都有项目", dep=self._DEP_CHAIN
+        )
+        assert [e.text for e in out] == ["海淀区", "中关村"]
+
+    def test_independent_names_not_merged_cross_category(self):
+        # The cross-category LOC+LOC rule must apply the same guard
+        # (previously it bypassed the dep check entirely).
+        e1 = self._e("ent_001", "海淀区", "LOCATION", (0, 3), (0, 1))
+        e2 = self._e("ent_002", "中关村", "LOCATION", (3, 6), (1, 2))
+        out = self.merger.merge_cross_category(
+            [e1, e2], "海淀区中关村两地都有项目", dep=self._DEP_CHAIN
+        )
+        assert [e.text for e in out] == ["海淀区", "中关村"]
+
+    def test_true_compound_merged_cross_category(self):
+        e1 = self._e("ent_001", "北京", "LOCATION", (0, 2), (0, 1))
+        e2 = self._e("ent_002", "立方庭", "LOCATION", (2, 5), (1, 2))
+        out = self.merger.merge_cross_category(
+            [e1, e2], "北京立方庭位于海淀区", dep=self._DEP_COMPOUND
+        )
+        assert len(out) == 1
+        assert out[0].text == "北京立方庭"
+
+    def test_no_modifier_edge_fails_open(self):
+        # Synthetic dep with only a conj edge between the parts (no nn):
+        # no evidence against merging → legacy behavior preserved.
+        dep = [(0, "root"), (1, "conj")]
+        e1 = self._e("ent_001", "北京", "LOCATION", (0, 2), (0, 1))
+        e2 = self._e("ent_002", "立方庭", "LOCATION", (2, 5), (1, 2))
+        out = self.merger.merge_same_category(
+            [e1, e2], "北京立方庭", dep=dep
+        )
+        assert len(out) == 1
+        assert out[0].text == "北京立方庭"
+
+    def test_dep_none_preserves_legacy(self):
+        e1 = self._e("ent_001", "海淀区", "LOCATION", (0, 3), (0, 1))
+        e2 = self._e("ent_002", "中关村", "LOCATION", (3, 6), (1, 2))
+        out = self.merger.merge_same_category([e1, e2], "海淀区中关村")
+        assert len(out) == 1  # no dep data → legacy merge
+
+    def test_token_span_filled_from_tokens(self):
+        # token_span not preset — the merger must fill it from tokens
+        tokens = [
+            Token(id=0, text="海淀区", pos="NR", span=(0, 3)),
+            Token(id=1, text="中关村", pos="NR", span=(3, 6)),
+            Token(id=2, text="两", pos="M", span=(6, 7)),
+            Token(id=3, text="地", pos="NN", span=(7, 8)),
+        ]
+        e1 = self._e("ent_001", "海淀区", "LOCATION", (0, 3), None)
+        e2 = self._e("ent_002", "中关村", "LOCATION", (3, 6), None)
+        out = self.merger.merge_same_category(
+            [e1, e2], "海淀区中关村两地", dep=self._DEP_CHAIN, tokens=tokens
+        )
+        assert [e.text for e in out] == ["海淀区", "中关村"]
+
+    def test_merged_from_recorded_on_same_category_merge(self):
+        e1 = self._e("ent_001", "北京", "LOCATION", (0, 2), (0, 1))
+        e2 = self._e("ent_002", "立方庭", "LOCATION", (2, 5), (1, 2))
+        out = self.merger.merge_same_category(
+            [e1, e2], "北京立方庭位于海淀区", dep=self._DEP_COMPOUND
+        )
+        assert out[0].id == "ent_001"
+        assert "ent_002" in out[0].merged_from
+
+    def test_merged_from_recorded_on_cross_category_merge(self):
+        e1 = self._e("ent_001", "北京", "LOCATION", (0, 2), (0, 1))
+        e2 = self._e("ent_002", "立方庭", "LOCATION", (2, 5), (1, 2))
+        out = self.merger.merge_cross_category(
+            [e1, e2], "北京立方庭位于海淀区", dep=self._DEP_COMPOUND
+        )
+        assert out[0].id == "ent_001"
+        assert "ent_002" in out[0].merged_from
+
+
+class TestClassicalPropnFallback:
+    """PROPN without parseable xpos must not default to LOCATION."""
+
+    def _fake_rules(self):
+        class _FakeRules:
+            _merger = EntityMerger()
+            _id_gen = EntityIdGenerator()
+            _parse_xpos_category = staticmethod(
+                EntityMappingRules._parse_xpos_category
+            )
+
+        return _FakeRules()
+
+    def test_propn_without_xpos_is_unknown(self):
+        # 李白 is a person; the old LOCATION default misclassified it.
+        toks = [Token(id=0, text="李白", pos="PROPN", span=(0, 2), confidence=1.0)]
+        res = EntityMappingRules._map_classical_entities(
+            self._fake_rules(), toks, "李白", {"pos/xpos": [""]}
+        )
+        assert len(res) == 1
+        assert res[0].category == "UNKNOWN"
+
+    def test_propn_with_xpos_person_still_person(self):
+        toks = [Token(id=0, text="李白", pos="PROPN", span=(0, 2), confidence=1.0)]
+        res = EntityMappingRules._map_classical_entities(
+            self._fake_rules(), toks, "李白", {"pos/xpos": ["名詞,人名"]}
+        )
+        assert len(res) == 1
+        assert res[0].category == "PERSON"
+
+
+class TestNerConflictTraceability:
+    """Dropped conflict losers must be recorded in the winner's merged_from."""
+
+    def test_losers_recorded_in_merged_from(self):
+        from core.entity_mapper import _resolve_ner_conflicts
+        x = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=1.0)
+        x.source = "ner/pku"
+        y = _ent("ent_002", "北京", "ORGANIZATION", (0, 2), confidence=0.9)
+        y.source = "ner/msra"
+        _resolve_ner_conflicts([x, y])
+        assert x.ner_disputed
+        assert "ent_002" in x.merged_from
+
+
+class TestHashModeId:
+    """hash_mode IDs must satisfy the schema pattern ^ent_\\d+$."""
+
+    def test_hash_id_matches_schema_pattern(self):
+        import re
+        gen = EntityIdGenerator(hash_mode=True)
+        hid = gen.generate("北京", (0, 2), "LOCATION")
+        assert re.fullmatch(r"ent_\d+", hid), hid
+        # Must construct a valid Entity (id_validator would raise on hex)
+        Entity(id=hid, text="北京", category="LOCATION", span=(0, 2))
+
+    def test_hash_id_deterministic(self):
+        # Two independent generators must produce the same ID for the
+        # same key (a single generator dedups repeated keys → None).
+        a = EntityIdGenerator(hash_mode=True).generate("北京", (0, 2), "LOCATION")
+        b = EntityIdGenerator(hash_mode=True).generate("北京", (0, 2), "LOCATION")
+        assert a == b
+
+    def test_hash_id_varies_by_span(self):
+        gen = EntityIdGenerator(hash_mode=True)
+        assert gen.generate("北京", (0, 2), "LOCATION") != \
+            gen.generate("北京", (10, 12), "LOCATION")
+
+
+class TestPosFallbackNounChainGuard:
+    """The POS fallback must not fuse independent names into one entity.
+
+    When NER misses, consecutive NNP/PROPN/NR tokens are merged into a
+    single entity — the same noun-chain dep guard as EntityMerger must
+    apply to that run extension.
+    """
+
+    def setup_method(self):
+        self.rules = EntityMappingRules()
+
+    def test_independent_names_not_fused(self):
+        # 海淀区(NR) 中关村(NR) 两(M) 地(NN) — NER missed both.
+        # dep: 海淀区→nn→中关村→nn→地 (chain continues past the pair).
+        tokens = [
+            Token(id=0, text="海淀区", pos="NR", span=(0, 3)),
+            Token(id=1, text="中关村", pos="NR", span=(3, 6)),
+            Token(id=2, text="两", pos="M", span=(6, 7)),
+            Token(id=3, text="地", pos="NN", span=(7, 8)),
+        ]
+        dep = [(2, "nn"), (4, "nn"), (4, "nummod"), (0, "root")]
+        out = self.rules._extract_pos_based_entities(
+            tokens, [], "海淀区中关村两地", dep=dep
+        )
+        assert [e.text for e in out] == ["海淀区", "中关村"]
+
+    def test_true_compound_still_merged(self):
+        # 北京(NR) 立方庭(NR) 位于(VV) — dep: 北京→nn→立方庭,
+        # 立方庭→nsubj→位于 (chain ends at the head part).
+        tokens = [
+            Token(id=0, text="北京", pos="NR", span=(0, 2)),
+            Token(id=1, text="立方庭", pos="NR", span=(2, 5)),
+            Token(id=2, text="位于", pos="VV", span=(5, 7)),
+        ]
+        dep = [(2, "nn"), (3, "nsubj"), (0, "root")]
+        out = self.rules._extract_pos_based_entities(
+            tokens, [], "北京立方庭位于", dep=dep
+        )
+        assert [e.text for e in out] == ["北京立方庭"]
+
+    def test_no_dep_preserves_legacy(self):
+        # Without dep data the run extension is unconditional (legacy).
+        tokens = [
+            Token(id=0, text="海淀区", pos="NR", span=(0, 3)),
+            Token(id=1, text="中关村", pos="NR", span=(3, 6)),
+        ]
+        out = self.rules._extract_pos_based_entities(
+            tokens, [], "海淀区中关村"
+        )
+        assert [e.text for e in out] == ["海淀区中关村"]
+
+
+
 

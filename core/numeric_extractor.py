@@ -26,6 +26,10 @@ from .schema import Entity
 _DATE_PATTERNS = [
     # 2024年1月15日 / 2024年1月 / 2024年
     re.compile(r"\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?"),
+    # 3月 / 12月 (bare month reference, e.g. "会议定在3月") — listed after
+    # the 年 pattern so "2024年3月" is matched whole by it first. "3个月"
+    # is NOT matched (月 must be directly preceded by a digit).
+    re.compile(r"\d{1,2}月"),
     # 2024-01-15 / 2024-1-5
     re.compile(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"),
     # 2024.01.15
@@ -54,7 +58,8 @@ _PERCENTAGE_PATTERNS = [
 # Quantity patterns (number + measure word)
 # NOTE: ordinal/floor designators (号/层/楼) are identifiers, not
 # quantities — "3号航站楼" / "5层楼" must not become NUMBER entities.
-# 年 is handled by the date patterns, not as a quantity measure word.
+# 年/月 are handled by the date patterns, not as quantity measure words
+# (bare "3月" is a month reference → DATE, not a quantity).
 _QUANTITY_PATTERNS = [
     # 100个 / 500吨 / 2000人 / 1000万 / 3.5亿
     re.compile(r"\d+(?:\.\d+)?(?:万|亿|千万|个|件|台|辆|艘|张|把|支|根|条|块|片|份|次|回|月|天|小时|分钟|秒|米|公里|厘米|毫米|克|千克|吨|升|毫升|度|摄氏度|人|口|家|所|座|栋|页|章|节|篇|首|幅|部|集|卷|册|本|期|班|组|队|团|军|师|营|连|排|名|位)"),
@@ -87,6 +92,11 @@ def _normalize_date(text: str) -> str:
     m = re.match(r"(\d{4})年", text)
     if m:
         return m.group(1)
+
+    # 3月 (bare month reference) → 03
+    m = re.match(r"(\d{1,2})月", text)
+    if m:
+        return f"{int(m.group(1)):02d}"
     
     # 2024-01-15 (already ISO)
     m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)

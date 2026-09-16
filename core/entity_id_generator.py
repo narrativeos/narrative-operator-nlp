@@ -53,8 +53,11 @@ class EntityIdGenerator:
 
         if self._hash_mode:
             key = f"{text}|{span[0]}:{span[1]}|{category}"
-            hash_val = hashlib.md5(key.encode("utf-8")).hexdigest()[:8]
-            return f"ent_{hash_val}"
+            # Numeric-only hash so the ID satisfies the schema pattern
+            # ^ent_\d+$ (a hex digest would contain a-f and fail
+            # Entity.id validation).
+            digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+            return f"ent_{int(digest, 16) % 100000000:08d}"
         else:
             self._counter += 1
             return f"ent_{self._counter:03d}"

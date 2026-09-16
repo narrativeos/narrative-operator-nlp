@@ -69,7 +69,9 @@ def clean_html(text: str) -> str:
 # Default section-reference patterns (F1). Match chapter/section/clause refs
 # such as "4.3.2", "第5章", "12条".
 _DEFAULT_SECTION_REF_PATTERNS = [
-    r"\d+\.\d+",        # 4.3.2 / 12.1
+    r"^\d+(\.\d+)+$",   # 4.3.2 / 12.1 — anchored: the whole text must be a
+                        # dotted number, so "3.14%" or "GB/T 20840.1" are
+                        # NOT relabeled
     r"第\s*\d+",        # 第5章 / 第3条
     r"\d+\s*章",        # 5章
     r"\d+\s*节",        # 3节

@@ -171,11 +171,16 @@ def _resolve_ner_conflicts(candidates: list[Entity]) -> None:
         if len(categories) == 1:
             continue  # All models agree, no conflict
 
-        # Conflict: pick highest confidence, mark the rest for removal
+        # Conflict: pick highest confidence, mark the rest for removal.
+        # Loser IDs are recorded in the winner's merged_from for
+        # traceability (they are dropped, not merged).
         best_idx = max(group, key=lambda idx: candidates[idx].confidence)
         winner = candidates[best_idx]
         winner.ner_disputed = True
         winner.ner_labels = ner_labels
+        for idx in group:
+            if idx != best_idx and candidates[idx].id not in winner.merged_from:
+                winner.merged_from.append(candidates[idx].id)
         remove.update(idx for idx in group if idx != best_idx)
 
     if remove:
@@ -340,7 +345,9 @@ class EntityMappingRules:
         entities.extend(numeric_entities)
 
         # ── Layer 3c: POS-based fallback for modern Chinese ──
-        pos_entities = self._extract_pos_based_entities(tokens, entities, text)
+        pos_entities = self._extract_pos_based_entities(
+            tokens, entities, text, dep=raw.get("dep"),
+        )
         entities.extend(pos_entities)
 
         # ── Layer 3d: Classical Chinese fallback (when no NER/SRL) ──
@@ -362,7 +369,9 @@ class EntityMappingRules:
             entities, text, dep=raw.get("dep"), tokens=tokens,
         )
         entities.sort(key=lambda e: e.span[0])
-        entities = self._merger.merge_cross_category(entities, text)
+        entities = self._merger.merge_cross_category(
+            entities, text, dep=raw.get("dep"), tokens=tokens,
+        )
 
         if not has_ner and not has_srl:
             entities = self._merger.merge_det_entities(entities, tokens, raw, self._id_gen)
@@ -460,8 +469,15 @@ class EntityMappingRules:
         tokens: list[Token],
         existing_entities: list[Entity],
         text: str,
+        dep: Optional[list] = None,
     ) -> list[Entity]:
-        """Extract entities from POS tags when NER misses them."""
+        """Extract entities from POS tags when NER misses them.
+
+        Consecutive NNP/PROPN/NR tokens are merged into one entity, but the
+        same noun-chain guard as EntityMerger applies: a run is not extended
+        across a boundary where the dependency parse shows the current run
+        is a link in a longer noun chain (e.g. 海淀区 nn 中关村 nn 地).
+        """
         result: list[Entity] = []
         entity_spans = {(e.span[0], e.span[1]) for e in existing_entities}
 
@@ -507,6 +523,12 @@ class EntityMappingRules:
                 nxt = tokens[j]
                 if nxt.pos in ("NNP", "PROPN", "NR") and nxt.span[0] == merged_end:
                     if nxt.text in NON_ENTITY_WORDS:
+                        break
+                    # Noun-chain guard: stop the run where the dep parse
+                    # shows the current run is a link in a longer chain.
+                    if dep and not self._merger._compound_merge_allowed_spans(
+                        (i, j - 1), (j, j), dep
+                    ):
                         break
                     merged_text += nxt.text
                     merged_end = nxt.span[1]
@@ -613,7 +635,10 @@ class EntityMappingRules:
             if t.pos in ("PROPN", "NR"):
                 xpos = xpos_tags[i] if i < len(xpos_tags) else ""
                 xcat = self._parse_xpos_category(xpos) if xpos else None
-                cat = xcat or ("LOCATION" if len(t.text) >= 2 else None)
+                # No xpos evidence → UNKNOWN (not LOCATION): classical PROPN
+                # is overwhelmingly a person name, and guessing LOCATION
+                # misclassifies names like 李白.
+                cat = xcat or ("UNKNOWN" if len(t.text) >= 2 else None)
                 if cat is None:
                     continue
                 ent_id = self._id_gen.generate(t.text, t.span, cat)

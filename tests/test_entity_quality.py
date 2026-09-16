@@ -73,6 +73,21 @@ class TestF1Shape:
         assert e.category == EntityCategory.SECTION_REF
         assert e.keep is True
 
+    def test_decimal_percent_not_section_ref(self):
+        # "3.14%" is a percentage, not a section number — the dotted-number
+        # pattern must be anchored to the whole text.
+        pol = QualityPolicy()
+        e = _ent("3.14%", EntityCategory.NUMBER, source="numeric/percentage")
+        apply_entity_quality([e], pol)
+        assert e.category == EntityCategory.NUMBER
+
+    def test_standard_code_with_decimal_part_not_section_ref(self):
+        # "GB/T 20840.1" contains a dotted number but is a standard code.
+        pol = QualityPolicy()
+        e = _ent("GB/T 20840.1", EntityCategory.STANDARD)
+        apply_entity_quality([e], pol)
+        assert e.category == EntityCategory.STANDARD
+
     def test_bare_number_demoted(self):
         pol = QualityPolicy()
         e = _ent("100", EntityCategory.NUMBER)

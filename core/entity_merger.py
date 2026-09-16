@@ -84,41 +84,121 @@ class EntityMerger:
     # Dependency relations that mark a noun modifier (compound name part)
     _MODIFIER_RELS = frozenset({"nn", "compound", "nmod"})
 
+    # Tight compound relations (name-part links, e.g. 北京 nn 立方庭).
+    # If the head part of a compound continues a tight chain to a token
+    # OUTSIDE the pair, the pair is a link in a longer noun chain
+    # (海淀区 nn 中关村 nn 地), not a complete name.
+    _TIGHT_COMPOUND_RELS = frozenset({"nn", "compound"})
+
+    @staticmethod
+    def _fill_token_spans(entities: list[Entity], tokens: list[Token]) -> None:
+        """Fill Entity.token_span (0-based [start, end)) from char spans.
+
+        Only fills entities that lack a token_span; existing values are
+        preserved (merged compounds carry their combined token range).
+        """
+        for e in entities:
+            if getattr(e, "token_span", None) is not None:
+                continue
+            first_idx = None
+            last_idx = None
+            for ti, t in enumerate(tokens):
+                ts = getattr(t, "span", None)
+                if not ts:
+                    continue
+                if ts[0] < e.span[1] and ts[1] > e.span[0]:
+                    if first_idx is None:
+                        first_idx = ti
+                    last_idx = ti
+            if first_idx is not None and last_idx is not None:
+                e.token_span = (first_idx, last_idx + 1)
+
     @classmethod
-    def _has_modifier_edge(
+    def _compound_merge_allowed(
         cls,
         first: Entity,
         second: Entity,
         dep: list,
     ) -> bool:
-        """Return True if ``dep`` shows ``first`` modifying ``second``.
+        """Return True if the adjacent pair may be merged as a compound name.
 
-        A compound name like 北京立方庭 has a noun-modifier dependency edge
-        from a token of the second part back to a token of the first part
-        (e.g. 立 →nn 北). Two independent names that merely sit next to
-        each other (海淀区 + 中关村) have no such edge, so they must not
-        be merged.
-
-        ``dep`` entries are (head_1based, deprel) indexed by token position;
-        entity token ranges come from Entity.token_span (0-based, [start, end)).
+        Entity wrapper around :meth:`_compound_merge_allowed_spans`; token
+        ranges come from Entity.token_span (0-based, [start, end)).
         """
-        if not dep:
-            return False
         ts_a = getattr(first, "token_span", None)
         ts_b = getattr(second, "token_span", None)
         if not ts_a or not ts_b:
-            return False
-        a_lo, a_hi = ts_a[0], ts_a[1] - 1
-        b_lo, b_hi = ts_b[0], ts_b[1] - 1
-        for j in range(b_lo, min(b_hi + 1, len(dep))):
+            return True  # cannot evaluate → fail open
+        return cls._compound_merge_allowed_spans(
+            (ts_a[0], ts_a[1] - 1), (ts_b[0], ts_b[1] - 1), dep
+        )
+
+    @classmethod
+    def _compound_merge_allowed_spans(
+        cls,
+        a_range: tuple[int, int],
+        b_range: tuple[int, int],
+        dep: list,
+    ) -> bool:
+        """Return True if two adjacent token ranges may be merged as a
+        compound name.
+
+        Fail-open design (direction verified against real HanLP MTL output):
+        - No modifier edge between the two ranges → allow (no evidence
+          against; preserves legacy behavior for noisy/synthetic dep data).
+        - A modifier edge (nn/compound/nmod) exists between the ranges in
+          either direction: the HEAD part of that edge must not continue a
+          tight compound chain (nn/compound) to a token outside the pair.
+
+        Real-data examples (``dep`` entries are (head_1based, deprel)):
+        - 北京立方庭: 北京→nn→立方庭, 立方庭→nsubj→位于. The tight chain
+          ends at 立方庭 → complete name → allow.
+        - 海淀区中关村: 海淀区→nn→中关村, 中关村→nn→地. The tight chain
+          continues past 中关村 → two independent names in a locative
+          chain → block.
+
+        Args:
+            a_range: (lo, hi) inclusive token indices of the first part.
+            b_range: (lo, hi) inclusive token indices of the second part.
+            dep: (head_1based, deprel) entries indexed by token position.
+        """
+        if not dep:
+            return True
+        a_lo, a_hi = a_range
+        b_lo, b_hi = b_range
+        pair_lo, pair_hi = min(a_lo, b_lo), max(a_hi, b_hi)
+
+        # Find a modifier edge between the two entities (either direction)
+        # and identify the head part.
+        head_lo = head_hi = None
+        for j in range(min(a_lo, b_lo), min(max(a_hi, b_hi) + 1, len(dep))):
             d = dep[j]
             if not isinstance(d, (list, tuple)) or len(d) < 2:
                 continue
             head = int(d[0]) - 1
             rel = str(d[1]).strip().lower()
-            if rel in cls._MODIFIER_RELS and a_lo <= head <= a_hi:
-                return True
-        return False
+            if rel not in cls._MODIFIER_RELS:
+                continue
+            if a_lo <= j <= a_hi and b_lo <= head <= b_hi:
+                head_lo, head_hi = b_lo, b_hi  # first modifies second
+                break
+            if b_lo <= j <= b_hi and a_lo <= head <= a_hi:
+                head_lo, head_hi = a_lo, a_hi  # second modifies first
+                break
+        if head_lo is None:
+            return True  # no inter-entity modifier edge → fail open
+
+        # Chain-continuation guard: the head part must not itself be a
+        # tight modifier of a token outside the pair.
+        for j in range(head_lo, min(head_hi + 1, len(dep))):
+            d = dep[j]
+            if not isinstance(d, (list, tuple)) or len(d) < 2:
+                continue
+            head = int(d[0]) - 1
+            rel = str(d[1]).strip().lower()
+            if rel in cls._TIGHT_COMPOUND_RELS and not (pair_lo <= head <= pair_hi):
+                return False
+        return True
 
     @staticmethod
     def _mergeable_in_text(start: int, end: int, text: str) -> bool:
@@ -153,13 +233,12 @@ class EntityMerger:
         Guards (applied in order):
         1. Punctuation: when ``text`` is provided, entities separated by
            punctuation in the original text are never merged.
-        2. Modifier edge: when ``dep`` (and entity token_spans) are
-           available, adjacent entities are only merged if the dependency
-           parse shows the first entity modifying the second (nn /
-           compound / nmod). This stops two independent names that merely
-           sit next to each other without punctuation (e.g. '海淀区' +
-           '中关村') from being fused into a fake compound, while still
-           merging true compounds like '北京' + '立方庭'.
+        2. Noun-chain: when ``dep`` (and entity token_spans) are available,
+           the merge is blocked if the dependency parse shows the pair is a
+           link in a longer noun chain (e.g. '海淀区' nn '中关村' nn '地'),
+           while true compounds like '北京' nn '立方庭' (chain ends at the
+           head part) are still merged. Fail-open: without modifier-edge
+           evidence the merge is allowed (legacy behavior).
         """
         if len(entities) < 2:
             return entities
@@ -167,20 +246,7 @@ class EntityMerger:
         # Guard 2 needs token-level alignment; fill token_span for entities
         # that lack it when token data is available.
         if dep and tokens:
-            for e in entities:
-                if getattr(e, "token_span", None) is None:
-                    first_idx = None
-                    last_idx = None
-                    for ti, t in enumerate(tokens):
-                        ts = getattr(t, "span", None)
-                        if not ts:
-                            continue
-                        if ts[0] < e.span[1] and ts[1] > e.span[0]:
-                            if first_idx is None:
-                                first_idx = ti
-                            last_idx = ti
-                    if first_idx is not None and last_idx is not None:
-                        e.token_span = (first_idx, last_idx + 1)
+            self._fill_token_spans(entities, tokens)
 
         merged: list[Entity] = []
         i = 0
@@ -196,11 +262,10 @@ class EntityMerger:
                         cur.span[0], nxt.span[1], text
                     ):
                         break
-                    # Guard 2: require a noun-modifier dependency edge
-                    # when dependency data is available. (dep=None means
-                    # "no dep data" → legacy behavior; dep=[] means the
-                    # parse produced no edges → nothing may be modified.)
-                    if dep is not None and not self._has_modifier_edge(
+                    # Guard 2: block the merge when dependency data shows
+                    # the pair is a link in a longer noun chain.
+                    # (dep=None means "no dep data" → legacy behavior.)
+                    if dep is not None and not self._compound_merge_allowed(
                         cur, nxt, dep
                     ):
                         break
@@ -223,6 +288,9 @@ class EntityMerger:
                         merged_token_span = (min(ts_cur[0], ts_nxt[0]),
                                              max(ts_cur[1], ts_nxt[1]))
 
+                    merged_mf = list(cur.merged_from)
+                    if nxt.id not in merged_mf:
+                        merged_mf.append(nxt.id)
                     cur = Entity(
                         id=cur.id,
                         text=cur.text + nxt.text,
@@ -233,6 +301,7 @@ class EntityMerger:
                         confidence=min(cur.confidence, nxt.confidence),
                         attributes=deduped_attrs,
                         token_span=merged_token_span,
+                        merged_from=merged_mf,
                     )
                     j += 1
                 else:
@@ -245,16 +314,23 @@ class EntityMerger:
         self,
         entities: list[Entity],
         text: str = "",
+        dep: Optional[list] = None,
+        tokens: Optional[list] = None,
     ) -> list[Entity]:
         """Merge adjacent entities using configured cross-category rules.
 
         Applies rules in priority order. Each rule defines a from→to pattern.
         Only adjacent entities (no gap) are merged. When ``text`` is
         provided, merges across punctuation are refused (same guard as
-        merge_same_category).
+        merge_same_category). When ``dep`` is provided, the same noun-chain
+        guard as merge_same_category applies (a pair that is a link in a
+        longer noun chain, e.g. 海淀区 nn 中关村 nn 地, is not merged).
         """
         if not self._merge_rules or len(entities) < 2:
             return entities
+
+        if dep is not None and tokens:
+            self._fill_token_spans(entities, tokens)
 
         result: list[Entity] = list(entities)
 
@@ -273,7 +349,9 @@ class EntityMerger:
                             and nxt.category == from_cats[1]
                             and cur.span[1] == nxt.span[0]
                             and (not text or self._mergeable_in_text(
-                                cur.span[0], nxt.span[1], text))):
+                                cur.span[0], nxt.span[1], text))
+                            and (dep is None
+                                 or self._compound_merge_allowed(cur, nxt, dep))):
                         # Merge
                         merged_attrs = list(cur.attributes) + list(nxt.attributes)
                         seen_keys: set[str] = set()
@@ -283,6 +361,9 @@ class EntityMerger:
                                 seen_keys.add(attr.key)
                                 deduped_attrs.append(attr)
 
+                        merged_mf = list(cur.merged_from)
+                        if nxt.id not in merged_mf:
+                            merged_mf.append(nxt.id)
                         new_result.append(Entity(
                             id=cur.id,
                             text=cur.text + nxt.text,
@@ -292,6 +373,7 @@ class EntityMerger:
                             source=cur.source,
                             confidence=min(cur.confidence, nxt.confidence),
                             attributes=deduped_attrs,
+                            merged_from=merged_mf,
                         ))
                         i += 2
                         continue

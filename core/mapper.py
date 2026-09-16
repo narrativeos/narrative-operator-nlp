@@ -77,13 +77,11 @@ class HanlpSchemaMapper:
             # Dynamic confidence: adjust based on evidence quality
             rel.confidence = self._dynamic_confidence(rel, raw)
 
-        # ── Step 3: Merge entities ──
-        raw_entities.sort(key=lambda e: e.span[0])
-        raw_entities = self.entity_rules.merger.merge_same_category(
-            raw_entities, text, dep=raw.get("dep"), tokens=tokens,
-        )
-        raw_entities.sort(key=lambda e: e.span[0])
-        raw_entities = self.entity_rules.merger.merge_cross_category(raw_entities, text)
+        # ── Step 3: Determiner compounds + final dedup ──
+        # Same-category / cross-category merging already happened inside
+        # map_all (Step 1); re-running it here was redundant.
+        # merge_det_entities is kept because map_all only applies it when
+        # no NER/SRL is present.
         raw_entities = self.entity_rules.merger.merge_det_entities(
             raw_entities, tokens, raw, self.entity_rules._id_gen,
         )
