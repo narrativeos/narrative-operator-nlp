@@ -323,7 +323,9 @@ class EntityMappingRules:
 
         # ── Merge & Dedup ──
         entities.sort(key=lambda e: e.span[0])
-        entities = self._merger.merge_same_category(entities, text)
+        entities = self._merger.merge_same_category(
+            entities, text, dep=raw.get("dep"), tokens=tokens,
+        )
         entities.sort(key=lambda e: e.span[0])
         entities = self._merger.merge_cross_category(entities, text)
 

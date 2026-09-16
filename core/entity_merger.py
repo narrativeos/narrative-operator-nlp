@@ -81,6 +81,45 @@ class EntityMerger:
 
         logger.info("Loaded %d merge rules", len(self._merge_rules))
 
+    # Dependency relations that mark a noun modifier (compound name part)
+    _MODIFIER_RELS = frozenset({"nn", "compound", "nmod"})
+
+    @classmethod
+    def _has_modifier_edge(
+        cls,
+        first: Entity,
+        second: Entity,
+        dep: list,
+    ) -> bool:
+        """Return True if ``dep`` shows ``first`` modifying ``second``.
+
+        A compound name like 北京立方庭 has a noun-modifier dependency edge
+        from a token of the second part back to a token of the first part
+        (e.g. 立 →nn 北). Two independent names that merely sit next to
+        each other (海淀区 + 中关村) have no such edge, so they must not
+        be merged.
+
+        ``dep`` entries are (head_1based, deprel) indexed by token position;
+        entity token ranges come from Entity.token_span (0-based, [start, end)).
+        """
+        if not dep:
+            return False
+        ts_a = getattr(first, "token_span", None)
+        ts_b = getattr(second, "token_span", None)
+        if not ts_a or not ts_b:
+            return False
+        a_lo, a_hi = ts_a[0], ts_a[1] - 1
+        b_lo, b_hi = ts_b[0], ts_b[1] - 1
+        for j in range(b_lo, min(b_hi + 1, len(dep))):
+            d = dep[j]
+            if not isinstance(d, (list, tuple)) or len(d) < 2:
+                continue
+            head = int(d[0]) - 1
+            rel = str(d[1]).strip().lower()
+            if rel in cls._MODIFIER_RELS and a_lo <= head <= a_hi:
+                return True
+        return False
+
     @staticmethod
     def _mergeable_in_text(start: int, end: int, text: str) -> bool:
         """Return True if text[start:end] contains no punctuation.
@@ -101,6 +140,8 @@ class EntityMerger:
         self,
         entities: list[Entity],
         text: str = "",
+        dep: Optional[list] = None,
+        tokens: Optional[list] = None,
     ) -> list[Entity]:
         """Merge adjacent same-category entities.
 
@@ -109,14 +150,37 @@ class EntityMerger:
 
         This is the original behavior, always enabled.
 
-        Guard: when ``text`` is provided, two entities are only merged if
-        no punctuation separates them in the original text. This prevents
-        merging distinct entities that merely sit next to each other
-        across a sentence boundary (e.g. '海淀区' + '中关村' must NOT
-        become '海淀区中关村').
+        Guards (applied in order):
+        1. Punctuation: when ``text`` is provided, entities separated by
+           punctuation in the original text are never merged.
+        2. Modifier edge: when ``dep`` (and entity token_spans) are
+           available, adjacent entities are only merged if the dependency
+           parse shows the first entity modifying the second (nn /
+           compound / nmod). This stops two independent names that merely
+           sit next to each other without punctuation (e.g. '海淀区' +
+           '中关村') from being fused into a fake compound, while still
+           merging true compounds like '北京' + '立方庭'.
         """
         if len(entities) < 2:
             return entities
+
+        # Guard 2 needs token-level alignment; fill token_span for entities
+        # that lack it when token data is available.
+        if dep and tokens:
+            for e in entities:
+                if getattr(e, "token_span", None) is None:
+                    first_idx = None
+                    last_idx = None
+                    for ti, t in enumerate(tokens):
+                        ts = getattr(t, "span", None)
+                        if not ts:
+                            continue
+                        if ts[0] < e.span[1] and ts[1] > e.span[0]:
+                            if first_idx is None:
+                                first_idx = ti
+                            last_idx = ti
+                    if first_idx is not None and last_idx is not None:
+                        e.token_span = (first_idx, last_idx + 1)
 
         merged: list[Entity] = []
         i = 0
@@ -127,9 +191,17 @@ class EntityMerger:
                 nxt = entities[j]
                 if (cur.category == nxt.category
                         and cur.span[1] == nxt.span[0]):
-                    # Guard: refuse to merge across punctuation
+                    # Guard 1: refuse to merge across punctuation
                     if text and not self._mergeable_in_text(
                         cur.span[0], nxt.span[1], text
+                    ):
+                        break
+                    # Guard 2: require a noun-modifier dependency edge
+                    # when dependency data is available. (dep=None means
+                    # "no dep data" → legacy behavior; dep=[] means the
+                    # parse produced no edges → nothing may be modified.)
+                    if dep is not None and not self._has_modifier_edge(
+                        cur, nxt, dep
                     ):
                         break
                     # Merge attributes from both entities
@@ -142,6 +214,15 @@ class EntityMerger:
                             seen_keys.add(attr.key)
                             deduped_attrs.append(attr)
 
+                    # Preserve token alignment so downstream merge passes
+                    # can still verify dependency edges for the compound.
+                    ts_cur = getattr(cur, "token_span", None)
+                    ts_nxt = getattr(nxt, "token_span", None)
+                    merged_token_span = None
+                    if ts_cur and ts_nxt:
+                        merged_token_span = (min(ts_cur[0], ts_nxt[0]),
+                                             max(ts_cur[1], ts_nxt[1]))
+
                     cur = Entity(
                         id=cur.id,
                         text=cur.text + nxt.text,
@@ -151,6 +232,7 @@ class EntityMerger:
                         source=cur.source,
                         confidence=min(cur.confidence, nxt.confidence),
                         attributes=deduped_attrs,
+                        token_span=merged_token_span,
                     )
                     j += 1
                 else:
