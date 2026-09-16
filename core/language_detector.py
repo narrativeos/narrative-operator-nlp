@@ -482,6 +482,17 @@ def _apply_mixed_penalty(score: float, text: str, text_no_punct: str) -> float:
 
 LanguageClass = Literal["modern", "classical", "english"]
 
+# Confidence at or above which a text is classified as classical.
+# Exported so the analyzer's whole-document fallback uses the same bar.
+CLASSICAL_THRESHOLD = 0.48
+
+# Minimum per-sentence classical signal required before a sentence may
+# inherit the document-level classical label. Observed separation:
+# genuinely classical short sentences score >= 0.42 raw, modern
+# sentences <= 0.12. Below this floor the sentence has no classical
+# evidence of its own and must not be dragged along by the document.
+CLASSICAL_INHERIT_FLOOR = 0.30
+
 
 def detect_language(text: str) -> tuple[LanguageClass, float]:
     """
@@ -525,6 +536,6 @@ def detect_language(text: str) -> tuple[LanguageClass, float]:
     text_no_punct = re.sub(r"[，。！？；、：\s]", "", text)
     conf = _apply_mixed_penalty(conf, text, text_no_punct)
 
-    if conf >= 0.48:
+    if conf >= CLASSICAL_THRESHOLD:
         return ("classical", conf)
     return ("modern", conf)

@@ -20,6 +20,7 @@ if str(_project_root) not in sys.path:
 
 import pytest
 
+from core.analyzer import analyze
 from core.coref_resolver import CorefResolver, _CN_CLASSICAL_PRONUN
 from core.schema import Entity, Token
 
@@ -566,3 +567,33 @@ class TestClassicalUnpunctuated:
         chain = _chain_with(chains, "之")
         assert chain is not None
         assert any(m.text == "项羽" for m in chain.mentions)
+
+
+class TestWholeDocumentLanguageRouting:
+    """S8: short sentences are judged in whole-document context.
+
+    A sentence whose own classical signal is real but below the
+    standalone bar inherits the document-level classical label;
+    sentences without classical evidence are never dragged along.
+    """
+
+    def test_short_classical_sentence_inherits_document_label(self):
+        # Sentence 2 alone scores modern 0.45 (below the 0.48 bar),
+        # but the whole document is classical 0.64 and the sentence
+        # carries classical evidence (raw 0.45) → inherits classical.
+        doc = analyze("大將軍廣者，平陽人也。廣居平陽，不治產業，常分其財與窮者。")
+        labels = [s.label for s in doc.content.sentences]
+        assert labels == ["classical", "classical"]
+
+    def test_modern_document_short_sentences_stay_modern(self):
+        doc = analyze("他去了北京。明天回來。")
+        assert all(s.label == "modern" for s in doc.content.sentences)
+
+    def test_modern_sentence_not_dragged_into_classical_doc(self):
+        # Whole document is classical (0.59). Sentence 1 has no
+        # classical evidence (raw 0.12 < inherit floor 0.30) and must
+        # stay modern; sentence 2 clears the bar on its own (0.55).
+        doc = analyze("今天天氣很好。吾聞之，人死曰鬼。")
+        labels = [s.label for s in doc.content.sentences]
+        assert labels[0] == "modern"
+        assert labels[1] == "classical"

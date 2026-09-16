@@ -12,7 +12,12 @@ import logging
 import re
 from typing import Optional
 
-from .language_detector import detect_language, classical_confidence, LanguageClass
+from .language_detector import (
+    detect_language,
+    classical_confidence,
+    LanguageClass,
+    CLASSICAL_INHERIT_FLOOR,
+)
 from .mapper import HanlpSchemaMapper
 from .schema import CoreferenceChain, DependencyEdge, Event, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 from .coref_resolver import CorefResolver
@@ -630,10 +635,29 @@ def analyze(
     language_sentences = []
 
     if language == "auto":
+        # S8: whole-document first pass. Short sentences lack enough
+        # signal to be judged in isolation (e.g. "廣居平陽。" scores
+        # modern 0.45 on its own but is clearly classical in context).
+        # Sentences whose own confidence is below the classical bar
+        # inherit the document-level label; high-confidence per-sentence
+        # verdicts are kept so genuinely mixed documents still route
+        # each sentence to the right model.
+        doc_lang, _doc_conf = detect_language(text)
         # Group consecutive same-language sentences
         segments: list[tuple[str, int, str, float]] = []
         for sent_text, sent_offset in sentences:
             lang, conf = detect_language(sent_text)
+            # Inherit the document label only when the sentence itself
+            # carries some classical evidence (raw score above the
+            # inherit floor) but not enough to clear the classical bar
+            # on its own. Modern sentences (raw <= ~0.12) are never
+            # dragged into a classical document.
+            if (
+                doc_lang == "classical"
+                and lang == "modern"
+                and classical_confidence(sent_text) >= CLASSICAL_INHERIT_FLOOR
+            ):
+                lang = "classical"
             segments.append((sent_text, sent_offset, lang, conf))
             language_sentences.append({
                 "text": sent_text, "span": (sent_offset, sent_offset + len(sent_text)),
