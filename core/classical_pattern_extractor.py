@@ -42,18 +42,31 @@ class _Pattern:
         self.source = source
 
 
+# Character class: any character except sentence/clause terminators.
+# Used instead of `.` so lazy matches cannot cross sentence boundaries
+# (e.g. "陈胜者，阳城人。吴广者，阳夏人也" must not bind 陈胜 to 阳夏).
+_S = r"[^\u3002。！？；;]"
+
+# Verbs that can follow 拜/封 without indicating an appointment
+# (拜送/拜谢/拜见/...). Negative lookahead keeps title_拜 from firing on
+# "燕王拜送于庭"; 为 is excluded because title_拜为 handles that form.
+_BAI_NOT_TITLE = r"(?!为|送|谢|见|贺|迎|问|告|辞|表|答|请|托|命|观|望|读|听|食|饮|借|求|拜)"
+
 # All patterns (order matters: more specific first)
 _PATTERNS: list[_Pattern] = [
 
-    # 1. 判断句: "X者，Y人也" / "X者Y人也" / "X，Y也"
-    _Pattern("judgment_者也", r"(.+?)者[，,]?(.+?)人也", "LOCATED_AT", 0.90),
-    _Pattern("judgment_也", r"([^。；,]+)也$", "IS_A", 0.80),
+    # 1. 判断句: "X者，Y人也" / "X者Y人也"
+    _Pattern("judgment_者也", rf"({_S}{{1,12}}?)者[，,]?({_S}{{1,12}}?)人也", "LOCATED_AT", 0.90),
+    # 1a. "X，Y也" (judgment without 者); subject must not end in 者
+    #     (that form belongs to judgment_者也)
+    _Pattern("judgment_也", rf"({_S}{{2,6}}?(?<!者))，({_S}{{2,8}}?)也(?=[\u3002。！？!?]|$)", "IS_A", 0.80),
 
     # 1b. 命名: "其名为X" / "名曰X"
     # "其" is a pronoun - capture the pronoun marker to resolve later via _find_preceding_person
     _Pattern("name_名为", r"[，,。；]其名为([\u4e00-\u9fff]{1,3})[。；,]?", "HAS_PROPERTY", 0.88),
     _Pattern("name_名曰", r"[，,。；]名曰([\u4e00-\u9fff]{1,3})[。；,]?", "HAS_PROPERTY", 0.88),
-    _Pattern("name_名", r"([\u4e00-\u9fff]{1,4})名([\u4e00-\u9fff]{2,4})[。；,]?", "HAS_PROPERTY", 0.82),
+    # Bare "X名Y" (e.g. 屈原名平); 名曰/名为/名字 are other constructions
+    _Pattern("name_名", r"([\u4e00-\u9fff]{2,4})名(?!曰|为|字|叫)([\u4e00-\u9fff]{1,4})[。；,]?", "HAS_PROPERTY", 0.82),
 
     # 1c. 存在: "X有Y" (X中有Y) - only concrete entities
     # Skip abstract nouns: 色/功/業/術/勢/理/義/道/德/力/志/氣/情/意/心/念/願/望
@@ -67,7 +80,7 @@ _PATTERNS: list[_Pattern] = [
 
     # 2. 表字: "X，字Y" / "X字Y" / "X，字为Y"
     # Pattern A: person name directly before "字" (2-3 chars)
-    _Pattern("style_name_字", r"[，,]?([\u4e00-\u9fff]{2,3})字(为)?([\u4e00-\u9fff]{1,2})[\u3002。]", "HAS_STYLE_NAME", 0.92),
+    _Pattern("style_name_字", r"[，,]?([\u4e00-\u9fff]{2,3})字(为)?([\u4e00-\u9fff]{1,2})[\u3002。！？，,]", "HAS_STYLE_NAME", 0.92),
     _Pattern("style_name_字_end", r"[，,]?([\u4e00-\u9fff]{2,3})字(为)?([\u4e00-\u9fff]{1,2})$", "HAS_STYLE_NAME", 0.92),
     # Pattern B: "也字涉" - style name directly after "也" (no comma), surname+style as one token
     _Pattern("style_name_也字", r"也([\u4e00-\u9fff]{1,2})字(为)?([\u4e00-\u9fff]{1,2})[\u3002。]", "HAS_STYLE_NAME", 0.90),
@@ -83,15 +96,17 @@ _PATTERNS: list[_Pattern] = [
     _Pattern("style_name_字_standalone", r"[，,]字(为)?([\u4e00-\u9fff]{1,2})[\u3002。]", "HAS_STYLE_NAME", 0.88),
     _Pattern("style_name_字_standalone_end", r"[，,]字(为)?([\u4e00-\u9fff]{1,2})$", "HAS_STYLE_NAME", 0.88),
 
-    # 3. 表号: "号X" / "，号X"
-    _Pattern("style_hao", r"[，,]?([\u4e00-\u9fff]{2,3})号([\u4e00-\u9fff]{1,2})[\u3002。]", "HAS_STYLE_NAME", 0.90),
-    _Pattern("style_hao_end", r"[，,]?([\u4e00-\u9fff]{2,3})号([\u4e00-\u9fff]{1,2})$", "HAS_STYLE_NAME", 0.90),
+    # 3. 表号: "号X" / "，号X" (年号 = era name, not a style name)
+    _Pattern("style_hao", r"[，,]?([\u4e00-\u9fff]{2,3})(?<!年)号([\u4e00-\u9fff]{1,2})[\u3002。]", "HAS_STYLE_NAME", 0.90),
+    _Pattern("style_hao_end", r"[，,]?([\u4e00-\u9fff]{2,3})(?<!年)号([\u4e00-\u9fff]{1,2})$", "HAS_STYLE_NAME", 0.90),
 
-    # 4. 被动句: "为X所V"
-    _Pattern("passive_为所", r"(.+?)为(.+?)所(.+)", "CAUSES", 0.80),
+    # 4. 被动句: "为X所V" → X(agent) CAUSES patient
+    _Pattern("passive_为所", rf"({_S}{{1,8}}?)为({_S}{{1,6}}?)所([\u4e00-\u9fff]{{1,3}})", "CAUSES", 0.80),
 
-    # 5. 被动句: "见V于X"
-    _Pattern("passive_见于", r"(.+?)见(.+?)于(.+)", "CAUSES", 0.80),
+    # 5. 被动句: "见V于X" → X(agent) CAUSES patient
+    # V must be a single verb char: 见=看见 takes a noun object
+    # ("见渔人于潭中") and must not match.
+    _Pattern("passive_见于", rf"({_S}{{1,8}}?)见([\u4e00-\u9fff])于({_S}{{1,6}})", "CAUSES", 0.80),
 
     # 6. 官职任命: "拜/封/授/除/迁/擢/进/降为X"
     # Use Chinese char bounds + optional trailing punctuation (works at sentence end)
@@ -105,42 +120,43 @@ _PATTERNS: list[_Pattern] = [
     _Pattern("title_降为", r"([\u4e00-\u9fff]{2,4})降为([\u4e00-\u9fff]{2,5})[。.;;，,]?", "HAS_TITLE", 0.88),
 
     # 7. 官职 (无"为"): "拜X" / "封X"
-    _Pattern("title_拜", r"([\u4e00-\u9fff]{2,4})拜([\u4e00-\u9fff]{2,5})[。.;;，,]?", "HAS_TITLE", 0.75),
-    _Pattern("title_封", r"([\u4e00-\u9fff]{2,4})封([\u4e00-\u9fff]{2,5})[。.;;，,]?", "HAS_TITLE", 0.75),
+    # Lookahead excludes 拜/封 + non-appointment verbs (拜送/拜谢/拜见...)
+    _Pattern("title_拜", rf"([\u4e00-\u9fff]{{2,4}})拜{_BAI_NOT_TITLE}([\u4e00-\u9fff]{{2,5}})[。.;;，,]?", "HAS_TITLE", 0.75),
+    _Pattern("title_封", rf"([\u4e00-\u9fff]{{2,4}})封{_BAI_NOT_TITLE}([\u4e00-\u9fff]{{2,5}})[。.;;，,]?", "HAS_TITLE", 0.75),
 
     # 8. 地理位置: "X军/驻/屯/据/守/攻/取Y"
-    _Pattern("location_军", r"(.+?)军(.+?)[。.;;，,]", "LOCATED_AT", 0.82),
-    _Pattern("location_驻", r"(.+?)驻(.+?)[。.;;，,]", "LOCATED_AT", 0.85),
-    _Pattern("location_屯", r"(.+?)屯(.+?)[。.;;，,]", "LOCATED_AT", 0.85),
-    _Pattern("location_据", r"(.+?)据(.+?)[。.;;，,]", "LOCATED_AT", 0.82),
-    _Pattern("location_守", r"(.+?)守(.+?)[。.;;，,]", "LOCATED_AT", 0.80),
-    _Pattern("location_攻", r"(.+?)攻(.+?)[。.;;，,]", "INTERACTS_WITH", 0.75),
-    _Pattern("location_取", r"(.+?)取(.+?)[。.;;，,]", "TRANSFERS_TO", 0.75),
+    _Pattern("location_军", rf"({_S}{{1,8}}?)军({_S}{{1,8}}?)[。.;;，,]", "LOCATED_AT", 0.82),
+    _Pattern("location_驻", rf"({_S}{{1,8}}?)驻({_S}{{1,8}}?)[。.;;，,]", "LOCATED_AT", 0.85),
+    _Pattern("location_屯", rf"({_S}{{1,8}}?)屯({_S}{{1,8}}?)[。.;;，,]", "LOCATED_AT", 0.85),
+    _Pattern("location_据", rf"({_S}{{1,8}}?)据({_S}{{1,8}}?)[。.;;，,]", "LOCATED_AT", 0.82),
+    _Pattern("location_守", rf"({_S}{{1,8}}?)守({_S}{{1,8}}?)[。.;;，,]", "LOCATED_AT", 0.80),
+    _Pattern("location_攻", rf"({_S}{{1,8}}?)攻({_S}{{1,8}}?)[。.;;，,]", "INTERACTS_WITH", 0.75),
+    _Pattern("location_取", rf"({_S}{{1,8}}?)取({_S}{{1,8}}?)[。.;;，,]", "TRANSFERS_TO", 0.75),
 
     # 9. 对话引述: "X曰/云/谓/对曰Y"
     # Subject must be a clean name (2-4 Chinese chars), no punctuation or verbs
-    _Pattern("dialogue_曰", r"([\u4e00-\u9fff]{2,4})曰[：:\"]?(.+?)(?:[\"。.;;!？]+|$)", "SAYS", 0.85),
-    _Pattern("dialogue_云", r"([\u4e00-\u9fff]{2,4})云[：:\"]?(.+?)(?:[\"。.;;!？]+|$)", "SAYS", 0.82),
-    _Pattern("dialogue_对曰", r"([\u4e00-\u9fff]{2,4})对曰[：:\"]?(.+?)(?:[\"。.;;!？]+|$)", "SAYS", 0.85),
+    _Pattern("dialogue_曰", rf"([\u4e00-\u9fff]{{2,4}})曰[：:\"]?({_S}{{1,40}}?)(?:[\"。.;;!？]+|$)", "SAYS", 0.85),
+    _Pattern("dialogue_云", rf"([\u4e00-\u9fff]{{2,4}})云[：:\"]?({_S}{{1,40}}?)(?:[\"。.;;!？]+|$)", "SAYS", 0.82),
+    _Pattern("dialogue_对曰", rf"([\u4e00-\u9fff]{{2,4}})对曰[：:\"]?({_S}{{1,40}}?)(?:[\"。.;;!？]+|$)", "SAYS", 0.85),
 
     # 10. 移动: "X至/往/赴/归/还/入/出/过Y"
     # Exclude "以至于" (idiom meaning "eventually to", not physical movement)
-    _Pattern("movement_至", r"(.+?)至(.+?)[。.;;，,]", "MOVED_TO", 0.85),
-    _Pattern("movement_往", r"(.+?)往(.+?)[。.;;，,]", "MOVED_TO", 0.85),
-    _Pattern("movement_赴", r"(.+?)赴(.+?)[。.;;，,]", "MOVED_TO", 0.85),
-    _Pattern("movement_归", r"(.+?)归(.+?)[。.;;，,]", "MOVED_TO", 0.82),
-    _Pattern("movement_还", r"(.+?)还(.+?)[。.;;，,]", "MOVED_TO", 0.82),
-    _Pattern("movement_入", r"(.+?)入(.+?)[。.;;，,]", "MOVED_TO", 0.80),
-    _Pattern("movement_出", r"(.+?)出(.+?)[。.;;，,]", "DEPARTED_FROM", 0.80),
-    _Pattern("movement_过", r"(.+?)过(.+?)[。.;;，,]", "MOVED_TO", 0.75),
+    _Pattern("movement_至", rf"({_S}{{1,8}}?)至({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.85),
+    _Pattern("movement_往", rf"({_S}{{1,8}}?)往({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.85),
+    _Pattern("movement_赴", rf"({_S}{{1,8}}?)赴({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.85),
+    _Pattern("movement_归", rf"({_S}{{1,8}}?)归({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.82),
+    _Pattern("movement_还", rf"({_S}{{1,8}}?)还({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.82),
+    _Pattern("movement_入", rf"({_S}{{1,8}}?)入({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.80),
+    _Pattern("movement_出", rf"({_S}{{1,8}}?)出({_S}{{1,8}}?)[。.;;，,]", "DEPARTED_FROM", 0.80),
+    _Pattern("movement_过", rf"({_S}{{1,8}}?)过({_S}{{1,8}}?)[。.;;，,]", "MOVED_TO", 0.75),
 
     # 11. 死亡: "X卒/薨/崩/死/殁于Y"
     # 崩/薨/卒/死/殁 without 于 = just "died" (no location), only match with 于
-    _Pattern("death_卒于", r"(.+?)卒于(.+?)[。.;;，,]", "DIED_AT", 0.85),
-    _Pattern("death_薨于", r"(.+?)薨于(.+?)[。.;;，,]", "DIED_AT", 0.85),
-    _Pattern("death_崩于", r"(.+?)崩于(.+?)[。.;;，,]", "DIED_AT", 0.85),
-    _Pattern("death_死于", r"(.+?)死于(.+?)[。.;;，,]", "DIED_AT", 0.82),
-    _Pattern("death_殁于", r"(.+?)殁于(.+?)[。.;;，,]", "DIED_AT", 0.82),
+    _Pattern("death_卒于", rf"({_S}{{1,8}}?)卒于({_S}{{1,8}}?)[。.;;，,]", "DIED_AT", 0.85),
+    _Pattern("death_薨于", rf"({_S}{{1,8}}?)薨于({_S}{{1,8}}?)[。.;;，,]", "DIED_AT", 0.85),
+    _Pattern("death_崩于", rf"({_S}{{1,8}}?)崩于({_S}{{1,8}}?)[。.;;，,]", "DIED_AT", 0.85),
+    _Pattern("death_死于", rf"({_S}{{1,8}}?)死于({_S}{{1,8}}?)[。.;;，,]", "DIED_AT", 0.82),
+    _Pattern("death_殁于", rf"({_S}{{1,8}}?)殁于({_S}{{1,8}}?)[。.;;，,]", "DIED_AT", 0.82),
 
     # 12. 出生/籍贯: "X，Y人也" (only the "也" ending, not the noisy comma variant)
     # Note: "X者，Y人也" is already handled by judgment_者也 above
@@ -178,22 +194,48 @@ def _is_valid_endpoint(text: str) -> bool:
 
 
 def _find_entity_by_text(entities: list[Entity], text: str) -> Optional[Entity]:
-    """Find an entity whose text matches (exact or contains)."""
+    """Find an entity whose text matches the captured span.
+
+    Exact matches win. Substring matches are only accepted when the
+    shorter string covers at least 60% of the longer one, so a short
+    capture ("军") cannot latch onto a longer entity ("将军"), while
+    "沛公军" still resolves to "沛公" and "阳城人" to "阳城".
+    """
     # Exact match first
     for e in entities:
         if e.text == text:
             return e
-    # Contains match
+    # Substring match with a length-ratio guard
     best = None
     best_len = 0
     for e in entities:
-        if text in e.text and len(e.text) > best_len:
-            best = e
-            best_len = len(e.text)
-        elif e.text in text and len(e.text) > best_len:
-            best = e
-            best_len = len(e.text)
+        if len(e.text) < 2:
+            continue
+        if text in e.text or e.text in text:
+            shorter = min(len(text), len(e.text))
+            longer = max(len(text), len(e.text))
+            if shorter / longer < 0.6:
+                continue
+            if len(e.text) > best_len:
+                best = e
+                best_len = len(e.text)
     return best
+
+
+def _sentence_topic_before(text: str, pos: int) -> str:
+    """Topic of the sentence preceding ``pos``.
+
+    Takes the sentence containing the text just before ``pos`` and returns
+    the part before the first 之/者/也/， — the classical Chinese topic
+    ("鲲之大，不知其几千里也" → 鲲). Returns "" if no clean topic found.
+    """
+    prev = text[:pos]
+    starts = [m.end() for m in re.finditer(r"[\u3002。！？]", prev)]
+    sent = prev[starts[-1]:] if starts else prev
+    topic = re.split(r"[之者也，,]", sent, 1)[0].strip()
+    if 1 <= len(topic) <= 4 and re.fullmatch(r"[\u4e00-\u9fff]+", topic):
+        return topic
+    return ""
 
 
 class ClassicalPatternExtractor:
@@ -265,15 +307,37 @@ class ClassicalPatternExtractor:
                         if e.span[1] > best_end:
                             best_end = e.span[1]
                             best = e.text
-            # Third try: any entity before the match position (excluding style names)
+            # Third try: any entity before the match position (excluding style names).
+            # Prefer entities in the CURRENT sentence: a pronoun's antecedent
+            # ("其名为X") is almost always in the same sentence, so a same-sentence
+            # entity beats a more recent one from an earlier sentence.
             if best is None:
+                last_terminator = max(
+                    (m.end() for m in re.finditer(r"[\u3002。！？]", text[:match_start])),
+                    default=-1,
+                )
+                sent_start = last_terminator  # terminator m.end() == first char of sentence
+                same_sentence = None
+                same_end = -1
+                # Same-sentence: allow single-char entities (鸟/鲲/鱼 are typical
+                # pronoun antecedents); cross-sentence fallback keeps len >= 2.
                 for e in entities:
-                    if e.span[1] <= match_start and e.span[0] >= 0:
+                    if e.span[1] <= match_start and e.span[0] >= sent_start:
                         if e.text in known_style_names:
                             continue
-                        if len(e.text) >= 2 and e.span[1] > best_end:
-                            best_end = e.span[1]
-                            best = e.text
+                        if len(e.text) >= 1 and e.span[1] > same_end:
+                            same_sentence = e.text
+                            same_end = e.span[1]
+                if same_sentence is not None:
+                    best = same_sentence
+                else:
+                    for e in entities:
+                        if e.span[1] <= match_start and e.span[0] >= 0:
+                            if e.text in known_style_names:
+                                continue
+                            if len(e.text) >= 2 and e.span[1] > best_end:
+                                best_end = e.span[1]
+                                best = e.text
             return best
 
         for pattern in _PATTERNS:
@@ -286,6 +350,14 @@ class ClassicalPatternExtractor:
                     if len(groups) >= 1:
                         obj = (groups[0] or "").strip()
                         subject = _find_preceding_person(m.start()) or ""
+                        # Fallback for transform: a subjectless continuation
+                        # sentence inherits the topic of the previous sentence
+                        # ("鲲之大，…化而为鸟" → 鲲, which NER may miss)
+                        if pattern.name.startswith("transform_") and \
+                                (not subject or subject[0] in "其之"):
+                            topic = _sentence_topic_before(text, m.start())
+                            if topic:
+                                subject = topic
                     else:
                         continue
                 elif pattern.name.startswith("style_name") or pattern.name.startswith("style_hao"):
@@ -318,6 +390,18 @@ class ClassicalPatternExtractor:
                         obj = (groups[1] or "").strip()
                     else:
                         continue
+                elif pattern.name == "passive_为所":
+                    # groups: (patient, agent, verb) → agent CAUSES patient
+                    if len(groups) < 3:
+                        continue
+                    subject = (groups[1] or "").strip()
+                    obj = (groups[0] or "").strip()
+                elif pattern.name == "passive_见于":
+                    # groups: (patient, verb, agent) → agent CAUSES patient
+                    if len(groups) < 3:
+                        continue
+                    subject = (groups[2] or "").strip()
+                    obj = (groups[0] or "").strip()
                 else:
                     # 2 groups: subject, object
                     if len(groups) < 2:
@@ -330,6 +414,22 @@ class ClassicalPatternExtractor:
                 obj = obj.strip("，,。.;:!？\"")
 
                 if not _is_valid_endpoint(subject) or not _is_valid_endpoint(obj):
+                    continue
+
+                # Filter: demonstrative-pronoun subjects ("此人者，阳城人也")
+                # are references, not names
+                if pattern.name in ("judgment_者也", "judgment_也", "origin_人也") \
+                        and subject[0] in "此其是该乃则有之":
+                    continue
+
+                # Filter: style-name subjects must look like a name, not a
+                # clause fragment (e.g. "城人也" from "阳城人也字涉")
+                if pattern.predicate == "HAS_STYLE_NAME" and subject.endswith(("者", "也")):
+                    continue
+
+                # Filter: passive-voice endpoints are names, not clause
+                # fragments ("俱去，不得脱身" is not a patient)
+                if pattern.name.startswith("passive_") and any(c in subject + obj for c in "，,"):
                     continue
 
                 # Filter: existence_有 should not match abstract nouns
@@ -387,7 +487,9 @@ class ClassicalPatternExtractor:
 
                 self._counter += 1
                 rel = Relation(
-                    id=f"rel_{self._counter:03d}",
+                    # rel_cp_ prefix: avoids ID collision with the main
+                    # pipeline's rel_001... IDs (schema uniqueness)
+                    id=f"rel_cp_{self._counter:03d}",
                     subject=subj_final,
                     subject_raw=subject,
                     predicate=pattern.predicate,
@@ -419,7 +521,7 @@ class ClassicalPatternExtractor:
                     # Create EQUIVALENT_TO relation
                     self._counter += 1
                     relations.append(Relation(
-                        id=f"rel_{self._counter:03d}",
+                        id=f"rel_cp_{self._counter:03d}",
                         subject=person_name,
                         subject_raw=person_name,
                         predicate="EQUIVALENT_TO",

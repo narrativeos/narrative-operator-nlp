@@ -305,7 +305,7 @@ class Relation(BaseModel):
     subject_raw/object_raw: the original surface mention from the text (for traceability).
     When the mention is already a canonical entity, raw == canonical.
     """
-    id: str = Field(..., pattern=r"^rel_\d+$", description="Unique relation ID, e.g. rel_001")
+    id: str = Field(..., pattern=r"^rel(_cp)?_\d+$", description="Unique relation ID, e.g. rel_001 (classical pattern relations use rel_cp_001)")
     subject: str = Field(..., min_length=1, description="Subject text (canonical form after entity resolution)")
     subject_raw: str = Field(default="", description="Original subject surface mention (for traceability)")
     subject_ent_id: Optional[str] = Field(default=None, description="Linked entity ID if available")
