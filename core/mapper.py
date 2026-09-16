@@ -79,9 +79,9 @@ class HanlpSchemaMapper:
 
         # ── Step 3: Merge entities ──
         raw_entities.sort(key=lambda e: e.span[0])
-        raw_entities = self.entity_rules.merger.merge_same_category(raw_entities)
+        raw_entities = self.entity_rules.merger.merge_same_category(raw_entities, text)
         raw_entities.sort(key=lambda e: e.span[0])
-        raw_entities = self.entity_rules.merger.merge_cross_category(raw_entities)
+        raw_entities = self.entity_rules.merger.merge_cross_category(raw_entities, text)
         raw_entities = self.entity_rules.merger.merge_det_entities(
             raw_entities, tokens, raw, self.entity_rules._id_gen,
         )

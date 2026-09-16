@@ -81,13 +81,39 @@ class EntityMerger:
 
         logger.info("Loaded %d merge rules", len(self._merge_rules))
 
-    def merge_same_category(self, entities: list[Entity]) -> list[Entity]:
+    @staticmethod
+    def _mergeable_in_text(start: int, end: int, text: str) -> bool:
+        """Return True if text[start:end] contains no punctuation.
+
+        Used to guard same-category merging: entities separated by
+        punctuation (。，、；：！？ etc.) are distinct mentions and must
+        not be merged into a compound.
+        """
+        segment = text[start:end]
+        for ch in segment:
+            if not ch.isalnum() and not ch.isspace():
+                # Any non-alphanumeric, non-space character (punctuation,
+                # CJK or Latin) blocks the merge.
+                return False
+        return True
+
+    def merge_same_category(
+        self,
+        entities: list[Entity],
+        text: str = "",
+    ) -> list[Entity]:
         """Merge adjacent same-category entities.
 
         '北京'(LOC) + '立方庭'(LOC) → '北京立方庭'(LOC)
         '碳'(MATERIAL) + '钢'(MATERIAL) → '碳钢'(MATERIAL)
 
         This is the original behavior, always enabled.
+
+        Guard: when ``text`` is provided, two entities are only merged if
+        no punctuation separates them in the original text. This prevents
+        merging distinct entities that merely sit next to each other
+        across a sentence boundary (e.g. '海淀区' + '中关村' must NOT
+        become '海淀区中关村').
         """
         if len(entities) < 2:
             return entities
@@ -101,6 +127,11 @@ class EntityMerger:
                 nxt = entities[j]
                 if (cur.category == nxt.category
                         and cur.span[1] == nxt.span[0]):
+                    # Guard: refuse to merge across punctuation
+                    if text and not self._mergeable_in_text(
+                        cur.span[0], nxt.span[1], text
+                    ):
+                        break
                     # Merge attributes from both entities
                     merged_attrs = list(cur.attributes) + list(nxt.attributes)
                     # Deduplicate by key
@@ -128,11 +159,17 @@ class EntityMerger:
             i = j
         return merged
 
-    def merge_cross_category(self, entities: list[Entity]) -> list[Entity]:
+    def merge_cross_category(
+        self,
+        entities: list[Entity],
+        text: str = "",
+    ) -> list[Entity]:
         """Merge adjacent entities using configured cross-category rules.
 
         Applies rules in priority order. Each rule defines a from→to pattern.
-        Only adjacent entities (no gap) are merged.
+        Only adjacent entities (no gap) are merged. When ``text`` is
+        provided, merges across punctuation are refused (same guard as
+        merge_same_category).
         """
         if not self._merge_rules or len(entities) < 2:
             return entities
@@ -152,7 +189,9 @@ class EntityMerger:
                     cur, nxt = result[i], result[i + 1]
                     if (cur.category == from_cats[0]
                             and nxt.category == from_cats[1]
-                            and cur.span[1] == nxt.span[0]):
+                            and cur.span[1] == nxt.span[0]
+                            and (not text or self._mergeable_in_text(
+                                cur.span[0], nxt.span[1], text))):
                         # Merge
                         merged_attrs = list(cur.attributes) + list(nxt.attributes)
                         seen_keys: set[str] = set()

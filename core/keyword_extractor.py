@@ -145,10 +145,16 @@ class KeywordExtractor:
                 return "MATERIAL"
             return None
 
-        # Multi-char: try parameter suffix match
+        # Multi-char: try parameter suffix match.
+        # Guard: only match when the token starts with a digit (a measured
+        # value like "3.5强度") or equals the keyword exactly. Without this,
+        # any word ending in a parameter keyword (e.g. 抗拉强度/屈服强度)
+        # would be misclassified as PARAMETER.
         if len(text) >= 3:
             for kw in self._parameter_keywords:
-                if text.endswith(kw) and len(kw) >= 2:
+                if len(kw) >= 2 and (
+                    text == kw or (text.endswith(kw) and text[0].isdigit())
+                ):
                     return "PARAMETER"
 
         return None

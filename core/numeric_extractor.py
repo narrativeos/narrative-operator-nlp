@@ -52,9 +52,12 @@ _PERCENTAGE_PATTERNS = [
 ]
 
 # Quantity patterns (number + measure word)
+# NOTE: ordinal/floor designators (号/层/楼) are identifiers, not
+# quantities — "3号航站楼" / "5层楼" must not become NUMBER entities.
+# 年 is handled by the date patterns, not as a quantity measure word.
 _QUANTITY_PATTERNS = [
     # 100个 / 500吨 / 2000人 / 1000万 / 3.5亿
-    re.compile(r"\d+(?:\.\d+)?(?:万|亿|千万|个|件|台|辆|艘|张|把|支|根|条|块|片|份|次|回|年|月|天|小时|分钟|秒|米|公里|厘米|毫米|克|千克|吨|升|毫升|度|摄氏度|人|口|家|所|座|栋|层|楼|页|章|节|篇|首|首|幅|张|部|集|卷|册|本|卷|集|期|号|班|组|队|团|军|师|团|营|连|排|班|人|名|位|位|位|位)"),
+    re.compile(r"\d+(?:\.\d+)?(?:万|亿|千万|个|件|台|辆|艘|张|把|支|根|条|块|片|份|次|回|月|天|小时|分钟|秒|米|公里|厘米|毫米|克|千克|吨|升|毫升|度|摄氏度|人|口|家|所|座|栋|页|章|节|篇|首|幅|部|集|卷|册|本|期|班|组|队|团|军|师|营|连|排|名|位)"),
 ]
 
 

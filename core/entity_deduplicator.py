@@ -47,6 +47,39 @@ class EntityDeduplicator:
         kept_spans: list[tuple[int, int]] = []
 
         for ent in sorted_entities:
+            # ── Identical span, different category ──
+            # Two entities covering exactly the same characters but with
+            # different categories (e.g. LOCATION vs ORGANIZATION for the
+            # same mention) are a labeling conflict, not a hierarchy.
+            # Keep the higher-confidence one; record the loser in
+            # merged_from. (Same-span same-category is handled below.)
+            same_span_conflict = None
+            lost_same_span = False
+            for k in kept:
+                if k.category == ent.category:
+                    continue
+                if k.span == ent.span:
+                    if ent.confidence > k.confidence:
+                        # ent wins: evict the kept entity
+                        same_span_conflict = k
+                    else:
+                        # kept wins: discard ent, record in merged_from
+                        lost_same_span = True
+                        if ent.id not in k.merged_from:
+                            k.merged_from.append(ent.id)
+                    break
+            if lost_same_span:
+                continue
+            if same_span_conflict is not None:
+                loser = same_span_conflict
+                kept.remove(loser)
+                kept_spans.remove(loser.span)
+                if loser.id not in ent.merged_from:
+                    ent.merged_from.append(loser.id)
+                kept.append(ent)
+                kept_spans.append(ent.span)
+                continue
+
             # ── Step 9: Cross-category containment (P0 hardened) ──
             # Multi-condition strategy to avoid false merges:
             # 1. Span containment: k fully contains ent

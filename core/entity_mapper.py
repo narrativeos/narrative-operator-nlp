@@ -51,6 +51,24 @@ def _load_default_parameter_keywords() -> frozenset:
 # Minimum score threshold for discovered words to become entities
 _DISCOVER_ENTITY_THRESHOLD = 3.0
 
+# Function words that should NEVER be extracted as entities (classical Chinese).
+# Applied to both the PROPN loop and the xpos loop in _map_classical_entities.
+_CLASSICAL_FUNCTION_WORDS = frozenset({
+    # 虚词 - 代词
+    "之", "其", "者", "所", "何", "安", "孰", "胡", "奚", "焉",
+    # 虚词 - 助词
+    "也", "矣", "乎", "哉", "耳", "焉", "兮", "夫", "盖", "惟",
+    # 虚词 - 介词
+    "于", "以", "而", "则", "若", "如", "使", "令", "况",
+    # 虚词 - 连词
+    "与", "及", "且", "或", "虽", "然", "故", "因", "是",
+    "於是", "于是", "而况", "虽然", "既而", "遂",
+    # 常见非实体词
+    "人", "字", "时", "少", "多", "大", "小", "上", "下",
+    "父", "母", "子", "女", "兄", "弟", "妻", "夫",
+    "君", "臣", "官", "民", "兵", "将", "军",
+})
+
 
 def _spans_overlap(
     span: tuple[int, int],
@@ -222,6 +240,11 @@ class EntityMappingRules:
             return None
 
         cs, ce = self._resolve_span(ent_text, tok_s, tok_e, tokens, text)
+        if cs is None:
+            # Span cannot be resolved reliably (bad token indices and
+            # ambiguous text occurrence) — drop the entity rather than
+            # emit a wrong span.
+            return None
 
         ent_id = self._id_gen.generate(ent_text, (cs, ce), category)
         if ent_id is None:
@@ -300,9 +323,9 @@ class EntityMappingRules:
 
         # ── Merge & Dedup ──
         entities.sort(key=lambda e: e.span[0])
-        entities = self._merger.merge_same_category(entities)
+        entities = self._merger.merge_same_category(entities, text)
         entities.sort(key=lambda e: e.span[0])
-        entities = self._merger.merge_cross_category(entities)
+        entities = self._merger.merge_cross_category(entities, text)
 
         if not has_ner and not has_srl:
             entities = self._merger.merge_det_entities(entities, tokens, raw, self._id_gen)
@@ -375,14 +398,23 @@ class EntityMappingRules:
         tok_e: int,
         tokens: list[Token],
         text: str,
-    ) -> tuple[int, int]:
+    ) -> Optional[tuple[int, int]]:
+        """Resolve an entity's character span.
+
+        Returns None when the span cannot be resolved reliably:
+        - Token indices out of range AND the entity text occurs more than
+          once in the text (``text.find`` would silently map the mention to
+          its first occurrence, producing a wrong span for later mentions).
+        """
         if 0 <= tok_s < len(tokens) and 0 < tok_e <= len(tokens):
             return tokens[tok_s].span[0], tokens[tok_e - 1].span[1]
         if text and ent_text:
-            idx = text.find(ent_text)
-            if idx >= 0:
-                return idx, idx + len(ent_text)
-        return 0, len(ent_text)
+            first = text.find(ent_text)
+            if first >= 0:
+                # Only safe when the text occurs exactly once
+                if text.find(ent_text, first + 1) < 0:
+                    return first, first + len(ent_text)
+        return None
 
     # ── POS-based entity extraction (modern Chinese fallback) ──
 
@@ -401,13 +433,18 @@ class EntityMappingRules:
             "不", "人", "都", "把", "被", "对", "从", "到",
         }
 
-        ORG_SUFFIXES = {"公司", "集团", "有限", "股份", "中心", "院", "所",
-                       "大学", "学院", "学校", "医院", "银行", "部", "局",
-                       "委员会", "协会", "学会", "会", "社", "馆"}
-        LOC_SUFFIXES = {"省", "市", "区", "县", "路", "街", "镇", "村",
-                       "国", "州", "岛", "山", "河", "湖", "海", "港"}
+        # NOTE: single-char suffixes (会/社/山/河/市/区/院/所/部/局...)
+        # are far too aggressive — they misclassify common words like
+        # 社会→ORGANIZATION, 黄山→LOCATION. Only multi-char,
+        # high-precision suffixes are kept, and suffix matching is
+        # additionally gated by a minimum text length below.
+        ORG_SUFFIXES = {"公司", "集团", "有限", "股份", "中心",
+                       "大学", "学院", "学校", "医院", "银行",
+                       "委员会", "协会", "学会"}
+        LOC_SUFFIXES = {"省", "市", "区", "县", "公路", "大街",
+                       "省城", "市区"}
         PRODUCT_SUFFIXES = {"手机", "电脑", "汽车", "系统", "平台", "软件",
-                          "服务", "产品", "技术", "芯片"}
+                           "服务", "产品", "技术", "芯片"}
 
         i = 0
         while i < len(tokens):
@@ -475,6 +512,10 @@ class EntityMappingRules:
         loc_suffixes: set[str],
         product_suffixes: set[str],
     ) -> str:
+        # Suffix matching is only meaningful for multi-char names;
+        # 2-char words like 社会/黄山 must not be classified by suffix.
+        if len(text) < 3:
+            return "UNKNOWN"
         for suffix in sorted(org_suffixes, key=len, reverse=True):
             if text.endswith(suffix):
                 return "ORGANIZATION"
@@ -529,6 +570,9 @@ class EntityMappingRules:
             span_key = (t.span[0], t.span[1])
             if span_key in entity_spans:
                 continue
+            # Skip function words (e.g. 之/其 mis-tagged as PROPN)
+            if t.text in _CLASSICAL_FUNCTION_WORDS:
+                continue
             if t.pos in ("PROPN", "NR"):
                 xpos = xpos_tags[i] if i < len(xpos_tags) else ""
                 xcat = self._parse_xpos_category(xpos) if xpos else None
@@ -548,21 +592,8 @@ class EntityMappingRules:
                     ))
                     entity_spans.add(span_key)
 
-        # Function words that should NEVER be extracted as entities
-        _CLASSICAL_FUNCTION_WORDS = {
-            # 虚词 - 代词
-            "之", "其", "者", "所", "何", "安", "孰", "胡", "奚", "焉",
-            # 虚词 - 助词
-            "也", "矣", "乎", "哉", "耳", "焉", "兮", "夫", "盖", "惟",
-            # 虚词 - 介词
-            "于", "以", "而", "则", "若", "如", "使", "令", "况",
-            # 虚词 - 连词
-            "与", "及", "且", "或", "虽", "然", "故", "因", "是",
-            # 常见非实体词
-            "人", "字", "时", "少", "多", "大", "小", "上", "下",
-            "父", "母", "子", "女", "兄", "弟", "妻", "夫",
-            "君", "臣", "官", "民", "兵", "将", "军",
-        }
+        # (Function-word filtering uses the module-level
+        # _CLASSICAL_FUNCTION_WORDS constant, applied in both loops above.)
 
         for i, t in enumerate(tokens):
             span_key = (t.span[0], t.span[1])
@@ -595,7 +626,7 @@ class EntityMappingRules:
                 entity_spans.add(span_key)
 
         entities.sort(key=lambda e: e.span[0])
-        entities = self._merger.merge_same_category(entities)
+        entities = self._merger.merge_same_category(entities, text)
 
         return entities
 
@@ -620,20 +651,22 @@ class EntityMappingRules:
         if not xpos:
             return None
         
-        # Handle both comma-separated and simple formats
+        # Handle both comma-separated and simple formats.
+        # CTB xpos format is "大类,小类" (e.g. "名詞,地名"):
+        # parts[0] is the major class, parts[1:] are the minor classes.
         if "," in xpos:
             parts = xpos.split(",")
-            if len(parts) < 2:
-                return None
-            pos_class = parts[1].strip() if len(parts) > 1 else ""
-            rest = ",".join(parts[2:]) if len(parts) > 2 else ""
+            major_class = parts[0].strip()
+            # Category checks run against the minor classes
+            # (e.g. "名詞,一般名詞,動物" → "一般名詞,動物")
+            minor_classes = ",".join(p.strip() for p in parts[1:])
         else:
             # Simple format like "名詞" or "地名"
-            pos_class = xpos
-            rest = xpos
-        
-        # Check if it's a noun class
-        if "名詞" not in pos_class and "名詞" not in rest:
+            major_class = xpos
+            minor_classes = xpos
+
+        # Check if it's a noun class (major class is the first part)
+        if "名詞" not in major_class:
             # Try direct matching for simple formats
             if "官職" in xpos or "官名" in xpos or "爵位" in xpos:
                 return "TITLE"
@@ -654,28 +687,28 @@ class EntityMappingRules:
             return None
         
         # Classical Chinese categories
-        if "官职" in rest or "官名" in rest or "爵位" in rest or "官職" in rest:
+        if "官职" in minor_classes or "官名" in minor_classes or "爵位" in minor_classes or "官職" in minor_classes:
             return "TITLE"
-        if "时代" in rest or "朝代" in rest or "年代" in rest:
+        if "时代" in minor_classes or "朝代" in minor_classes or "年代" in minor_classes:
             return "ERA"
-        if "典章" in rest or "制度" in rest or "礼制" in rest:
+        if "典章" in minor_classes or "制度" in minor_classes or "礼制" in minor_classes:
             return "INSTITUTION"
-        if "天文" in rest or "历法" in rest or "星宿" in rest:
+        if "天文" in minor_classes or "历法" in minor_classes or "星宿" in minor_classes:
             return "ASTRONOMY"
         
         # Standard categories
-        if "地名" in rest or "地形" in rest:
+        if "地名" in minor_classes or "地形" in minor_classes:
             return "LOCATION"
-        if "人" in rest and "名" in rest:
+        if "人" in minor_classes and "名" in minor_classes:
             return "PERSON"
-        if "組織" in rest:
+        if "組織" in minor_classes:
             return "ORGANIZATION"
-        if "作品" in rest:
+        if "作品" in minor_classes:
             return "PRODUCT"
-        if "固有名詞" in rest:
+        if "固有名詞" in minor_classes:
             return "LOCATION"
-        if "固定物" in rest:
+        if "固定物" in minor_classes:
             return "LOCATION"
-        if "主体" in rest or "動物" in rest or "植物" in rest:
+        if "主体" in minor_classes or "動物" in minor_classes or "植物" in minor_classes:
             return "UNKNOWN"
         return None
