@@ -14,6 +14,7 @@ This module is a thin orchestrator that delegates to specialized components.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,17 @@ from .entity_id_generator import EntityIdGenerator
 from .dictionary_loader import DictionaryLoader
 
 logger = logging.getLogger(__name__)
+
+# Ordinal/floor designators that NER models sometimes mislabel as place
+# names ("3号" in "3号航站楼", "5层" in "5层病房").
+_ORDINAL_DESIGNATOR_RE = re.compile(r"^\d+(?:\.\d+)?[号层楼]$")
+
+# First characters of facility/location nouns. When one of these directly
+# follows an ordinal designator, the designator is a modifier of that noun
+# rather than a standalone entity.
+_FACILITY_NOUN_CHARS = frozenset(
+    "航站楼病房教室车厢站台出口入口车间会议室展厅馆室场线路口座单元"
+)
 
 # Backward compatibility: mapper.py imports _PARAMETER from this module.
 _PARAMETER: frozenset = frozenset()
@@ -251,11 +263,22 @@ class EntityMappingRules:
         if category is None:
             return None
 
-        cs, ce = self._resolve_span(ent_text, tok_s, tok_e, tokens, text)
-        if cs is None:
+        resolved = self._resolve_span(ent_text, tok_s, tok_e, tokens, text)
+        if resolved is None:
             # Span cannot be resolved reliably (bad token indices and
             # ambiguous text occurrence) — drop the entity rather than
             # emit a wrong span.
+            return None
+        cs, ce = resolved
+
+        # NER models occasionally label ordinal designators as place
+        # names (e.g. "3号" in "3号航站楼" → LOCATION). When the mention
+        # is directly followed by a facility noun, it is an ordinal
+        # modifier, not a standalone entity — drop it.
+        if (category in ("LOCATION", "FACILITY")
+                and _ORDINAL_DESIGNATOR_RE.fullmatch(ent_text)
+                and ce < len(text)
+                and text[ce] in _FACILITY_NOUN_CHARS):
             return None
 
         ent_id = self._id_gen.generate(ent_text, (cs, ce), category)

@@ -158,12 +158,54 @@ class TestResolveSpan:
 
     def test_map_drops_unresolvable_entity(self):
         rules = EntityMappingRules()
+        # Token indices out of range + text occurs twice → ambiguous span
         e = rules.map(
-            ("北京", "ns"), "ner/pku",
+            ("北京", "ns", 99, 100), "ner/pku",
             [Token(id=0, text="x", pos="NN", span=(0, 1), confidence=1.0)],
             "他去了北京，又去了北京",
         )
         assert e is None
+
+
+class TestOrdinalDesignatorFilter:
+    """NER models mislabel ordinal designators (3号/5层) as place names
+    when they modify a facility noun (3号航站楼)."""
+
+    def _rules(self):
+        return EntityMappingRules()
+
+    def test_ordinal_before_terminal_is_dropped(self):
+        rules = self._rules()
+        text = "旅客从3号航站楼出发"
+        e = rules.map(("3号", "ns", 3, 4), "ner/pku", [], text)
+        assert e is None
+
+    def test_ordinal_floor_before_ward_is_dropped(self):
+        rules = self._rules()
+        text = "他在5层病房休息"
+        e = rules.map(("5层", "ns", 2, 3), "ner/pku", [], text)
+        assert e is None
+
+    def test_ordinal_before_punctuation_kept(self):
+        # No facility noun follows — not provably an ordinal modifier,
+        # so the (suspicious) entity is kept for downstream handling.
+        rules = self._rules()
+        text = "请前往3号。"
+        e = rules.map(("3号", "ns", 3, 4), "ner/pku", [], text)
+        assert e is not None
+
+    def test_ordinal_at_text_end_kept(self):
+        rules = self._rules()
+        text = "请前往3号"
+        e = rules.map(("3号", "ns", 3, 4), "ner/pku", [], text)
+        assert e is not None
+
+    def test_real_place_name_unaffected(self):
+        rules = self._rules()
+        text = "北京立方庭位于海淀区"
+        e = rules.map(("海淀区", "ns", 7, 8), "ner/pku", [], text)
+        assert e is not None
+        assert e.text == "海淀区"
 
 
 class TestNumericExtractor:
