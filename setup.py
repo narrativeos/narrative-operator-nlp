@@ -1,26 +1,16 @@
 # -*- coding:utf-8 -*-
-# Author: hankcs
-# Date: 2019-12-28 19:26
-import sys
+# Narrative Operator NLP — NLP operator for NarrativeOS
+# Note: the `hanlp/` package is a vendored fork of the HanLP engine and keeps
+# its own version (hanlp/version.py). This project's version is independent.
 from os.path import abspath, join, dirname
 from setuptools import find_packages, setup
 
 this_dir = abspath(dirname(__file__))
 with open(join(this_dir, 'README.md'), encoding='utf-8') as file:
     long_description = file.read()
-version = {}
-with open(join(this_dir, "hanlp", "version.py")) as fp:
-    exec(fp.read(), version)
+__version__ = '0.1.0'
 
 FASTTEXT = 'fasttext-wheel==0.9.2'
-sys_version_info = sys.version_info
-
-EXTRAS = []
-if sys.platform in {'darwin', 'win32'}:
-    if (sys_version_info.major, sys_version_info.minor) == (3, 6):
-        EXTRAS = ['tokenizers==0.10.3']
-    elif (sys_version_info.major, sys_version_info.minor) == (3, 7):
-        EXTRAS = ['safetensors<0.5']  # Failed to build safetensors
 
 extras_require = {
     'amr': [
@@ -43,14 +33,13 @@ extras_require = {
 extras_require['full'] = list(set(sum(extras_require.values(), [])))
 
 setup(
-    name='hanlp',
-    version=version['__version__'],
-    description='HanLP: Han Language Processing',
+    name='narrative-operator-nlp',
+    version=__version__,
+    description='NLP operator for NarrativeOS — protocol-first NLP analysis built on HanLP',
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url='https://github.com/hankcs/HanLP',
-    author='hankcs',
-    author_email='hankcshe@gmail.com',
+    url='https://github.com/narrativeos/narrative-operator-nlp',
+    author='NarrativeOS',
     license='Apache License 2.0',
     classifiers=[
         'Intended Audience :: Science/Research',
@@ -58,10 +47,6 @@ setup(
         "Development Status :: 4 - Beta",
         'Operating System :: OS Independent',
         "License :: OSI Approved :: Apache Software License",
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
         "Topic :: Text Processing :: Linguistic"
@@ -80,8 +65,7 @@ setup(
         'hanlp-trie>=0.0.4',
         'hanlp-downloader',
         'pyyaml>=5.0',  # Required for config-driven entity extraction
-        *EXTRAS,
     ],
     extras_require=extras_require,
-    python_requires='>=3.6',
+    python_requires='>=3.10',
 )

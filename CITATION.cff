@@ -1,13 +1,14 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: He
-  given-names: Han
-  orcid: "https://orcid.org/0009-0005-1778-917X"
-title: "HanLP: Han Language Processing"
-version: 2.1
-date-released: 2015-05-27
-url: "https://github.com/hankcs/HanLP"
+- name: "NarrativeOS (北京九录科技有限公司)"
+title: "Narrative Operator NLP — NLP operator for NarrativeOS"
+version: 0.1.0
+date-released: 2026-06-04
+url: "https://github.com/narrativeos/narrative-operator-nlp"
+license: Apache-2.0
+# This project builds on HanLP (https://github.com/hankcs/HanLP, Apache 2.0).
+# If you use the underlying HanLP engine in your research, please also cite it:
 preferred-citation:
   type: conference-paper
   authors:

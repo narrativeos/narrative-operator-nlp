@@ -126,7 +126,7 @@ pytest tests/ -q
 
 ## 基线门禁 (9/9 ✅)
 
-- [x] `docs/PROTOCOL.md`
+- [x] `docs/protocol.md`
 - [x] `schemas/narrative.proto`
 - [x] `schemas/narrative.schema.json`
 - [x] `examples/call_via_mcp.py`

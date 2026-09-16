@@ -305,6 +305,6 @@ curl -X POST http://localhost:8000/analyze \
 
 ## 相关文档
 
-- [项目实现总结](IMPLEMENTATION.md)
-- [NSP 协议标准](PROTOCOL.md)
-- [HanLP 官方 Demo 差异报告](GAP-ANALYSIS.md)
+- [项目实现总结](implementation.md)
+- [NSP 协议标准](protocol.md)
+- [HanLP 官方 Demo 差异报告](gap_analysis.md)
