@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Narrative Operator NLP — Demo</title>
+<link rel="stylesheet" href="/demo/style.css">
+</head>
+<body>
+<header>
+<h1>🧠 Narrative Operator NLP</h1>
+<span>Protocol-First NLP · MCP / gRPC / FastAPI</span>
+</header>
+<main>
+<!-- Model loading status (populated by app.js) -->
+<div class="model-status" id="modelStatus">
+<div class="stat-item" id="statusModern"><span class="dot idle" id="dotModern"></span><span class="title">🌐 现代</span><span class="label" id="labelModern">等待中</span></div>
+<div class="stat-item" id="statusClassical"><span class="dot idle" id="dotClassical"></span><span class="title">🏯 古汉语</span><span class="label" id="labelClassical">等待中</span></div>
+<div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
+</div>
+
+<!-- Sample cards — rendered from SAMPLES in app.js -->
+<div class="sample-cards" id="sampleCards"></div>
+
+<!-- Main input -->
+<div class="input-area">
+<textarea id="input" placeholder="输入中文文本进行分析..."></textarea>
+<div style="display:flex;flex-direction:column;gap:6px">
+<button id="analyzeBtn">🔍 分析</button>
+<select id="discoverMode" style="padding:4px 8px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;cursor:pointer">
+<option value="">🔍 新词发现：关闭</option>
+<option value="discover">🔍 新词发现：仅发现</option>
+<option value="enhance">⚡ 新词发现：强化模式</option>
+</select>
+</div>
+</div>
+
+<!-- Custom dictionary -->
+<div class="input-area" style="margin-bottom:16px">
+<input id="dictInput" value="立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:inherit">
+</div>
+
+<!-- Language mode selector -->
+<div class="lang-selector">
+<label>📖 语言模式:</label>
+<label class="lang-option active" id="langAuto"><input type="radio" name="lang" value="auto" checked>🔄 自动识别</label>
+<label class="lang-option" id="langModern"><input type="radio" name="lang" value="modern">📄 现代汉语</label>
+<label class="lang-option" id="langClassical"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
+<label class="lang-option" id="langEnglish"><input type="radio" name="lang" value="english">🇬🇧 English</label>
+</div>
+
+<!-- Summary mode selector -->
+<div class="lang-selector">
+<label>📝 摘要:</label>
+<label class="lang-option active" id="sumChars"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> 字</label>
+<label class="lang-option" id="sumRatio"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> (20%)</label>
+</div>
+
+<!-- Title mode selector -->
+<div class="lang-selector">
+<label>🏷️ 标题:</label>
+<label class="lang-option active" id="ttlChars"><input type="radio" name="ttlmode" value="chars" checked>按字数: <input id="ttlCharsVal" type="number" value="14" min="5" max="100" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> 字</label>
+<label class="lang-option" id="ttlRatio"><input type="radio" name="ttlmode" value="ratio">按比例: <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> (5%)</label>
+</div>
+
+<!-- Tabs & panels — rendered from TABS in app.js -->
+<nav class="tabs" id="tabs" role="tablist"></nav>
+<div id="panels"></div>
+</main>
+<footer>
+<p>Narrative Operator NLP · © 2025 北京九录科技有限公司 · Apache 2.0</p>
+<p>
+Powered by <a href="https://github.com/hankcs/HanLP" target="_blank">HanLP</a> (Apache 2.0) ·
+<a href="https://github.com/google-research/electra" target="_blank">ELECTRA</a> (Apache 2.0) ·
+<a href="https://github.com/AnswerDotAI/ModernBERT" target="_blank">ModernBERT</a> (Apache 2.0) ·
+<a href="https://github.com/koheiw/kyoto-eva" target="_blank">KYOTO-EVAHAN</a> (CC BY 4.0)
+</p>
+</footer>
+<script src="/demo/app.js"></script>
+</body>
+</html>
