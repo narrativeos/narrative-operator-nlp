@@ -154,7 +154,7 @@ Open `http://localhost:8000` — redirects to the interactive demo page (`/demo`
 - [Implementation Summary](docs/implementation.md) — Full architecture & module reference
 - [API Usage Guide](docs/api_usage.md) — MCP, gRPC, FastAPI call examples
 - [Narrative Schema Protocol (NSP)](docs/protocol.md) — Data structure standard
-- [Gap Analysis vs HanLP Demo](docs/gap_analysis.md) — Feature comparison
+- [Gap Analysis vs HanLP 官方 Demo](docs/gap_analysis.md) — Feature comparison
 - [Architecture: NLP Operator](https://github.com/narrativeos/narrative-docs/blob/main/architecture/operator-nlp/README.md) — Design rationale
 - [HanLP Documentation](https://hanlp.hankcs.com/docs/) — Underlying NLP engine
 

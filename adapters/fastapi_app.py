@@ -682,7 +682,7 @@ pre.pretty{background:#0d1117;padding:16px;border-radius:6px;overflow-x:auto;fon
 <body>
 <header>
 <h1>🧠 Narrative Operator NLP</h1>
-<span>HanLP MTL Demo</span>
+<span>Protocol-First NLP · MCP / gRPC / FastAPI</span>
 </header>
 <main>
 <div class="model-status" id="modelStatus">
