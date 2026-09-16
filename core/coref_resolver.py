@@ -46,7 +46,15 @@ _CN_PERSON_PRONUN = {
 }
 
 # Demonstrative + noun patterns (该/此/本 + N)
-_CN_DEMONSTRATIVE_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
+# Demonstrative prefixes that form nominal mentions (该/此/本/其/彼 + N).
+# 是 is deliberately excluded: it is already a classical pronoun entry, and
+# as a prefix it mostly yields false positives (是时/是人 = "at that time").
+_CN_DEMONSTRATIVE_PREFIXES = {"该", "此", "本", "其", "彼"}
+
+# POS tags that disqualify a token from being a pronoun, regardless of
+# dictionary membership. 而 is a conjunction in virtually all classical
+# texts (its archaic "you" sense is rare); KYOTO tags it CC.
+_PRONOUN_EXCLUDED_POS = {"CC", "CCONJ"}
 
 # Classical Chinese pronouns (古汉语代词)
 # Enhanced with case/role information for better resolution
@@ -68,10 +76,13 @@ _CN_CLASSICAL_PRONUN = {
     "汝": {"person": "2nd", "case": "obj"},
     "尔": {"person": "2nd", "case": "obj"},
     "君": {"person": "2nd", "case": "subj"},
-    "子": {"person": "2nd", "case": "subj"},
+    # 子 removed as a pronoun: its "Master/you" uses are title-like and are
+    # better captured as nominals (PROPN/NR) or NER (子路/子贡); keeping it
+    # here made common-noun 子 (child, in 子女/弟子) a pronoun mention.
     "卿": {"person": "2nd", "case": "subj"},
     "若": {"person": "2nd", "case": "obj"},
-    "而": {"person": "2nd", "case": "gen"},
+    # 而 removed: it is a conjunction (CC), not a pronoun, in classical
+    # texts — keeping it here made every clause linker a mention.
 }
 
 # English pronouns
@@ -221,7 +232,7 @@ class CorefResolver:
 
         # ── 2. Noun phrase mentions (from POS tags, independent of NER) ──
         # This is the key fix: extract noun phrases even when NER fails
-        noun_mention_spans = self._extract_noun_phrases(tokens, language)
+        noun_mention_spans = self._extract_noun_phrases(tokens, language, entities)
         for np_text, np_span in noun_mention_spans:
             # Skip if already covered by an entity
             if self._is_covered_by_entity(np_span, entities):
@@ -240,6 +251,10 @@ class CorefResolver:
         # ── 3. Pronoun mentions ──
         en_pronoun_lower = _EN_PRONUN_LOWER if language == "english" else None
         for tok in tokens:
+            # POS guard: conjunction-tagged tokens (而/和/and) are never
+            # pronouns even if a dictionary lists the surface form.
+            if tok.pos in _PRONOUN_EXCLUDED_POS:
+                continue
             if (tok.text.lower() in en_pronoun_lower if en_pronoun_lower
                     else tok.text in pronoun_dict):
                 # Check if this pronoun is already covered by an entity or noun phrase
@@ -267,6 +282,7 @@ class CorefResolver:
         self,
         tokens: list[Token],
         language: str,
+        entities: list[Entity] | None = None,
     ) -> list[tuple[str, tuple[int, int]]]:
         """Extract noun phrases from POS tags.
 
@@ -276,10 +292,16 @@ class CorefResolver:
         Strategy:
         - Chinese: consecutive NR/NN tokens, or NR alone
         - English: consecutive NOUN/PROPN tokens, or PROPN alone
+        - Extension stops at the start of a recognized entity, so two
+          adjacent entities (北京 上海) are never merged into one NP.
         """
         phrases: list[tuple[str, tuple[int, int]]] = []
         if not tokens:
             return phrases
+
+        # Character offsets where a recognized entity begins — a noun
+        # chunk must not extend past one of these boundaries.
+        entity_starts = {e.span[0] for e in (entities or [])}
 
         if language == "english":
             # English: PROPN sequences are entity-like mentions
@@ -288,8 +310,10 @@ class CorefResolver:
             while i < len(tokens):
                 if tokens[i].pos in noun_poses:
                     start = i
-                    # Extend while consecutive nouns
-                    while i < len(tokens) and tokens[i].pos in noun_poses:
+                    i += 1  # first token always included in the chunk
+                    # Extend while consecutive nouns (stop at entity starts)
+                    while (i < len(tokens) and tokens[i].pos in noun_poses
+                           and tokens[i].span[0] not in entity_starts):
                         i += 1
                     # Only keep if: PROPN (always) or multi-word or significant NN
                     chunk_tokens = tokens[start:i]
@@ -312,8 +336,10 @@ class CorefResolver:
             while i < len(tokens):
                 if tokens[i].pos in noun_poses:
                     start = i
-                    # Extend while consecutive nouns
-                    while i < len(tokens) and tokens[i].pos in noun_poses:
+                    i += 1  # first token always included in the chunk
+                    # Extend while consecutive nouns (stop at entity starts)
+                    while (i < len(tokens) and tokens[i].pos in noun_poses
+                           and tokens[i].span[0] not in entity_starts):
                         i += 1
                     chunk_tokens = tokens[start:i]
                     has_proper = any(t.pos in ("NR", "PROPN") for t in chunk_tokens)
@@ -711,7 +737,12 @@ class CorefResolver:
             # Sort mentions by span
             cluster.sort(key=lambda m: m.span[0])
 
-            # Find principal mention (first entity mention, or first mention)
+            # Find principal mention (first entity mention, or first mention).
+            # Reset flags first: entity mentions are created with
+            # is_principal=True, so without this a chain with two entities
+            # would carry two principals.
+            for m in cluster:
+                m.is_principal = False
             principal = None
             for m in cluster:
                 if m.mention_type == "entity":

@@ -414,6 +414,142 @@ class TestGenderConsistency:
         assert sum(1 for m in chain.mentions if m.text == "她") == 2
 
 
+class TestNPExtractionEntityBoundary:
+    """H2: greedy NP extraction must not merge adjacent entities."""
+
+    def test_adjacent_entities_not_merged(self, resolver):
+        # 北京 上海 (both NER'd) must NOT become one NP "北京上海"
+        ents = [_ent("ent_001", "北京", "LOCATION", (0, 2)),
+                _ent("ent_002", "上海", "LOCATION", (2, 4))]
+        toks = _toks([("北京", "NR", 0, 2), ("上海", "NR", 2, 4)])
+        chains = _chains(resolver, ents, toks, "modern")
+        all_texts = [m.text for c in chains for m in c.mentions]
+        assert "北京上海" not in all_texts
+        assert "北京" in all_texts and "上海" in all_texts
+
+    def test_entity_extending_into_common_noun_still_works(self, resolver):
+        # 北京 大学 (only 北京 NER'd) → NP "北京大学" is legitimate
+        ents = [_ent("ent_001", "北京", "LOCATION", (0, 2))]
+        toks = _toks([("北京", "NR", 0, 2), ("大学", "NN", 2, 4)])
+        chains = _chains(resolver, ents, toks, "modern")
+        all_texts = [m.text for c in chains for m in c.mentions]
+        assert "北京大学" in all_texts
+
+
+class TestClassicalFalsePositives:
+    """H3: 是/而/子 no longer create spurious classical mentions."""
+
+    def test_er_conjunction_not_pronoun(self, resolver):
+        # 项羽 而 之 …  →  而 (CC) is not a mention; 之 resolves to 项羽
+        ents = [_ent("ent_001", "项羽", "PERSON", (0, 2))]
+        toks = _toks([("项羽", "PROPN", 0, 2), ("而", "CC", 2, 3),
+                      ("之", "PRON", 3, 4)])
+        chains = _chains(resolver, ents, toks, "classical")
+        all_texts = [m.text for c in chains for m in c.mentions]
+        assert "而" not in all_texts
+        chain = _chain_with(chains, "之")
+        assert any(m.text == "项羽" for m in chain.mentions)
+
+    def test_shi_prefix_not_nominal(self, resolver):
+        # 是 时 must NOT form the nominal "是时" (是 is a copula here)
+        ents = [_ent("ent_001", "项羽", "PERSON", (0, 2))]
+        toks = _toks([("项羽", "PROPN", 0, 2), ("是", "VERB", 2, 3),
+                      ("时", "NOUN", 3, 4)])
+        chains = _chains(resolver, ents, toks, "classical")
+        all_texts = [m.text for c in chains for m in c.mentions]
+        assert "是时" not in all_texts
+
+    def test_zi_common_noun_not_pronoun(self, resolver):
+        # 子 as a common noun (child) is no longer a pronoun mention
+        ents = []
+        toks = _toks([("子", "NOUN", 0, 1), ("女", "NOUN", 1, 2)])
+        chains = _chains(resolver, ents, toks, "classical")
+        all_texts = [m.text for c in chains for m in c.mentions]
+        assert "子" not in all_texts
+
+
+class TestPrincipalUniqueness:
+    """M1: exactly one principal mention per chain."""
+
+    def test_two_entity_chain_has_one_principal(self, resolver):
+        # Same-name same-category entities merge into one chain
+        ents = [_ent("ent_001", "王", "PERSON", (0, 1)),
+                _ent("ent_002", "王", "PERSON", (4, 5))]
+        toks = _toks([("王", "NR", 0, 1), ("说", "VV", 1, 2),
+                      ("了", "AS", 2, 3), ("王", "NR", 4, 5)])
+        chains = _chains(resolver, ents, toks, "modern")
+        merged = [c for c in chains
+                  if sum(1 for m in c.mentions if m.text == "王") == 2]
+        assert merged, "same-name entities should merge"
+        for chain in chains:
+            principals = [m for m in chain.mentions if m.is_principal]
+            assert len(principals) == 1, f"chain has {len(principals)} principals"
+
+
+class TestAnalyzerIntegration:
+    """S7/M3: analyzer-level routing and relation normalization guards."""
+
+    def test_auto_language_routes_classical(self):
+        from core.analyzer import _resolve_coreferences
+        ents = [_ent("ent_001", "项羽", "PERSON", (0, 2))]
+        toks = _toks([("项羽", "PROPN", 0, 2), ("举", "VERB", 2, 3),
+                      ("之", "PRON", 3, 4)])
+        # Dominant label classical → 之 (classical pronoun) resolves
+        chains = _resolve_coreferences(
+            "项羽举之", toks, ents, "auto",
+            sentence_labels=["classical", "classical", "modern"],
+        )
+        chain = next((c for c in chains
+                      if any(m.text == "之" for m in c.mentions)), None)
+        assert chain is not None
+        assert any(m.text == "项羽" for m in chain.mentions)
+
+    def test_auto_language_routes_modern(self):
+        from core.analyzer import _resolve_coreferences
+        ents = [_ent("ent_001", "项羽", "PERSON", (0, 2))]
+        toks = _toks([("项羽", "PROPN", 0, 2), ("举", "VERB", 2, 3),
+                      ("之", "PRON", 3, 4)])
+        # Dominant label modern → 之 is not a modern pronoun, no chain
+        chains = _resolve_coreferences(
+            "项羽举之", toks, ents, "auto",
+            sentence_labels=["modern", "modern", "classical"],
+        )
+        for c in chains:
+            assert not any(m.text == "之" for m in c.mentions)
+
+    @staticmethod
+    def _rel(subject: str, obj: str):
+        from core.schema import Relation
+        return Relation(
+            id="rel_001", subject=subject, subject_raw=subject,
+            predicate="EQUIVALENT_TO", object=obj, object_raw=obj,
+            evidence="e", evidence_span=(0, 1), source="test",
+        )
+
+    def test_level3_single_char_not_expanded(self):
+        from core.analyzer import _normalize_relations_by_coref
+        ents = [_ent("ent_001", "碳钢", "MATERIAL", (0, 2))]
+        rel = self._rel("钢", "X")
+        _normalize_relations_by_coref([rel], [], ents)
+        assert rel.subject == "钢", "single-char 钢 must not become 碳钢"
+
+    def test_level3_complete_entity_not_expanded(self):
+        from core.analyzer import _normalize_relations_by_coref
+        ents = [_ent("ent_001", "北京", "LOCATION", (0, 2)),
+                _ent("ent_002", "北京大学", "INSTITUTION", (5, 9))]
+        rel = self._rel("北京", "X")
+        _normalize_relations_by_coref([rel], [], ents)
+        assert rel.subject == "北京", "北京 must not become 北京大学"
+
+    def test_level3_partial_name_expands_to_shortest(self):
+        from core.analyzer import _normalize_relations_by_coref
+        ents = [_ent("ent_001", "碳水化合物", "MATERIAL", (0, 5)),
+                _ent("ent_002", "碳水化合物溶液", "MATERIAL", (6, 13))]
+        rel = self._rel("碳水", "X")
+        _normalize_relations_by_coref([rel], [], ents)
+        assert rel.subject == "碳水化合物", "should pick the SHORTEST container"
+
+
 class TestClassicalUnpunctuated:
     """Classical text has no punctuation — long-distance must still work."""
 

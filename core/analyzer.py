@@ -378,13 +378,23 @@ def _resolve_coreferences(
     tokens: list[Token],
     entities: list,
     language: str,
+    sentence_labels: list[str] | None = None,
 ) -> list[CoreferenceChain]:
     """Run coreference resolution on the analyzed text."""
     resolver = CorefResolver()
     # Determine language for coref
     if language == "auto":
-        # Use the dominant language from segments
-        lang = "modern"  # default
+        # Use the dominant per-sentence language (most sentences win;
+        # ties fall back to modern). Previously this was hardcoded to
+        # "modern", which mis-routed classical documents: classical
+        # pronouns (之/其/彼) were never recognized and NP extraction
+        # used the wrong tag set.
+        lang = "modern"
+        if sentence_labels:
+            counts: dict[str, int] = {}
+            for label in sentence_labels:
+                counts[label] = counts.get(label, 0) + 1
+            lang = max(sorted(counts), key=lambda k: counts[k])
     else:
         lang = language
     result = resolver.resolve(text, entities, tokens, lang)
@@ -445,6 +455,11 @@ def _normalize_relations_by_coref(
             if "classical_pattern" in rel.source:
                 continue
 
+        # Capture originals BEFORE any normalization so the self-loop
+        # guard below can revert to the extractor's original endpoints.
+        orig_subject = rel.subject
+        orig_object = rel.object
+
         # Normalize subject
         matched_chain = None
 
@@ -464,19 +479,21 @@ def _normalize_relations_by_coref(
             if resolved != rel.subject_raw:
                 rel.subject = resolved
 
-        # Level 3: entity text normalization - find entity that contains subject
-        # Only apply if the subject is a proper substring (not the full entity name)
-        # and it's shorter than the entity (to avoid false matches like "钢"->"碳钢")
-        orig_subject = rel.subject
-        best_entity_match = None
-        best_entity_len = 0
-        for et in entity_texts:
-            if (rel.subject in et or rel.subject_raw in et) and len(rel.subject) < len(et):
-                if len(et) > best_entity_len:
-                    best_entity_len = len(et)
-                    best_entity_match = et
-        if best_entity_match and best_entity_match != rel.subject:
-            rel.subject = best_entity_match
+        # Level 3: entity text normalization - expand a partial name to
+        # the SHORTEST entity that contains it (tightest match).
+        # Guards: single-character fragments are never expanded (钢 is
+        # not 碳钢), and a subject that is already a complete entity name
+        # is never expanded into a longer one (北京 is not 北京大学).
+        if len(rel.subject) >= 2 and rel.subject not in entity_texts:
+            best_entity_match = None
+            best_entity_len = 0
+            for et in entity_texts:
+                if (rel.subject in et or rel.subject_raw in et) and len(rel.subject) < len(et):
+                    if best_entity_match is None or len(et) < best_entity_len:
+                        best_entity_len = len(et)
+                        best_entity_match = et
+            if best_entity_match and best_entity_match != rel.subject:
+                rel.subject = best_entity_match
 
         # Normalize object
         matched_chain = None
@@ -495,17 +512,17 @@ def _normalize_relations_by_coref(
             if resolved != rel.object_raw:
                 rel.object = resolved
 
-        # Level 3: entity text normalization - find entity that contains object
-        orig_object = rel.object
-        best_entity_match = None
-        best_entity_len = 0
-        for et in entity_texts:
-            if (rel.object in et or rel.object_raw in et) and len(rel.object) < len(et):
-                if len(et) > best_entity_len:
-                    best_entity_len = len(et)
-                    best_entity_match = et
-        if best_entity_match and best_entity_match != rel.object:
-            rel.object = best_entity_match
+        # Level 3: entity text normalization for object (same guards as subject)
+        if len(rel.object) >= 2 and rel.object not in entity_texts:
+            best_entity_match = None
+            best_entity_len = 0
+            for et in entity_texts:
+                if (rel.object in et or rel.object_raw in et) and len(rel.object) < len(et):
+                    if best_entity_match is None or len(et) < best_entity_len:
+                        best_entity_len = len(et)
+                        best_entity_match = et
+            if best_entity_match and best_entity_match != rel.object:
+                rel.object = best_entity_match
 
         # Prevent self-loops: if subject == object after normalization, revert
         if rel.subject == rel.object:
@@ -740,13 +757,22 @@ def analyze(
         # These coreferences will be merged with the standard coref results below
 
     # Coreference resolution
-    all_coreferences = _resolve_coreferences(text, all_tokens, all_entities, language)
+    all_coreferences = _resolve_coreferences(
+        text, all_tokens, all_entities, language,
+        sentence_labels=[s["label"] for s in language_sentences],
+    )
 
     # Merge classical pattern coreferences with standard coreferences
     if language == "classical" or (language == "auto" and any(s["label"] == "classical" for s in language_sentences)):
         pattern_extractor = ClassicalPatternExtractor()
         _, pattern_corefs = pattern_extractor.extract(text, all_entities)
         all_coreferences.extend(pattern_corefs)
+
+    # Drop single-mention chains: a coreference chain by definition links
+    # 2+ mentions of the same referent. Singletons (an entity that never
+    # repeats, an unresolved pronoun, a one-off nominal) carry no
+    # coreference information and only add noise to the document output.
+    all_coreferences = [c for c in all_coreferences if len(c.mentions) >= 2]
 
     # Coref-Relation Integration
     # Use coreference chains to further normalize relation endpoints
