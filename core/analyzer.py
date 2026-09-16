@@ -159,6 +159,7 @@ def _analyze_modern(
     dict_combine: Optional[set] = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
+    id_base: tuple[int, int] | None = None,
 ) -> tuple[list, list, list, list, list, list, bool]:
     try:
         pipeline = _get_modern_pipeline()
@@ -175,6 +176,7 @@ def _analyze_modern(
         text, raw, source="hanlp_v2",
         entity_categories=entity_categories,
         auto_discover_entities=auto_discover_entities,
+        id_base=id_base,
     )
     _apply_offset(doc, offset)
     deps = _extract_deps(raw)
@@ -191,6 +193,7 @@ def _analyze_classical(
     entity_dict: dict[str, str] | None = None,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
+    id_base: tuple[int, int] | None = None,
 ) -> tuple[list, list, list, list, list, bool]:
     try:
         pipeline = _get_classical_pipeline()
@@ -236,6 +239,7 @@ def _analyze_classical(
         entity_dict=entity_dict,
         entity_categories=entity_categories,
         auto_discover_entities=auto_discover_entities,
+        id_base=id_base,
     )
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
@@ -277,6 +281,7 @@ def _analyze_english(
     mapper: HanlpSchemaMapper,
     entity_categories: dict[str, list[str]] | None = None,
     auto_discover_entities: bool = False,
+    id_base: tuple[int, int] | None = None,
 ) -> tuple[list, list, list, list, list, list, bool]:
     """Analyze English text.
 
@@ -299,6 +304,7 @@ def _analyze_english(
         text, raw, source="en_modernbert",
         entity_categories=entity_categories,
         auto_discover_entities=auto_discover_entities,
+        id_base=id_base,
     )
     _apply_offset(doc, offset)
     for t in doc.content.tokens:
@@ -378,6 +384,30 @@ def _apply_offset(doc: NarrativeDocument, offset: int):
         r.evidence_span = (r.evidence_span[0] + offset, r.evidence_span[1] + offset)
 
 
+_ENT_ID_RE = re.compile(r"ent_(\d+)$")
+_REL_ID_RE = re.compile(r"rel(?:_cp)?_(\d+)$")
+
+
+def _max_id_numbers(entities: list, relations: list) -> tuple[int, int]:
+    """Max numeric suffix of entity/relation IDs.
+
+    Each segment's mapper resets its ID counters, so multi-segment
+    documents need the continuation point (max ID so far) passed to the
+    next segment — otherwise IDs collide across segments.
+    """
+    max_ent = 0
+    for e in entities:
+        m = _ENT_ID_RE.search(e.id)
+        if m:
+            max_ent = max(max_ent, int(m.group(1)))
+    max_rel = 0
+    for r in relations:
+        m = _REL_ID_RE.search(r.id)
+        if m:
+            max_rel = max(max_rel, int(m.group(1)))
+    return max_ent, max_rel
+
+
 def _resolve_coreferences(
     text: str,
     tokens: list[Token],
@@ -433,6 +463,7 @@ def _normalize_relations_by_coref(
 
     # Build entity text set for resolution
     entity_texts = {e.text for e in entities}
+    entity_id_by_text = {e.text: e.id for e in entities}
 
     # Helper: resolve chain representative to actual entity
     def resolve_representative(chain: CoreferenceChain) -> str:
@@ -498,7 +529,12 @@ def _normalize_relations_by_coref(
                         best_entity_len = len(et)
                         best_entity_match = et
             if best_entity_match and best_entity_match != rel.subject:
-                rel.subject = best_entity_match
+                # Only expand when the full entity name actually appears
+                # in the relation's evidence — otherwise the endpoint is
+                # a different (shorter) name that merely overlaps the
+                # entity (北京 is not 北京立方庭).
+                if best_entity_match in rel.evidence:
+                    rel.subject = best_entity_match
 
         # Normalize object
         matched_chain = None
@@ -527,12 +563,37 @@ def _normalize_relations_by_coref(
                         best_entity_len = len(et)
                         best_entity_match = et
             if best_entity_match and best_entity_match != rel.object:
-                rel.object = best_entity_match
+                # Same evidence guard as subject: the full entity name
+                # must appear in the evidence to justify the expansion.
+                if best_entity_match in rel.evidence:
+                    rel.object = best_entity_match
 
         # Prevent self-loops: if subject == object after normalization, revert
         if rel.subject == rel.object:
             rel.subject = orig_subject
             rel.object = orig_object
+
+        # Re-resolve entity IDs after endpoint rewrites — the old IDs
+        # would dangle once the text no longer matches that entity.
+        rel.subject_ent_id = entity_id_by_text.get(rel.subject)
+        rel.object_ent_id = entity_id_by_text.get(rel.object)
+
+
+def _deduplicate_relations(relations: list) -> list:
+    """Collapse duplicate (subject, predicate, object) triples.
+
+    Multiple sources (SRL, DEP, bridge, classical patterns) can extract
+    the same fact from the same or different sentences. Keep the
+    highest-confidence instance; on ties the first occurrence wins.
+    """
+    best: dict[tuple, int] = {}
+    for i, rel in enumerate(relations):
+        key = (rel.subject, rel.predicate, rel.object)
+        j = best.get(key)
+        if j is None or rel.confidence > relations[j].confidence:
+            best[key] = i
+    keep = set(best.values())
+    return [rel for i, rel in enumerate(relations) if i in keep]
 
 
 # ---------------------------------------------------------------------------
@@ -701,11 +762,12 @@ def analyze(
     # Process each segment
     all_tokens, all_entities, all_relations, all_patterns, all_deps, all_srl = [], [], [], [], [], []
     token_offset = 0  # Global token index offset for dep remapping
+    id_base: tuple[int, int] | None = None  # ID continuation across segments
     for seg_text, seg_offset, lang, conf in merged:
         if lang == "classical":
             tokens, entities, relations, patterns, deps, ok = _analyze_classical(
                 seg_text, seg_offset, mapper, dict_combine, entity_dict, entity_categories,
-                auto_discover_entities,
+                auto_discover_entities, id_base=id_base,
             )
             if not ok:
                 logger.warning(
@@ -719,7 +781,7 @@ def analyze(
         elif lang == "english":
             tokens, entities, relations, patterns, deps, seg_srl, ok = _analyze_english(
                 seg_text, seg_offset, mapper, entity_categories,
-                auto_discover_entities,
+                auto_discover_entities, id_base=id_base,
             )
             if not ok:
                 logger.warning(
@@ -732,7 +794,7 @@ def analyze(
         else:
             tokens, entities, relations, patterns, deps, seg_srl, ok = _analyze_modern(
                 seg_text, seg_offset, mapper, dict_combine, entity_categories,
-                auto_discover_entities,
+                auto_discover_entities, id_base=id_base,
             )
             if not ok:
                 logger.warning(
@@ -755,6 +817,15 @@ def analyze(
         all_patterns.extend(patterns)
         all_srl.extend(seg_srl)
         token_offset += len(tokens)
+
+        # Continue entity/relation ID numbering for the next segment
+        # (each segment's mapper resets its counters, so without this
+        # IDs would collide across segments).
+        seg_max_ent, seg_max_rel = _max_id_numbers(entities, relations)
+        if id_base is None:
+            id_base = (seg_max_ent, seg_max_rel)
+        else:
+            id_base = (max(id_base[0], seg_max_ent), max(id_base[1], seg_max_rel))
 
     # Re-number token IDs globally, sorted by position
     for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
@@ -804,6 +875,11 @@ def analyze(
     # Use coreference chains to further normalize relation endpoints
     _normalize_relations_by_coref(all_relations, all_coreferences, all_entities)
 
+    # Relation Deduplication
+    # Multiple sources (SRL, DEP, bridge, classical patterns) can extract
+    # the same fact; collapse duplicate (subject, predicate, object) triples.
+    all_relations = _deduplicate_relations(all_relations)
+
     # Modifier Extraction
     # Extract relation modifiers (degree, negation, scope, etc.)
     # Tokens are passed so polysemous words (将/既/乃/即) are only matched
@@ -818,7 +894,7 @@ def analyze(
 
     # Entity Hierarchy
     # Detect containment relationships and generate PART_OF relations
-    hierarchy_builder = EntityHierarchyBuilder(relation_counter=len(all_relations))
+    hierarchy_builder = EntityHierarchyBuilder.from_relations(all_relations)
     hierarchy_relations = hierarchy_builder.build(all_entities, text)
     all_relations.extend(hierarchy_relations)
 

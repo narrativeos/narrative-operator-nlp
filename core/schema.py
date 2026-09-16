@@ -323,6 +323,10 @@ class Relation(BaseModel):
     evidence_span: tuple[int, int] = Field(..., description="Character offset of evidence in original text")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score [0, 1]")
     source: str = Field(default="", description="Extraction source, e.g. dep/nsubj")
+    negated: bool = Field(
+        default=False,
+        description="Whether the relation falls in the scope of a negation word (不/没有/未/非/无/弗/毋/...)"
+    )
     modifiers: list["RelationModifier"] = Field(
         default_factory=list,
         description="Relation modifiers/qualifiers (degree, negation, scope, etc.)"

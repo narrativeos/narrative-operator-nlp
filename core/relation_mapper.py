@@ -438,6 +438,21 @@ def _span_between(sp1: tuple, sp2: tuple, text: str) -> str:
     return text[start:end]
 
 
+# Sentence-final punctuation: dependency parsers occasionally link
+# arguments across sentence boundaries; bridging such pairs produces
+# nonsense relations (e.g. 北京→人 across "…人也。北京…").
+_SENT_END_CHARS = frozenset("。！？；.!?;")
+
+
+def _crosses_sentence_boundary(sp1: tuple, sp2: tuple, text: str) -> bool:
+    """True if the span between two endpoints contains sentence-final punctuation."""
+    start = min(sp1[0], sp2[0])
+    end = max(sp1[1], sp2[1])
+    if start < 0 or end > len(text):
+        return True
+    return any(c in _SENT_END_CHARS for c in text[start:end])
+
+
 def _resolve_predicate(pred_text: str, arg_role: str = "") -> tuple[str, Optional[str]]:
     """Resolve predicate_verb to (predicate, semantic_class).
 
@@ -727,10 +742,16 @@ class RelationExtractionRules:
     # ── Aggregate ──
 
     def extract_all(self, text: str, raw: dict, tokens: list,
-                    entities: list | None = None) -> list:
+                    entities: list | None = None,
+                    classical: bool = False) -> list:
         """Extract relations: SRL first, then supplementary DEP (amod).
 
         Relaxed entity filter: at least ONE endpoint must be an entity.
+
+        classical: when True, the classical Chinese function-word
+        endpoint filter (之/其/为/去/...) is applied. It must NOT apply
+        to modern text, where such characters can be legitimate entity
+        names (e.g. 云 as a cloud product).
         """
         entity_texts: set[str] = set()
         if entities:
@@ -744,16 +765,18 @@ class RelationExtractionRules:
                 if isinstance(f, list):
                     rels = self.extract_from_srl(f, tokens, text)
                     for rel in rels:
-                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities)
+                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities, classical=classical)
                         if rel:
                             relations.append(rel)
 
         if not has_srl:
             bridges = self._bridge_subj_obj(
                 raw.get("dep", []), tokens, text, entity_texts,
+                classical=classical,
             )
             cop_bridges = self._bridge_cop(
                 raw.get("dep", []), tokens, text, entity_texts,
+                classical=classical,
             )
             relations.extend(bridges)
             relations.extend(cop_bridges)
@@ -787,7 +810,7 @@ class RelationExtractionRules:
                         i, deprel, head_1based, tokens, text,
                     )
                     if rel:
-                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities)
+                        rel = self._entity_normalize(rel, entity_texts, strict=False, entities=entities, classical=classical)
                         if rel:
                             relations.append(rel)
 
@@ -908,7 +931,12 @@ class RelationExtractionRules:
             for conj in EN_CONJS:
                 text = text.replace(conj, "||SPLIT||")
             parts = [p.strip() for p in text.split("||SPLIT||") if p.strip()]
-            return parts if len(parts) > 1 else [text]
+            # A 1-char fragment is never a valid endpoint — the
+            # "conjunction" was inside a proper noun (颐和园 → 颐+园).
+            # Only split when every part is at least 2 chars.
+            if len(parts) > 1 and all(len(p) >= 2 for p in parts):
+                return parts
+            return [text]
 
         result: list[Relation] = []
         for rel in relations:
@@ -929,6 +957,7 @@ class RelationExtractionRules:
                             subject=subj,
                             predicate=rel.predicate,
                             predicate_verb=rel.predicate_verb,
+                            semantic_class=rel.semantic_class,
                             object=obj,
                             evidence=rel.evidence,
                             evidence_span=rel.evidence_span,
@@ -952,6 +981,7 @@ class RelationExtractionRules:
 
     def _bridge_subj_obj(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
+        classical: bool = False,
     ) -> list[Relation]:
         """Bridge nsubj→verb←obj into subject→object relations.
         
@@ -990,9 +1020,14 @@ class RelationExtractionRules:
                     obj_text, obj_span = self._merge_det_compound(
                         obj_idx, dep, tokens,
                     )
+
+                    # Never bridge across a sentence boundary
+                    if _crosses_sentence_boundary(subj_span, obj_span, text):
+                        continue
                     
                     # Filter classical Chinese function words
-                    if subj_text in _CLASSICAL_NON_ENDPOINTS or obj_text in _CLASSICAL_NON_ENDPOINTS:
+                    if classical and (subj_text in _CLASSICAL_NON_ENDPOINTS
+                                      or obj_text in _CLASSICAL_NON_ENDPOINTS):
                         continue
 
                     subj_is_ent = subj_text in entity_texts
@@ -1024,6 +1059,7 @@ class RelationExtractionRules:
 
     def _bridge_cop(
         self, dep: list, tokens: list, text: str, entity_texts: set[str],
+        classical: bool = False,
     ) -> list[Relation]:
         """Bridge copula relations: 为(cop)→鲲 + 名(obj)→知 → 名→鲲(为).
         
@@ -1068,15 +1104,23 @@ class RelationExtractionRules:
                     sib_idx, dep, tokens,
                 )
 
-                # Filter function words
-                if sib_text in _CLASSICAL_NON_ENDPOINTS:
+                # Never bridge across a sentence boundary
+                if _crosses_sentence_boundary(sib_span, pred_tok.span, text):
                     continue
-                if pred_tok.text in _CLASSICAL_NON_ENDPOINTS:
+
+                # Filter function words (classical text only)
+                if classical and sib_text in _CLASSICAL_NON_ENDPOINTS:
+                    continue
+                if classical and pred_tok.text in _CLASSICAL_NON_ENDPOINTS:
                     continue
 
                 if (sib_text not in entity_texts
                         and pred_tok.text not in entity_texts):
                     continue
+
+                # Copula verbs resolve to their proper predicate
+                # (为/乃/即/系 → IS_A) instead of a hardcoded RELATES_TO.
+                predicate, semantic_class = _resolve_predicate(cop_verb.text)
 
                 evidence = _span_between(sib_span, pred_tok.span, text)
                 if not evidence:
@@ -1086,7 +1130,8 @@ class RelationExtractionRules:
                 bridged.append(Relation(
                     id=f"rel_{self._counter:03d}",
                     subject=sib_text,
-                    predicate="RELATES_TO",
+                    predicate=predicate,
+                    semantic_class=semantic_class,
                     predicate_verb=cop_verb.text,
                     object=pred_tok.text,
                     evidence=evidence,
@@ -1104,6 +1149,7 @@ class RelationExtractionRules:
                           entity_texts: set[str],
                           strict: bool = True,
                           entities: list | None = None,
+                          classical: bool = False,
                           ) -> Relation | None:
         """Normalize endpoints: exact match → sub-entity match → reject.
 
@@ -1119,9 +1165,11 @@ class RelationExtractionRules:
             return rel
 
         # ── Filter function words: discard relation if endpoint is a function word ──
-        if rel.subject in _CLASSICAL_NON_ENDPOINTS:
+        # Classical Chinese function words only — in modern text these
+        # characters can be legitimate entity names (云, 为, 去, ...).
+        if classical and rel.subject in _CLASSICAL_NON_ENDPOINTS:
             return None
-        if rel.object in _CLASSICAL_NON_ENDPOINTS:
+        if classical and rel.object in _CLASSICAL_NON_ENDPOINTS:
             return None
 
         hit_count = 0
@@ -1137,7 +1185,7 @@ class RelationExtractionRules:
             if matches:
                 # Use the longest matching entity, but skip if it's a function word
                 matched = matches[0]
-                if matched in _CLASSICAL_NON_ENDPOINTS:
+                if classical and matched in _CLASSICAL_NON_ENDPOINTS:
                     # Function word matched — discard this relation
                     return None
                 setattr(rel, attr, matched)
@@ -1151,13 +1199,16 @@ class RelationExtractionRules:
             return None
 
         # ── Final check: ensure endpoints are not function words after normalization ──
-        if rel.subject in _CLASSICAL_NON_ENDPOINTS:
+        if classical and rel.subject in _CLASSICAL_NON_ENDPOINTS:
             return None
-        if rel.object in _CLASSICAL_NON_ENDPOINTS:
+        if classical and rel.object in _CLASSICAL_NON_ENDPOINTS:
             return None
 
         # ── Refine predicate using entity type inference ──
-        if entities:
+        # Fallback ONLY: type-based inference must never override a
+        # verb-derived predicate (e.g. 导致→CAUSES must not become
+        # LOCATED_AT just because the endpoints are (PERSON, LOCATION)).
+        if entities and rel.predicate == "RELATES_TO":
             subj_entity = _find_entity(entities, rel.subject)
             obj_entity = _find_entity(entities, rel.object)
             

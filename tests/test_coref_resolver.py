@@ -547,8 +547,20 @@ class TestAnalyzerIntegration:
         ents = [_ent("ent_001", "碳水化合物", "MATERIAL", (0, 5)),
                 _ent("ent_002", "碳水化合物溶液", "MATERIAL", (6, 13))]
         rel = self._rel("碳水", "X")
+        # The full entity name must appear in the evidence for the
+        # expansion to be justified (guards against 北京→北京立方庭).
+        rel.evidence = "碳水化合物溶液呈白色"
         _normalize_relations_by_coref([rel], [], ents)
         assert rel.subject == "碳水化合物", "should pick the SHORTEST container"
+
+    def test_level3_no_expansion_without_evidence(self):
+        from core.analyzer import _normalize_relations_by_coref
+        ents = [_ent("ent_001", "北京立方庭", "LOCATION", (0, 5))]
+        rel = self._rel("北京", "X")
+        # Evidence does not contain 北京立方庭 → 北京 must stay 北京.
+        rel.evidence = "北京位于海淀区"
+        _normalize_relations_by_coref([rel], [], ents)
+        assert rel.subject == "北京", "北京 must not become 北京立方庭"
 
 
 class TestClassicalUnpunctuated:

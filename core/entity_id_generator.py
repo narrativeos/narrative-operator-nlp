@@ -67,6 +67,16 @@ class EntityIdGenerator:
         """Current counter value (for debugging)."""
         return self._counter
 
+    def advance_to(self, n: int) -> None:
+        """Continue counter-based numbering from n.
+
+        Used for multi-segment documents: each segment's mapper resets
+        its generators, then advances them past the IDs already issued
+        by previous segments so IDs stay globally unique.
+        (No-op for hash-based IDs, which are content-derived.)
+        """
+        self._counter = n
+
     def reset(self):
         """Reset the generator state."""
         self._counter = 0

@@ -46,11 +46,18 @@ class HanlpSchemaMapper:
         entity_dict: dict[str, str] | None = None,
         entity_categories: dict[str, list[str]] | None = None,
         auto_discover_entities: bool = False,
+        id_base: tuple[int, int] | None = None,
     ) -> NarrativeDocument:
         # Reset per-request state to avoid cross-request pollution
         # (this mapper is a global singleton, so state must be request-local)
         self.entity_rules.reset()
         self.relation_rules.reset()
+        # Multi-segment documents: continue ID numbering past the IDs
+        # already issued by previous segments (id_base =
+        # (next_entity_num, next_relation_num)).
+        if id_base is not None:
+            self.entity_rules._id_gen.advance_to(id_base[0])
+            self.relation_rules._counter = id_base[1]
         tokens = self._map_tokens(text, raw)
 
         # ── Step 1: Extract raw entities (before merging) ──
@@ -64,16 +71,17 @@ class HanlpSchemaMapper:
         raw_entities = [e for e in raw_entities if e.category != "PARAMETER"]
 
         # ── Step 2: Extract relations using raw entities (preserves original mentions) ──
-        relations = self._map_relations(text, raw, tokens, raw_entities)
+        relations = self._map_relations(text, raw, tokens, raw_entities, source=source)
 
         # ── Step 2.5: Apply negation-aware confidence adjustment ──
         from .negation_detector import find_negation_spans, compute_negation_aware_confidence
         negation_spans = find_negation_spans(text)
         for rel in relations:
             adjusted_conf, is_neg = compute_negation_aware_confidence(
-                rel.confidence, rel.evidence_span, negation_spans,
+                rel.confidence, rel.evidence_span, negation_spans, text,
             )
             rel.confidence = adjusted_conf
+            rel.negated = is_neg
             # Dynamic confidence: adjust based on evidence quality
             rel.confidence = self._dynamic_confidence(rel, raw)
 
@@ -188,8 +196,14 @@ class HanlpSchemaMapper:
         )
 
     def _map_relations(self, text: str, raw: dict, tokens: list[Token],
-                       entities: list) -> list:
-        return self.relation_rules.extract_all(text, raw, tokens, entities)
+                       entities: list, source: str = "hanlp_v2") -> list:
+        # The classical function-word endpoint filter only applies to
+        # classical text (source "hanlp_lzh"); in modern text these
+        # characters can be legitimate entity names.
+        classical = source == "hanlp_lzh"
+        return self.relation_rules.extract_all(
+            text, raw, tokens, entities, classical=classical,
+        )
 
     def _dynamic_confidence(self, rel, raw: dict) -> float:
         """Compute dynamic confidence based on evidence quality.

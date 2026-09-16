@@ -11,7 +11,11 @@ Note: PART_OF already exists in RelationPredicate, so we reuse it.
 
 from __future__ import annotations
 
+import re
+
 from .schema import Entity, Relation
+
+_REL_ID_RE = re.compile(r"rel(?:_cp)?_(\d+)$")
 
 
 class EntityHierarchyBuilder:
@@ -24,6 +28,21 @@ class EntityHierarchyBuilder:
 
     def __init__(self, relation_counter: int = 0):
         self._counter = relation_counter
+
+    @classmethod
+    def from_relations(cls, relations: list[Relation]) -> "EntityHierarchyBuilder":
+        """Create a builder whose IDs continue after the existing relations.
+
+        Relation IDs are assigned by a global counter (not 1..N), so
+        ``len(relations)`` is NOT a safe continuation point — it can
+        collide with an existing ID. Use the max numeric suffix instead.
+        """
+        max_num = 0
+        for r in relations:
+            m = _REL_ID_RE.search(r.id)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+        return cls(relation_counter=max_num)
 
     def build(
         self,
