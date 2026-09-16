@@ -25,9 +25,9 @@
 <!-- Main input -->
 <div class="input-area">
 <textarea id="input" placeholder="输入中文文本进行分析..."></textarea>
-<div style="display:flex;flex-direction:column;gap:6px">
+<div class="input-actions">
 <button id="analyzeBtn">🔍 分析</button>
-<select id="discoverMode" style="padding:4px 8px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;cursor:pointer">
+<select id="discoverMode" class="mode-select">
 <option value="">🔍 新词发现：关闭</option>
 <option value="discover">🔍 新词发现：仅发现</option>
 <option value="enhance">⚡ 新词发现：强化模式</option>
@@ -36,8 +36,8 @@
 </div>
 
 <!-- Custom dictionary -->
-<div class="input-area" style="margin-bottom:16px">
-<input id="dictInput" value="立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" style="flex:1;padding:8px 12px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:inherit">
+<div class="input-area dict-area">
+<input id="dictInput" value="立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" class="dict-input">
 </div>
 
 <!-- Language mode selector -->
@@ -52,15 +52,15 @@
 <!-- Summary mode selector -->
 <div class="lang-selector">
 <label>📝 摘要:</label>
-<label class="lang-option active" id="sumChars"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> 字</label>
-<label class="lang-option" id="sumRatio"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> (20%)</label>
+<label class="lang-option active" id="sumChars"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" class="num-input"> 字</label>
+<label class="lang-option" id="sumRatio"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" class="num-input"> (20%)</label>
 </div>
 
 <!-- Title mode selector -->
 <div class="lang-selector">
 <label>🏷️ 标题:</label>
-<label class="lang-option active" id="ttlChars"><input type="radio" name="ttlmode" value="chars" checked>按字数: <input id="ttlCharsVal" type="number" value="14" min="5" max="100" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> 字</label>
-<label class="lang-option" id="ttlRatio"><input type="radio" name="ttlmode" value="ratio">按比例: <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" style="width:50px;background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:11px;padding:1px 4px"> (5%)</label>
+<label class="lang-option active" id="ttlChars"><input type="radio" name="ttlmode" value="chars" checked>按字数: <input id="ttlCharsVal" type="number" value="14" min="5" max="100" class="num-input"> 字</label>
+<label class="lang-option" id="ttlRatio"><input type="radio" name="ttlmode" value="ratio">按比例: <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" class="num-input"> (5%)</label>
 </div>
 
 <!-- Tabs & panels — rendered from TABS in app.js -->
@@ -76,6 +76,6 @@ Powered by <a href="https://github.com/hankcs/HanLP" target="_blank">HanLP</a> (
 <a href="https://github.com/koheiw/kyoto-eva" target="_blank">KYOTO-EVAHAN</a> (CC BY 4.0)
 </p>
 </footer>
-<script src="/demo/app.js"></script>
+<script type="module" src="/demo/app.js"></script>
 </body>
 </html>

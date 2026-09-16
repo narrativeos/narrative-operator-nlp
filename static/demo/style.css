@@ -99,6 +99,38 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px; }
   border-color: var(--accent);
   box-shadow: var(--glow-accent);
 }
+.input-actions { display: flex; flex-direction: column; gap: 6px; }
+.mode-select {
+  padding: 4px 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.dict-area { margin-bottom: 16px; }
+.dict-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.dict-input:focus { outline: none; border-color: var(--accent); }
+.num-input {
+  width: 50px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.num-input:focus { outline: none; border-color: var(--accent); }
 
 button {
   background: linear-gradient(180deg, var(--green-hover), var(--green));
@@ -507,6 +539,7 @@ pre.pretty {
 }
 .event-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
 .event-table .event-row:hover { background: #1a2030; }
+.event-table .event-toggle { cursor: pointer; color: var(--accent); margin-right: 4px; user-select: none; }
 .event-table .event-toggle:hover { color: var(--blue); }
 
 /* ── Scrollbar ──────────────────────────────────────────── */
