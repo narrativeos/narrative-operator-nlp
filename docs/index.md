@@ -1,58 +1,47 @@
-# HanLP: Han Language Processing
+# Narrative Operator NLP
 
-[![GitHub stars](https://img.shields.io/github/stars/hankcs/HanLP)](https://github.com/hankcs/HanLP/stargazers) [![GitHub forks](https://img.shields.io/github/forks/hankcs/HanLP)](https://github.com/hankcs/HanLP/network) ![pypi](https://img.shields.io/pypi/v/HanLP) [![Downloads](https://static.pepy.tech/badge/HanLP)](https://pepy.tech/project/HanLP) [![GitHub license](https://img.shields.io/github/license/hankcs/HanLP)](https://github.com/hankcs/HanLP/blob/master/LICENSE) [![Open In Colab](https://file.hankcs.com/img/colab-badge.svg)](https://colab.research.google.com/drive/1KPX6t1y36TOzRIeB4Kt3uJ1twuj6WuFv?usp=sharing)
+NLP 算子 — NarrativeOS 生态的协议优先（Protocol-First）NLP 服务。以 [HanLP](https://github.com/hankcs/HanLP) 为底层引擎，通过 **NSP（Narrative Schema Protocol）** 统一输出，对外提供 MCP / gRPC / FastAPI 三层协议接口。
 
-The multilingual NLP library for researchers and companies, built on PyTorch and TensorFlow 2.x, for advancing 
-state-of-the-art deep learning techniques in both academia and industry. HanLP was designed from day one to be 
-efficient, user friendly and extendable. It comes with pretrained models for various human languages 
-including English, Chinese, Japanese and many others.
-
-
-
-## Tutorials
+## 项目文档
 
 ```{toctree}
 :maxdepth: 1
-:caption: Introduction
+:caption: 项目文档
 
-tutorial
+protocol
+implementation
+api_usage
 install
+deployment
 configure
-data_format
-annotations/index
+nlp_development_guidelines
+gap_analysis
+new_word_discovery
+classical_chinese
+dictionary_architecture
+cbdb_integration
 contributing
-Live Demo <https://hanlp.hankcs.com/>
 ```
 
-## Python API
+## 专题文档
 
 ```{toctree}
-:caption: Python API
+:maxdepth: 1
+:caption: 专题
+
+data_format
+tutorial
+```
+
+## HanLP 引擎文档（上游参考）
+
+```{toctree}
+:caption: HanLP Engine API
 :maxdepth: 2
 
 api/hanlp/index
 api/common/index
-api/restful
 api/trie/index
-```
-
-## Java API
-
-```{toctree}
-:maxdepth: 1
-:caption: Java API
-
-1.x API <https://github.com/hankcs/HanLP/tree/1.x>
-api/restful_java
-```
-
-## Golang API
-
-```{toctree}
-:maxdepth: 1
-:caption: Golang API
-
-api/restful_golang
 ```
 
 ## References
@@ -67,8 +56,5 @@ references
 
 ## Acknowledgements
 
-HanLPv2.1 is heavily inspired by [AllenNLP](https://allennlp.org/) and [SuPar](https://pypi.org/project/supar/). 
-
-[pypi-badge]: https://img.shields.io/pypi/v/hanlp.svg
-[pypi-link]: https://pypi.org/project/hanlp
+本项目基于 [HanLP](https://github.com/hankcs/HanLP)（Apache 2.0）构建，HanLPv2.1 深受 [AllenNLP](https://allennlp.org/) 与 [SuPar](https://pypi.org/project/supar/) 的启发。
 

@@ -1,133 +1,94 @@
 # Install
 
-```{figure} _static/install-versions.svg
----
-width: 100%
-figclass: caption
-alt: HanLP versions
-name: hanlp-versions
----
-Choose your HanLP version
-```
+`narrative-operator-nlp` 的本地安装指南。Docker 部署见 [deployment.md](deployment.md)。
 
-## Install RESTful Packages
+## 环境要求
 
-[![Downloads](https://static.pepy.tech/badge/hanlp-restful)](https://pepy.tech/project/hanlp-restful) [![Downloads](https://static.pepy.tech/badge/hanlp-restful/month)](https://pepy.tech/project/hanlp-restful) [![Downloads](https://static.pepy.tech/badge/hanlp-restful/week)](https://pepy.tech/project/hanlp-restful) 
+- **Python 3.10**（本项目与底层 HanLP 引擎的统一要求）
+- [uv](https://docs.astral.sh/uv/)（推荐）或 pip
+- GPU 可选（CPU 即可运行，GPU 可加速推理）
 
-```{eval-rst}
-.. margin:: **Beginners Attention**
-
-    .. Hint:: New to NLP? Just install RESTful packages and call :meth:`~hanlp_restful.HanLPClient.parse` without pain.
-```
-
-For beginners, the recommended RESTful packages are easier to start with. 
-The only requirement is [an auth key](https://bbs.hankcs.com/t/apply-for-free-hanlp-restful-apis/3178). 
-We officially released the following language bindings:
-
-### Python
-
-```shell script
-pip install hanlp_restful
-```
-
-### Java
-
-See [Java instructions](https://hanlp.hankcs.com/docs/api/restful_java.html).
-
-### Golang
-
-See [Golang instructions](https://hanlp.hankcs.com/docs/api/restful_golang.html).
-
-## Install Native Package
-
-[![Downloads](https://static.pepy.tech/badge/hanlp)](https://pepy.tech/project/hanlp) [![Downloads](https://static.pepy.tech/badge/hanlp/month)](https://pepy.tech/project/hanlp) [![Downloads](https://static.pepy.tech/badge/hanlp/week)](https://pepy.tech/project/hanlp)  
-
-The native package running locally can be installed via pip.
-
-````{margin} **Install from Source**
-```{note}
-See [developer guideline](https://hanlp.hankcs.com/docs/contributing.html#development).
-```
-````
-
-```
-pip install hanlp
-```
-
-HanLP requires Python 3.6 or later. GPU/TPU is suggested but not mandatory. Depending on your preference, HanLP offers the following flavors:
-
-````{margin} **Windows Support**
-```{note}
-Installation on Windows is **perfectly** supported. No need to install Microsoft Visual C++ Build Tools anymore. 
-```
-````
-
-````{margin} **Apple Silicon**
-```{note}
-HanLP also perfectly supports accelerating on Apple Silicon M1 chips, see [tutorial](https://www.hankcs.com/nlp/hanlp-official-m1-support.html).
-```
-````
-
-| Flavor  | Description                                                  |
-| ------- | ------------------------------------------------------------ |
-| default | This installs the default version which delivers the most commonly used functionalities. However, some heavy dependencies like TensorFlow are not installed. |
-| tf      | This installs TensorFlow and fastText.                       |
-| amr     | To support Abstract Meaning Representation (AMR) models, this installs AMR related dependencies like `penman`. |
-| full    | For experts who seek to maximize the efficiency via TensorFlow and C++ extensions, `pip install hanlp[full]` installs all the above dependencies. |
-
-
-## Install Models
-
-In short, you don't need to manually install any model. Instead, they are automatically downloaded to a directory called [`HANLP_HOME`](https://hanlp.hankcs.com/docs/configure.html#customize-hanlp-home) when you call `hanlp.load`.
-Occasionally, some errors might occur the first time you load a model, in which case you can refer to the following tips.
-
-### Download Error
-
-#### HanLP Models
-
-If the auto-download of a HanLP model fails, you can either:
-
-1. Retry as our file server might be busy serving users from all over the world.
-1. Follow the message on your terminal, which often guides you to manually download a `zip` file to a particular path. 
-1. Use a [mirror site](https://hanlp.hankcs.com/docs/configure.html#use-mirror-sites) which could be faster and stabler in your region.
-
-#### Hugging Face 🤗 Transformers Models
-
-If the auto-download of a Hugging Face 🤗 Transformers model fails, e.g., the following exception is threw out:
+## 1. 创建虚拟环境
 
 ```bash
-lib/python3.8/site-packages/transformers/file_utils.py", line 2102, in get_from_cache
-    raise ValueError(
-ValueError: Connection error, and we cannot find the requested files in the cached 
-path. Please try again or make sure your Internet connection is on.
+git clone https://github.com/narrativeos/narrative-operator-nlp
+cd narrative-operator-nlp
+
+uv venv --python 3.10
+source .venv/bin/activate
 ```
 
-You can either:
+## 2. 安装
 
-1. Retry as the Internet is quite unstable in some regions (e.g., China).
+```bash
+uv pip install -e ".[narrative]"
+```
 
-2. Force Hugging Face 🤗 Transformers to use cached models instead of checking updates from the Internet **if you have ever successfully loaded it before**, by setting the following environment variable:
+`narrative` extras 包含三层协议适配器所需的全部依赖（pydantic / fastapi / uvicorn / grpcio / mcp）。
+
+### 可选 extras
+
+| Extra | 说明 |
+|-------|------|
+| `narrative` | 协议适配器依赖（MCP / gRPC / FastAPI），**本项目主要使用** |
+| `amr` | AMR 语义解析模型依赖（penman 等） |
+| `fasttext` | fastText 依赖 |
+| `tf` | TensorFlow + fastText（部分旧模型需要） |
+| `full` | 以上全部 |
+
+## 3. 下载预训练模型
+
+模型不会随包安装，由 `scripts/setup_models.py` 统一管理并缓存到 `~/.hanlp/`（可用 `HANLP_HOME` 环境变量重定向）：
+
+```bash
+# 下载全部模型（MTL + LZH + PIPELINE，约 2-3 GB）
+python scripts/setup_models.py
+
+# 只检查已下载的模型，不下载
+python scripts/setup_models.py --check
+
+# 按需下载特定模型集
+python scripts/setup_models.py --model MTL       # 现代汉语（必选，~500MB）
+python scripts/setup_models.py --model LZH       # 古汉语（~300MB）
+python scripts/setup_models.py --model PIPELINE  # 单任务模型
+```
+
+模型清单与说明见 [implementation.md](implementation.md#模型管理)。
+
+## 4. 验证
+
+```python
+from core.analyzer import analyze
+
+doc = analyze("碳钢是钢的一种，具有高强度和高韧性。")
+print(doc.model_dump_json(indent=2))
+```
+
+## 模型下载问题排查
+
+### 下载失败 / 速度慢
+
+1. 重试（文件服务器在高峰时段可能较慢）。
+2. 按终端提示手动下载 `zip` 文件到指定路径。
+3. 使用镜像源加速：
 
    ```bash
-   export TRANSFORMERS_OFFLINE=1
+   # HanLP 模型镜像
+   export HANLP_URL=https://ftp.hankcs.com/hanlp/
+
+   # Hugging Face 镜像（中国大陆加速）
+   export HF_ENDPOINT=https://hf-mirror.com
    ```
 
-### Server without Internet
+### 离线服务器
 
-If your server has no Internet access at all, just debug your codes on your local PC and copy the following directories to your server via a USB disk or something.
+在无网络的服务器上部署时，先在本地机器完成模型下载，再拷贝以下两个目录：
 
-1. `~/.hanlp`: the home directory for HanLP models.
-1. `~/.cache/huggingface`: the home directory for Hugging Face 🤗 Transformers.
+1. `~/.hanlp` — HanLP 模型缓存（对应容器内的 `HANLP_HOME`）
+2. `~/.cache/huggingface` — Hugging Face Transformers 缓存
 
+拷贝后可设置 `TRANSFORMERS_OFFLINE=1` 强制使用本地缓存、不再检查更新。
 
-### Import Error
+### 更多配置
 
-Some TensorFlow/fastText models will ask you to install the missing TensorFlow/fastText modules, in which case you'll need to install the full version:
-
-```shell script
-pip install hanlp[full]
-```
-
-```{danger}
-NEVER install thirdparty packages (TensorFlow/fastText etc.) by yourself, as higher or lower versions of thirparty packages have not been tested and might not work properly.
-```
+`HANLP_HOME`、`HANLP_URL`、`HANLP_VERBOSE`、GPU 选择等引擎级配置见 [configure.md](configure.md)。

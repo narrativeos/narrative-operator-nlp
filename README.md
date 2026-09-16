@@ -120,7 +120,8 @@ docker compose up -d --build
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HTTP_PORT` | `8000` | FastAPI host port |
-| `HANLP_MODEL_SET` | `MTL` | Models: MTL / LZH / PIPELINE / ALL |
+| `GRPC_PORT` | `50051` | gRPC TCP port (default uses Unix Domain Socket) |
+| `HANLP_MODEL_SET` | `ALL` | Desired models: MTL / LZH / PIPELINE / ALL (entrypoint auto-downloads MTL only, see [docs/deployment.md](docs/deployment.md)) |
 
 ### Verify
 
@@ -147,6 +148,9 @@ Open `http://localhost:8000` — redirects to the interactive demo page (`/demo`
 
 ## Related Documentation
 
+- [Install Guide](docs/install.md) — 本地安装与模型下载
+- [Deployment Guide](docs/deployment.md) — Docker 部署（单容器 FastAPI + gRPC）
+- [Configuration](docs/configure.md) — 抽取规则 / 部署 / 引擎三层配置
 - [Implementation Summary](docs/implementation.md) — Full architecture & module reference
 - [API Usage Guide](docs/api_usage.md) — MCP, gRPC, FastAPI call examples
 - [Narrative Schema Protocol (NSP)](docs/protocol.md) — Data structure standard
