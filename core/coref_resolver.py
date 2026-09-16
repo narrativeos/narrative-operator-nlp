@@ -59,7 +59,6 @@ _CN_CLASSICAL_PRONUN = {
     "是": {"person": "3rd", "case": "demonstrative"},  # 近指
     "斯": {"person": "3rd", "case": "demonstrative"},  # 近指
     "厥": {"person": "3rd", "case": "demonstrative"},  # 远指
-    "彼": {"person": "3rd", "case": "demonstrative"},  # 远指
     # First person (第一人称)
     "吾": {"person": "1st", "case": "subj"},     # 主语位置
     "余": {"person": "1st", "case": "subj"},     # 主语位置
@@ -101,6 +100,10 @@ _EN_PRONUN = {
     "their": {"person": "3rd", "number": "pl"},
     "theirs": {"person": "3rd", "number": "pl"},
 }
+
+# Case-insensitive lookup set for English pronouns (sentence-initial
+# "She"/"He"/"They" must match the lowercase dictionary keys).
+_EN_PRONUN_LOWER = frozenset(w.lower() for w in _EN_PRONUN)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +191,7 @@ class CorefResolver:
                 span=ent.span,
                 mention_type="entity",
                 entity_id=ent.id,
+                category=ent.category,
                 is_principal=True,
             ))
 
@@ -210,8 +214,10 @@ class CorefResolver:
             ))
 
         # ── 3. Pronoun mentions ──
+        en_pronoun_lower = _EN_PRONUN_LOWER if language == "english" else None
         for tok in tokens:
-            if tok.text in pronoun_dict:
+            if (tok.text.lower() in en_pronoun_lower if en_pronoun_lower
+                    else tok.text in pronoun_dict):
                 # Check if this pronoun is already covered by an entity or noun phrase
                 if self._is_covered_by_entity(tok.span, entities):
                     continue
@@ -266,14 +272,18 @@ class CorefResolver:
                     has_proper = any(t.pos in ("PROPN", "NNP") for t in chunk_tokens)
                     is_multi = len(chunk_tokens) >= 2
                     if has_proper or is_multi:
-                        text = "".join(t.text for t in chunk_tokens)
+                        text = " ".join(t.text for t in chunk_tokens)
                         span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
                         phrases.append((text, span))
                 else:
                     i += 1
         else:
-            # Chinese: NR (proper noun) or NN sequences
-            noun_poses = {"NR", "NN", "NT"}
+            # Chinese: NR (proper noun) or NN sequences.
+            # Accept both CTB tags (NR/NN/NT) and Universal tags
+            # (NOUN/PROPN) — the classical pipeline (KYOTO EVAHAN)
+            # emits upos values even though they are stored under
+            # the pos/ctb key.
+            noun_poses = {"NR", "NN", "NT", "NOUN", "PROPN"}
             i = 0
             while i < len(tokens):
                 if tokens[i].pos in noun_poses:
@@ -282,7 +292,7 @@ class CorefResolver:
                     while i < len(tokens) and tokens[i].pos in noun_poses:
                         i += 1
                     chunk_tokens = tokens[start:i]
-                    has_proper = any(t.pos == "NR" for t in chunk_tokens)
+                    has_proper = any(t.pos in ("NR", "PROPN") for t in chunk_tokens)
                     is_multi = len(chunk_tokens) >= 2
                     # Always extract proper nouns, or multi-word noun phrases
                     if has_proper or is_multi:
@@ -351,16 +361,23 @@ class CorefResolver:
         used = set()
 
         # Step 1: Group by exact text match (entities AND nominals)
-        # This is key: even without NER, repeated noun phrases form clusters
+        # This is key: even without NER, repeated noun phrases form clusters.
+        # Same-text entities with CONFLICTING categories are different
+        # referents (e.g. person 王 vs place 王) and must be split into
+        # separate groups; nominals attach to the nearest same-text group.
         text_groups: dict[str, list[Mention]] = {}
         for m in mentions:
             if m.mention_type in ("entity", "nominal"):
                 text_groups.setdefault(m.text, []).append(m)
 
-        for text, group in text_groups.items():
-            if len(group) >= 2:
-                clusters.append(group)
-                for m in group:
+        final_groups: list[list[Mention]] = []
+        for group in text_groups.values():
+            final_groups.extend(self._split_category_conflicts(group))
+
+        for sub_group in final_groups:
+            if len(sub_group) >= 2:
+                clusters.append(sub_group)
+                for m in sub_group:
                     used.add(id(m))
 
         # Also add single entities AND nominals as singleton clusters
@@ -369,9 +386,9 @@ class CorefResolver:
         # HOWEVER: demonstrative nominals (该/此/本 + N) should NOT be added
         # as final singletons here — they need to be resolved in Step 3
         DEMO_PREFIXES = {"该", "此", "本", "其", "彼", "是"}
-        for text, group in text_groups.items():
-            if len(group) == 1:
-                m = group[0]
+        for sub_group in final_groups:
+            if len(sub_group) == 1:
+                m = sub_group[0]
                 if m.mention_type in ("entity", "nominal") and id(m) not in used:
                     # Skip demonstrative nominals — they will be resolved in Step 3
                     if m.mention_type == "nominal":
@@ -405,6 +422,43 @@ class CorefResolver:
         # Sort clusters by first mention's span
         clusters.sort(key=lambda c: c[0].span[0])
         return clusters
+
+    def _split_category_conflicts(
+        self,
+        group: list[Mention],
+    ) -> list[list[Mention]]:
+        """Split a same-text group whose entities have conflicting categories.
+
+        Same-text mentions normally form one cluster (same-name merging).
+        But if the group contains entities of DIFFERENT categories
+        (e.g. person 王 vs place 王), they are different referents and must
+        be separated. Nominals (category=None) attach to the nearest
+        sub-group by span distance.
+
+        Returns ``[group]`` unchanged when there is no category conflict.
+        """
+        entities = [m for m in group if m.mention_type == "entity"]
+        categories = {m.category for m in entities if m.category}
+        if len(categories) <= 1:
+            return [group]
+
+        by_category: dict[str, list[Mention]] = {}
+        for m in entities:
+            by_category.setdefault(m.category or "UNKNOWN", []).append(m)
+
+        for n in (m for m in group if m.mention_type == "nominal"):
+            best: Optional[list[Mention]] = None
+            best_dist = float("inf")
+            for sub in by_category.values():
+                for em in sub:
+                    dist = abs(n.span[0] - em.span[0])
+                    if dist < best_dist:
+                        best_dist = dist
+                        best = sub
+            if best is not None:
+                best.append(n)
+
+        return list(by_category.values())
 
     def _resolve_pronoun(
         self,
@@ -479,13 +533,11 @@ class CorefResolver:
             if person == "3rd":
                 # 3rd person pronouns can refer to any entity
                 pass
-            elif person == "1st":
-                # 1st person: only matches PERSON entities (simplified)
-                if entity.entity_id and "PERSON" not in entity.entity_id:
-                    return False
-            elif person == "2nd":
-                # 2nd person: only matches PERSON entities (simplified)
-                if entity.entity_id and "PERSON" not in entity.entity_id:
+            elif person in ("1st", "2nd"):
+                # 1st/2nd person: only matches PERSON entities (simplified).
+                # Check the entity category — entity IDs (ent_001 /
+                # ent_<hash>) never encode the category.
+                if entity.category is not None and entity.category != "PERSON":
                     return False
 
         return True

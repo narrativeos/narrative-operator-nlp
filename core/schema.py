@@ -361,6 +361,10 @@ class Mention(BaseModel):
         default=None,
         description="Linked entity ID if this mention is a named entity"
     )
+    category: Optional[str] = Field(
+        default=None,
+        description="Entity category (PERSON/LOCATION/...) for entity mentions"
+    )
     is_principal: bool = Field(
         default=False,
         description="Whether this is the principal/representative mention in the chain"
