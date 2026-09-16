@@ -1051,6 +1051,255 @@ def test_preposition_sets():
     print("  PASS: preposition frozensets correct\n")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Regression: SRL token-index handling & argument hygiene
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_srl_token_index_sentence_lookup():
+    """E2a: SRL token indices must be converted to character spans before
+    sentence lookup.
+
+    The PRED 引发 sits at token index 15, which as a *character* offset falls
+    inside sentence 0's range (0,20) — but the verb is actually in sentence 1
+    (char offset 21). Without the conversion the event is mis-assigned to
+    sentence 0 while its trigger_span points into sentence 1.
+    """
+    from core.schema import Token
+
+    text = "这是一个非常长的句子，包含了很多的内容。他引发了争议。"
+    tokens = [
+        Token(id=0, text="这", pos="DT", span=(0, 1)),
+        Token(id=1, text="是", pos="VV", span=(1, 2)),
+        Token(id=2, text="一个", pos="M", span=(2, 4)),
+        Token(id=3, text="非常", pos="AD", span=(4, 6)),
+        Token(id=4, text="长", pos="A", span=(6, 7)),
+        Token(id=5, text="的", pos="DEG", span=(7, 8)),
+        Token(id=6, text="句子", pos="NN", span=(8, 10)),
+        Token(id=7, text="，", pos="PU", span=(10, 11)),
+        Token(id=8, text="包含", pos="VV", span=(11, 13)),
+        Token(id=9, text="了", pos="UL", span=(13, 14)),
+        Token(id=10, text="很多", pos="M", span=(14, 16)),
+        Token(id=11, text="的", pos="DEG", span=(16, 17)),
+        Token(id=12, text="内容", pos="NN", span=(17, 19)),
+        Token(id=13, text="。", pos="PU", span=(19, 20)),
+        Token(id=14, text="他", pos="PN", span=(20, 21)),
+        Token(id=15, text="引发", pos="VV", span=(21, 23)),
+        Token(id=16, text="了", pos="UL", span=(23, 24)),
+        Token(id=17, text="争议", pos="NN", span=(24, 26)),
+        Token(id=18, text="。", pos="PU", span=(26, 27)),
+    ]
+    sentences = [
+        SentenceLanguage(text=text[0:20], span=(0, 20), label="modern", confidence=1.0),
+        SentenceLanguage(text=text[20:27], span=(20, 27), label="modern", confidence=1.0),
+    ]
+    patterns = [
+        SentencePattern(sentence_type="declarative"),
+        SentencePattern(sentence_type="declarative"),
+    ]
+    # Dummy relation so the pipeline runs (SRL-only path needs the loop)
+    dummy_rel = Relation(
+        id="rel_001", subject="这", predicate="RELATES_TO", predicate_verb="包含",
+        object="内容", evidence=text[11:19], evidence_span=(11, 19),
+    )
+    srl_frames = [[
+        ("引发", "PRED", 15, 16),
+        ("他", "ARG0", 14, 15),
+        ("争议", "ARG1", 17, 18),
+    ]]
+
+    extractor = EventExtractor()
+    events = extractor.extract(
+        text, [dummy_rel], [], sentences, patterns,
+        srl_frames=srl_frames, deps=[], tokens=tokens,
+    )
+    evt = [e for e in events if e.trigger == "引发"]
+    assert len(evt) == 1, f"expected 1 引发 event, got {len(evt)}"
+    evt = evt[0]
+    assert evt.sentence_index == 1, (
+        f"SRL frame mis-assigned to sentence {evt.sentence_index} "
+        f"(token index used as char offset), expected 1"
+    )
+    # Invariant: trigger_span lies inside the event's sentence
+    ss, se = sentences[evt.sentence_index].span
+    assert ss <= evt.trigger_span[0] and evt.trigger_span[1] <= se, (
+        f"trigger_span {evt.trigger_span} outside sentence {evt.sentence_index} ({ss},{se})"
+    )
+    print("  PASS: SRL token indices converted to char spans for sentence lookup\n")
+
+
+def test_srl_cross_segment_remap_pipeline():
+    """E2b: in a mixed-language document, the 2nd modern segment's SRL frames
+    carry segment-local token indices; the analyzer must remap them to global
+    indices (like it does for deps). Without the remap, a phantom duplicate
+    event is created in the wrong sentence.
+
+    Invariants (model-robust):
+    - every event's trigger_span lies inside its sentence_index's span
+    - no two events share (trigger_span, Agent text)
+    """
+    from core.analyzer import analyze
+
+    mixed = "张三在北京购买了股票。子曰学而时习之。李四在上海引发了争议。"
+    doc = analyze(mixed)
+    sents = doc.content.sentences
+
+    for e in doc.content.events:
+        if e.sentence_index < 0 or e.sentence_index >= len(sents):
+            continue
+        ss, se = sents[e.sentence_index].span
+        assert ss <= e.trigger_span[0] and e.trigger_span[1] <= se, (
+            f"{e.id} trigger={e.trigger!r} trigger_span {e.trigger_span} "
+            f"outside sentence {e.sentence_index} ({ss},{se}) — "
+            f"SRL frame likely not remapped across segments"
+        )
+
+    keys = [
+        (e.trigger_span, next((a.text for a in e.arguments if a.role == "Agent"), ""))
+        for e in doc.content.events
+    ]
+    assert len(keys) == len(set(keys)), (
+        f"duplicate (trigger_span, agent) events — phantom SRL-only event: {keys}"
+    )
+    print("  PASS: cross-segment SRL remapping keeps events sentence-consistent\n")
+
+
+def test_find_entity_id_no_reverse_substring():
+    """E3: argument text contained in a LONGER entity must not link to it
+    (北京 ⊄ 北京立方庭 — the old 80% threshold was dead code and allowed
+    this). Entity contained in argument still links (碳纤维 ⊂ 碳纤维生产)."""
+    extractor = EventExtractor()
+    ents = {
+        "北京立方庭": Entity(id="ent_001", text="北京立方庭", category="FACILITY", span=(0, 5)),
+        "碳纤维": Entity(id="ent_002", text="碳纤维", category="MATERIAL", span=(0, 3)),
+    }
+    # Reverse direction (arg ⊂ longer entity) must NOT link
+    assert extractor._find_entity_id("北京", ents) is None, (
+        "argument '北京' must not link to longer entity '北京立方庭'"
+    )
+    # Forward direction (entity ⊂ arg) links
+    assert extractor._find_entity_id("碳纤维生产", ents) == "ent_002"
+    # Exact match still wins
+    assert extractor._find_entity_id("北京立方庭", ents) == "ent_001"
+    print("  PASS: _find_entity_id rejects reverse-direction substring links\n")
+
+
+def test_extract_with_empty_relations_srl_only():
+    """E4: extract() must not bail out when relations is empty but SRL frames
+    exist — the SRL-only path is designed for exactly this case."""
+    from core.schema import Token
+
+    text = "他引发了争议"
+    tokens = [
+        Token(id=0, text="他", pos="PN", span=(0, 1)),
+        Token(id=1, text="引发", pos="VV", span=(1, 3)),
+        Token(id=2, text="了", pos="UL", span=(3, 4)),
+        Token(id=3, text="争议", pos="NN", span=(4, 6)),
+    ]
+    sentences = [SentenceLanguage(text=text, span=(0, 6), label="modern", confidence=1.0)]
+    patterns = [SentencePattern(sentence_type="declarative")]
+    srl_frames = [[
+        ("引发", "PRED", 1, 2),
+        ("他", "ARG0", 0, 1),
+        ("争议", "ARG1", 3, 4),
+    ]]
+
+    extractor = EventExtractor()
+    events = extractor.extract(
+        text, [], [], sentences, patterns,
+        srl_frames=srl_frames, deps=[], tokens=tokens,
+    )
+    assert len(events) == 1, f"expected 1 SRL-only event, got {len(events)}"
+    assert events[0].trigger == "引发"
+    assert events[0].source == "srl_only"
+    roles = {a.role: a.text for a in events[0].arguments}
+    assert roles.get("Agent") == "他"
+    assert roles.get("Patient") == "争议"
+    print("  PASS: SRL-only extraction works with empty relations\n")
+
+
+def test_duplicate_relation_argument_dedup():
+    """E5: duplicate relations in the same cluster group must not produce
+    duplicate Agent/role arguments."""
+    text = "张三购买了股票"
+    rel1 = Relation(
+        id="rel_001", subject="张三", predicate="RELATES_TO", predicate_verb="购买",
+        object="股票", evidence=text, evidence_span=(0, 7),
+    )
+    rel2 = Relation(
+        id="rel_002", subject="张三", predicate="RELATES_TO", predicate_verb="购买",
+        object="股票", evidence=text, evidence_span=(0, 7),
+    )
+    sentences = [SentenceLanguage(text=text, span=(0, 7), label="modern", confidence=1.0)]
+    patterns = [SentencePattern(sentence_type="declarative")]
+
+    extractor = EventExtractor()
+    events = extractor.extract(text, [rel1, rel2], [], sentences, patterns)
+    assert len(events) == 1
+    agents = [a for a in events[0].arguments if a.role == "Agent"]
+    assert len(agents) == 1, f"expected 1 Agent, got {[a.text for a in agents]}"
+    print("  PASS: duplicate relations do not duplicate arguments\n")
+
+
+def test_argm_location_containment_dedup():
+    """E5: SRL ARGM-LOC '在北京' must not duplicate the relation object
+    '北京' (same role, overlapping text)."""
+    from core.schema import Token
+
+    text = "张三在北京购买了股票"
+    tokens = [
+        Token(id=0, text="张三", pos="NR", span=(0, 2)),
+        Token(id=1, text="在", pos="P", span=(2, 3)),
+        Token(id=2, text="北京", pos="NS", span=(3, 5)),
+        Token(id=3, text="购买", pos="VV", span=(5, 7)),
+        Token(id=4, text="了", pos="UL", span=(7, 8)),
+        Token(id=5, text="股票", pos="NN", span=(8, 10)),
+    ]
+    rel1 = Relation(
+        id="rel_001", subject="张三", predicate="RELATES_TO", predicate_verb="购买",
+        object="股票", evidence=text, evidence_span=(0, 10),
+    )
+    rel2 = Relation(
+        id="rel_002", subject="张三", predicate="LOCATED_AT", predicate_verb="购买",
+        object="北京", evidence=text, evidence_span=(0, 10),
+    )
+    sentences = [SentenceLanguage(text=text, span=(0, 10), label="modern", confidence=1.0)]
+    patterns = [SentencePattern(sentence_type="declarative")]
+    srl_frames = [[
+        ("购买", "PRED", 3, 4),
+        ("张三", "ARG0", 0, 1),
+        ("股票", "ARG1", 5, 6),
+        ("在北京", "ARGM-LOC", 1, 3),
+    ]]
+
+    extractor = EventExtractor()
+    events = extractor.extract(
+        text, [rel1, rel2], [], sentences, patterns,
+        srl_frames=srl_frames, deps=[], tokens=tokens,
+    )
+    assert len(events) == 1
+    locations = [a for a in events[0].arguments if a.role == "Location"]
+    assert len(locations) == 1, (
+        f"expected 1 Location (containment dedup), got {[a.text for a in locations]}"
+    )
+    assert locations[0].text == "北京"
+    print("  PASS: ARGM-LOC '在北京' deduped against relation object '北京'\n")
+
+
+def test_find_char_span_prefers_hint_containment():
+    """E6: when the target occurs inside the hint span, that occurrence must
+    be returned (spec: 'first try exact match within hint range')."""
+    extractor = EventExtractor()
+    text = "去上海。他又去北京了。"
+    # 去 at 0 (outside hint) and 6 (inside hint (4,11))
+    span = extractor._find_char_span(text, "去", hint_span=(4, 11))
+    assert span == (6, 7), f"expected (6,7), got {span}"
+    # No hint → first occurrence
+    span = extractor._find_char_span(text, "去")
+    assert span == (0, 1)
+    print("  PASS: _find_char_span prefers occurrence inside hint span\n")
+
+
 if __name__ == '__main__':
     print("=== EventExtractor V4 Tests ===\n")
 
@@ -1093,5 +1342,14 @@ if __name__ == '__main__':
     test_spatial_dobj_no_governing_verb()
     test_verb_spatial_class_sampling()
     test_preposition_sets()
+
+    print("--- Regression: SRL token-index & argument hygiene ---")
+    test_srl_token_index_sentence_lookup()
+    test_srl_cross_segment_remap_pipeline()
+    test_find_entity_id_no_reverse_substring()
+    test_extract_with_empty_relations_srl_only()
+    test_duplicate_relation_argument_dedup()
+    test_argm_location_containment_dedup()
+    test_find_char_span_prefers_hint_containment()
 
     print("=== All tests passed! ===")

@@ -811,6 +811,14 @@ def analyze(
                 dep.head += token_offset
         all_deps.extend(deps)
 
+        # Remap SRL frame token indices from segment-local to global
+        # (same as dep remapping; without this, frames from the 2nd+ segment
+        # point into earlier segments' tokens, mis-assigning events to the
+        # wrong sentence in mixed-language documents).
+        seg_srl = [
+            [(t, r, ts + token_offset, te + token_offset) for (t, r, ts, te) in frame]
+            for frame in seg_srl
+        ]
         all_tokens.extend(tokens)
         all_entities.extend(entities)
         all_relations.extend(relations)

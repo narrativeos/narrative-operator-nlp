@@ -222,7 +222,7 @@ class EventExtractor:
         Returns:
             A list of Event instances.
         """
-        if not relations:
+        if not relations and not srl_frames and not deps:
             return []
 
         self.reset()
@@ -272,10 +272,14 @@ class EventExtractor:
                 continue
 
             # Determine sentence index: use SRL token positions as hint for precise matching.
+            # Convert token indices to a character span first — token indices are
+            # NOT character offsets (multi-character tokens make them diverge).
             srl_hint_span: Optional[tuple[int, int]] = None
             if len(frame) >= 1 and len(frame[0]) >= 4:
                 try:
-                    srl_hint_span = (int(frame[0][2]), int(frame[0][3]))
+                    srl_hint_span = self._srl_tok_span_to_char(
+                        tokens_list, int(frame[0][2]), int(frame[0][3]),
+                    )
                 except (ValueError, TypeError):
                     pass
             sent_idx = self._find_sentence_by_text(
@@ -347,33 +351,37 @@ class EventExtractor:
             for rel in rels:
                 source_rel_ids.append(rel.id)
 
-                # Subject → Agent
+                # Subject → Agent (skip if an identical Agent already added —
+                # duplicate relations in the same group would otherwise repeat it)
                 if rel.subject:
-                    agent_entity_id: Optional[str] = rel.subject_ent_id
-                    if not agent_entity_id:
-                        agent_entity_id = self._find_entity_id(rel.subject, entity_by_text)
+                    if not any(a.role == "Agent" and a.text == rel.subject
+                               for a in arguments):
+                        agent_entity_id: Optional[str] = rel.subject_ent_id
+                        if not agent_entity_id:
+                            agent_entity_id = self._find_entity_id(rel.subject, entity_by_text)
 
-                    arguments.append(EventArgument(
-                        role="Agent",
-                        text=rel.subject,
-                        entity_id=agent_entity_id,
-                        span=self._find_char_span(text, rel.subject, rel.evidence_span),
-                    ))
+                        arguments.append(EventArgument(
+                            role="Agent",
+                            text=rel.subject,
+                            entity_id=agent_entity_id,
+                            span=self._find_char_span(text, rel.subject, rel.evidence_span),
+                        ))
 
                 # Object → role based on predicate
                 if rel.object:
                     role = _PREDICATE_TO_ROLE.get(rel.predicate, "Patient")
+                    if not any(a.role == role and a.text == rel.object
+                               for a in arguments):
+                        obj_entity_id: Optional[str] = rel.object_ent_id
+                        if not obj_entity_id:
+                            obj_entity_id = self._find_entity_id(rel.object, entity_by_text)
 
-                    obj_entity_id: Optional[str] = rel.object_ent_id
-                    if not obj_entity_id:
-                        obj_entity_id = self._find_entity_id(rel.object, entity_by_text)
-
-                    arguments.append(EventArgument(
-                        role=role,
-                        text=rel.object,
-                        entity_id=obj_entity_id,
-                        span=self._find_char_span(text, rel.object, rel.evidence_span),
-                    ))
+                        arguments.append(EventArgument(
+                            role=role,
+                            text=rel.object,
+                            entity_id=obj_entity_id,
+                            span=self._find_char_span(text, rel.object, rel.evidence_span),
+                        ))
 
             # ── SRL enrichment: add ARGM-* arguments and validate confidence ──
             srl_entries = srl_by_key.get((sent_idx, trigger_verb), [])
@@ -389,19 +397,25 @@ class EventExtractor:
                     if role in _ARGM_ROLE_MAP:
                         mapped_role = _ARGM_ROLE_MAP[role]
                         # Use SRL token positions as hint for accurate span resolution
+                        # (converted to character span — token indices are not char offsets)
                         srl_hint: Optional[tuple[int, int]] = None
                         if len(item) >= 4:
                             try:
-                                tok_start = int(item[2])
-                                tok_end = int(item[3])
-                                srl_hint = (tok_start, tok_end)
+                                srl_hint = self._srl_tok_span_to_char(
+                                    tokens_list, int(item[2]), int(item[3]),
+                                )
                             except (ValueError, TypeError):
                                 pass
                         arg_span = self._find_char_span(text, arg_text, hint_span=srl_hint)
                         if arg_span is None or arg_span == (0, 0):
                             continue
-                        # Avoid duplicate arguments (same role + same text)
-                        if any(a.role == mapped_role and a.text == arg_text for a in arguments):
+                        # Avoid duplicate arguments (same role + same/overlapping text,
+                        # e.g. relation object "北京" vs SRL ARGM-LOC "在北京")
+                        if any(
+                            a.role == mapped_role
+                            and (a.text == arg_text or a.text in arg_text or arg_text in a.text)
+                            for a in arguments
+                        ):
                             continue
                         arguments.append(EventArgument(
                             role=mapped_role,
@@ -764,7 +778,9 @@ class EventExtractor:
                         # ARG0 → Agent
                         srl_hint: Optional[tuple[int, int]] = None
                         try:
-                            srl_hint = (int(item[2]), int(item[3]))
+                            srl_hint = self._srl_tok_span_to_char(
+                                tokens_list, int(item[2]), int(item[3]),
+                            )
                         except (ValueError, TypeError):
                             pass
                         arg_span = self._find_char_span(text, arg_text, hint_span=srl_hint)
@@ -780,7 +796,9 @@ class EventExtractor:
                         # ARG1 → Patient/Result
                         srl_hint = None
                         try:
-                            srl_hint = (int(item[2]), int(item[3]))
+                            srl_hint = self._srl_tok_span_to_char(
+                                tokens_list, int(item[2]), int(item[3]),
+                            )
                         except (ValueError, TypeError):
                             pass
                         arg_span = self._find_char_span(text, arg_text, hint_span=srl_hint)
@@ -796,13 +814,19 @@ class EventExtractor:
                         mapped_role = _ARGM_ROLE_MAP[role]
                         srl_hint = None
                         try:
-                            srl_hint = (int(item[2]), int(item[3]))
+                            srl_hint = self._srl_tok_span_to_char(
+                                tokens_list, int(item[2]), int(item[3]),
+                            )
                         except (ValueError, TypeError):
                             pass
                         arg_span = self._find_char_span(text, arg_text, hint_span=srl_hint)
                         if arg_span is None or arg_span == (0, 0):
                             continue
-                        if any(a.role == mapped_role and a.text == arg_text for a in arguments):
+                        if any(
+                            a.role == mapped_role
+                            and (a.text == arg_text or a.text in arg_text or arg_text in a.text)
+                            for a in arguments
+                        ):
                             continue
                         arguments.append(EventArgument(
                             role=mapped_role,
@@ -1382,6 +1406,29 @@ class EventExtractor:
 
     # ── Helper methods ──
 
+    @staticmethod
+    def _srl_tok_span_to_char(
+        tokens_list: list, tok_start: int, tok_end: int,
+    ) -> Optional[tuple[int, int]]:
+        """Convert SRL token indices to a character span.
+
+        HanLP SRL frames carry 0-based token indices (tok_start inclusive,
+        tok_end exclusive). These are NOT character offsets — using them
+        directly as character hints mis-assigns sentences and spans whenever
+        tokens are multi-character (the common case in Chinese).
+
+        Returns (char_start, char_end) or None if indices are out of range
+        or no token list is available.
+        """
+        if not tokens_list:
+            return None
+        if not (0 <= tok_start < tok_end <= len(tokens_list)):
+            return None
+        try:
+            return (tokens_list[tok_start].span[0], tokens_list[tok_end - 1].span[1])
+        except (AttributeError, IndexError):
+            return None
+
     def _resolve_srl_arg_span(
         self, text: str, arg_text: str, srl_tok_start: int, srl_tok_end: int,
         tokens: list, hint_span: Optional[tuple[int, int]] = None,
@@ -1455,7 +1502,11 @@ class EventExtractor:
             return fallback or (0, 0)
 
         if hint_span is not None:
-            # Prefer an occurrence whose center is closest to the hint center
+            # 1. Prefer an occurrence fully inside the hint span (exact match)
+            for idx in occurrences:
+                if hint_span[0] <= idx and idx + len(target) <= hint_span[1]:
+                    return (idx, idx + len(target))
+            # 2. Otherwise nearest occurrence to hint center (text-mismatch fallback)
             hint_center = (hint_span[0] + hint_span[1]) / 2
             best_idx = min(
                 occurrences,
@@ -1498,37 +1549,23 @@ class EventExtractor:
 
         Strategy:
         1. Exact match (highest priority)
-        2. Substring match with 80% length threshold to avoid spurious associations
-           (e.g., "创作者" should not match "创作者联盟" - the entity must be
-           at least 80% of the argument text length, or vice versa)
+        2. Entity text contained in argument text (e.g. argument "碳纤维生产"
+           contains entity "碳纤维") — the longest such entity wins.
+
+        The reverse direction (argument contained in a LONGER entity, e.g.
+        argument "北京" ⊂ entity "北京立方庭") is deliberately NOT allowed:
+        it produces false links. A missed link (entity_id=None) is safer
+        than a wrong one (same class of bug as the coref evidence guard).
         """
         if text in entity_by_text:
             return entity_by_text[text].id
 
-        # Try substring match with length threshold
-        text_len = len(text)
+        # Entity text contained in argument text — longest entity wins
         best: Optional[Entity] = None
-        best_overlap = 0
-
+        best_len = 0
         for ent in entity_by_text.values():
-            ent_len = len(ent.text)
-            if text == ent.text:
-                return ent.id
-
-            # Check containment in either direction
-            if text in ent.text:
-                # text is a substring of entity text
-                overlap = text_len
-            elif ent.text in text:
-                # entity text is a substring of argument text
-                overlap = ent_len
-            else:
-                continue
-
-            # Require at least 80% overlap to avoid spurious matches
-            min_len = min(text_len, ent_len)
-            if overlap >= min_len * 0.8 and overlap > best_overlap:
+            if ent.text and ent.text in text and len(ent.text) > best_len:
                 best = ent
-                best_overlap = overlap
+                best_len = len(ent.text)
 
         return best.id if best else None
