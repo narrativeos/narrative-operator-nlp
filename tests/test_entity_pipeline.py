@@ -355,6 +355,77 @@ class TestClassicalFunctionWords:
         assert any(e.text == "陽城" for e in res)
 
 
+class TestSingleCharEntityGuard:
+    """Single-character entities are only plausible in a few categories.
+
+    A 1-char INSTITUTION/ORGANIZATION/... is a mis-tokenized fragment
+    (位于 → 位 tagged 典章制度), while 1-char PERSON/LOCATION/ERA/...
+    are real (张/燕/秦/日/相).
+    """
+
+    def _fake_rules(self):
+        class _FakeRules:
+            _merger = EntityMerger()
+            _id_gen = EntityIdGenerator()
+            _parse_xpos_category = staticmethod(
+                EntityMappingRules._parse_xpos_category
+            )
+
+        return _FakeRules()
+
+    def _classical(self, text, pos, xpos):
+        toks = [Token(id=0, text=text, pos=pos, span=(0, len(text)), confidence=1.0)]
+        return EntityMappingRules._map_classical_entities(
+            self._fake_rules(), toks, text, {"pos/xpos": [xpos]}
+        )
+
+    def test_single_char_institution_dropped(self):
+        # 位 (mis-tokenized from 位于) tagged 典章制度 → no INSTITUTION
+        res = self._classical("位", "NOUN", "名詞,典章制度")
+        assert res == []
+
+    def test_single_char_organization_dropped(self):
+        res = self._classical("社", "NOUN", "名詞,組織")
+        assert res == []
+
+    def test_single_char_unknown_dropped(self):
+        res = self._classical("区", "NOUN", "名詞,一般名詞")
+        assert res == []
+
+    def test_single_char_person_kept(self):
+        res = self._classical("张", "PROPN", "名詞,人名")
+        assert len(res) == 1 and res[0].category == "PERSON"
+
+    def test_single_char_location_kept(self):
+        res = self._classical("燕", "PROPN", "名詞,地名")
+        assert len(res) == 1 and res[0].category == "LOCATION"
+
+    def test_single_char_era_kept(self):
+        res = self._classical("秦", "PROPN", "名詞,朝代名")
+        assert len(res) == 1 and res[0].category == "ERA"
+
+    def test_single_char_astronomy_kept(self):
+        res = self._classical("日", "NOUN", "名詞,天文历法")
+        assert len(res) == 1 and res[0].category == "ASTRONOMY"
+
+    def test_single_char_title_kept(self):
+        res = self._classical("相", "NOUN", "名詞,官職名")
+        assert len(res) == 1 and res[0].category == "TITLE"
+
+    def test_multi_char_institution_still_kept(self):
+        res = self._classical("科举", "NOUN", "名詞,典章制度")
+        assert len(res) == 1 and res[0].category == "INSTITUTION"
+
+    def test_modern_ner_single_char_org_dropped(self):
+        rules = EntityMappingRules()
+        assert rules.map(("社", "nt", 0, 1), "ner/pku", [], "社") is None
+
+    def test_modern_ner_single_char_person_kept(self):
+        rules = EntityMappingRules()
+        e = rules.map(("张", "nr", 0, 1), "ner/pku", [], "张")
+        assert e is not None and e.category == "PERSON"
+
+
 class TestPosSuffixCategory:
     """Single-char suffixes must not over-trigger on common words."""
 

@@ -82,6 +82,33 @@ _CLASSICAL_FUNCTION_WORDS = frozenset({
 })
 
 
+# Categories where a single-character entity is plausible.
+# - PERSON: single-character surnames (张/李/王)
+# - LOCATION: single-character place names (燕/齐/楚, common in classical)
+# - ERA: single-character dynasty names (秦/汉/唐)
+# - MATERIAL: single-character element names (碳/硅/钢, domain keywords)
+# - NUMBER: single-character numerals (三/五)
+# - TITLE: single-character classical office titles (相/卿/侯)
+# - ASTRONOMY: single-character celestial terms (日/月/星)
+# A single character in any other category (INSTITUTION/ORGANIZATION/
+# PRODUCT/FACILITY/STANDARD/PARAMETER/UNKNOWN/...) is a mis-tokenized
+# fragment, not a real entity (位于 → 位 tagged 典章制度 → INSTITUTION).
+_SINGLE_CHAR_ALLOWED_CATEGORIES = frozenset({
+    "PERSON", "LOCATION", "ERA", "MATERIAL", "NUMBER", "TITLE", "ASTRONOMY",
+})
+
+
+def _single_char_allowed(text: str, category: str) -> bool:
+    """True when a single-character entity in ``category`` is plausible.
+
+    Multi-character text always passes; a single character passes only for
+    categories in ``_SINGLE_CHAR_ALLOWED_CATEGORIES``.
+    """
+    if len(text) > 1:
+        return True
+    return category in _SINGLE_CHAR_ALLOWED_CATEGORIES
+
+
 def _spans_overlap(
     span: tuple[int, int],
     existing: set[tuple[int, int]],
@@ -266,6 +293,12 @@ class EntityMappingRules:
         if category is None:
             category = self._keyword_extractor._keyword_category(ent_text)
         if category is None:
+            return None
+
+        # Single-character guard: no 1-char institution/organization/product
+        # names exist — a 1-char NER mention in those categories is a
+        # mis-tokenized fragment (位于 → 位).
+        if not _single_char_allowed(ent_text, category):
             return None
 
         resolved = self._resolve_span(ent_text, tok_s, tok_e, tokens, text)
@@ -639,7 +672,7 @@ class EntityMappingRules:
                 # is overwhelmingly a person name, and guessing LOCATION
                 # misclassifies names like 李白.
                 cat = xcat or ("UNKNOWN" if len(t.text) >= 2 else None)
-                if cat is None:
+                if cat is None or not _single_char_allowed(t.text, cat):
                     continue
                 ent_id = self._id_gen.generate(t.text, t.span, cat)
                 if ent_id:
@@ -672,7 +705,7 @@ class EntityMappingRules:
                 continue
             if xcat is None and t.pos == "NOUN":
                 xcat = "UNKNOWN"
-            if xcat is None:
+            if xcat is None or not _single_char_allowed(t.text, xcat):
                 continue
             ent_id = self._id_gen.generate(t.text, t.span, xcat)
             if ent_id:
