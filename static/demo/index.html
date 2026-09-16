@@ -7,66 +7,93 @@
 <link rel="stylesheet" href="/demo/style.css">
 </head>
 <body>
+<!-- Boot overlay: model warm-up progress (managed by app.js) -->
+<div class="boot-overlay" id="bootOverlay">
+<div class="boot-box">
+<div class="boot-title">🧠 模型预热中</div>
+<div class="boot-sub">首次请求将触发模型加载，三个模型并行预热，请稍候…</div>
+<div class="boot-models">
+<div class="boot-model"><span class="boot-icon">🌐</span><span class="boot-name">现代汉语</span><span class="boot-state loading" id="bootStateModern">加载中…</span></div>
+<div class="boot-model"><span class="boot-icon">🏯</span><span class="boot-name">古汉语</span><span class="boot-state loading" id="bootStateClassical">加载中…</span></div>
+<div class="boot-model"><span class="boot-icon">🇬🇧</span><span class="boot-name">English</span><span class="boot-state loading" id="bootStateEnglish">加载中…</span></div>
+</div>
+</div>
+</div>
+
 <header>
 <h1>🧠 Narrative Operator NLP</h1>
 <span>Protocol-First NLP · MCP / gRPC / FastAPI</span>
 </header>
-<main>
-<!-- Model loading status (populated by app.js) -->
+
+<div class="layout">
+<!-- ── Left sidebar: ① 模型 ② 用例 ③ 参数 ─────────────────── -->
+<aside class="sidebar">
+<section class="side-section">
+<h2 class="side-title">① 模型状态</h2>
 <div class="model-status" id="modelStatus">
-<div class="stat-item" id="statusModern"><span class="dot idle" id="dotModern"></span><span class="title">🌐 现代</span><span class="label" id="labelModern">等待中</span></div>
-<div class="stat-item" id="statusClassical"><span class="dot idle" id="dotClassical"></span><span class="title">🏯 古汉语</span><span class="label" id="labelClassical">等待中</span></div>
-<div class="stat-item" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="title">🇬🇧 英文</span><span class="label" id="labelEnglish">等待中</span></div>
+<div class="model-row" id="statusModern"><span class="dot idle" id="dotModern"></span><span class="model-name">🌐 现代汉语</span><span class="model-label" id="labelModern">等待中</span><span class="model-time" id="timeModern"></span></div>
+<div class="model-row" id="statusClassical"><span class="dot idle" id="dotClassical"></span><span class="model-name">🏯 古汉语</span><span class="model-label" id="labelClassical">等待中</span><span class="model-time" id="timeClassical"></span></div>
+<div class="model-row" id="statusEnglish"><span class="dot idle" id="dotEnglish"></span><span class="model-name">🇬🇧 English</span><span class="model-label" id="labelEnglish">等待中</span><span class="model-time" id="timeEnglish"></span></div>
 </div>
+</section>
 
+<section class="side-section">
+<h2 class="side-title">② 演示用例</h2>
 <!-- Sample cards — rendered from SAMPLES in app.js -->
-<div class="sample-cards" id="sampleCards"></div>
+<div class="sample-list" id="sampleCards"></div>
+</section>
 
-<!-- Main input -->
-<div class="input-area">
-<textarea id="input" placeholder="输入中文文本进行分析..."></textarea>
-<div class="input-actions">
-<button id="analyzeBtn">🔍 分析</button>
+<section class="side-section">
+<h2 class="side-title">③ 分析参数</h2>
+<div class="param-group">
+<label class="param-label">📖 语言模式</label>
+<div class="lang-options">
+<label class="lang-option active" id="langAuto">🔄 自动识别</label>
+<label class="lang-option" id="langModern">📄 现代汉语</label>
+<label class="lang-option" id="langClassical">🏯 古汉语</label>
+<label class="lang-option" id="langEnglish">🇬🇧 English</label>
+</div>
+</div>
+<div class="param-group">
+<label class="param-label">📚 自定义词典</label>
+<input id="dictInput" value="立方庭" placeholder="空格/逗号/换行分隔，如：碳钢 高强度 立方庭" class="dict-input">
+</div>
+<div class="param-group">
+<label class="param-label">🔍 新词发现</label>
 <select id="discoverMode" class="mode-select">
-<option value="">🔍 新词发现：关闭</option>
-<option value="discover">🔍 新词发现：仅发现</option>
-<option value="enhance">⚡ 新词发现：强化模式</option>
+<option value="">关闭</option>
+<option value="discover">仅发现</option>
+<option value="enhance">⚡ 强化模式（自动应用）</option>
 </select>
 </div>
+<div class="param-group">
+<label class="param-label">📝 摘要</label>
+<div class="lang-options">
+<label class="lang-option active" id="sumChars">按字数 <input id="sumCharsVal" type="number" value="30" min="5" max="500" class="num-input"> 字</label>
+<label class="lang-option" id="sumRatio">按比例 <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" class="num-input"></label>
 </div>
-
-<!-- Custom dictionary -->
-<div class="input-area dict-area">
-<input id="dictInput" value="立方庭" placeholder="自定义词典（用空格/逗号/换行分隔，如：碳钢 高强度 立方庭）" class="dict-input">
 </div>
-
-<!-- Language mode selector -->
-<div class="lang-selector">
-<label>📖 语言模式:</label>
-<label class="lang-option active" id="langAuto"><input type="radio" name="lang" value="auto" checked>🔄 自动识别</label>
-<label class="lang-option" id="langModern"><input type="radio" name="lang" value="modern">📄 现代汉语</label>
-<label class="lang-option" id="langClassical"><input type="radio" name="lang" value="classical">🏯 古汉语</label>
-<label class="lang-option" id="langEnglish"><input type="radio" name="lang" value="english">🇬🇧 English</label>
+<div class="param-group">
+<label class="param-label">🏷️ 标题</label>
+<div class="lang-options">
+<label class="lang-option active" id="ttlChars">按字数 <input id="ttlCharsVal" type="number" value="14" min="5" max="100" class="num-input"> 字</label>
+<label class="lang-option" id="ttlRatio">按比例 <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" class="num-input"></label>
 </div>
-
-<!-- Summary mode selector -->
-<div class="lang-selector">
-<label>📝 摘要:</label>
-<label class="lang-option active" id="sumChars"><input type="radio" name="summode" value="chars" checked>按字数: <input id="sumCharsVal" type="number" value="30" min="5" max="500" class="num-input"> 字</label>
-<label class="lang-option" id="sumRatio"><input type="radio" name="summode" value="ratio">按比例: <input id="sumRatioVal" type="number" value="0.2" min="0.05" max="0.9" step="0.05" class="num-input"> (20%)</label>
 </div>
+</section>
+</aside>
 
-<!-- Title mode selector -->
-<div class="lang-selector">
-<label>🏷️ 标题:</label>
-<label class="lang-option active" id="ttlChars"><input type="radio" name="ttlmode" value="chars" checked>按字数: <input id="ttlCharsVal" type="number" value="14" min="5" max="100" class="num-input"> 字</label>
-<label class="lang-option" id="ttlRatio"><input type="radio" name="ttlmode" value="ratio">按比例: <input id="ttlRatioVal" type="number" value="0.05" min="0.01" max="0.5" step="0.01" class="num-input"> (5%)</label>
-</div>
+<!-- ── Right main: ④ 输入 + 结果 ──────────────────────────── -->
+<main class="main-area">
+<section class="input-area">
+<textarea id="input" placeholder="输入中文文本进行分析..."></textarea>
+<button id="analyzeBtn" disabled>🔍 分析</button>
+</section>
 
-<!-- Tabs & panels — rendered from TABS in app.js -->
 <nav class="tabs" id="tabs" role="tablist"></nav>
 <div id="panels"></div>
 </main>
+</div>
 <footer>
 <p>Narrative Operator NLP · © 2025 北京九录科技有限公司 · Apache 2.0</p>
 <p>

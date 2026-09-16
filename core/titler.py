@@ -297,7 +297,7 @@ def _compose_title_from_entities(
     _looks_person = any(kw in _name for kw in ("先生", "女士", "博士", "教授"))
     # Also check if entity is connected to orgs via relations (strong signal of misclassification)
     _connected_to_org = any(
-        (entity_map.get(eid) or {}).category == "ORGANIZATION"
+        (entity_map.get(eid) is not None and entity_map[eid].category == "ORGANIZATION")
         for eid in (r.object_ent_id if r.subject_ent_id == main_eid else r.subject_ent_id
                     for r in rels_for_entity)
     )

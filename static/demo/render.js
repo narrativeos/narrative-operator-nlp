@@ -4,214 +4,187 @@ export const esc=escapeHtml;
 // Escape a value for use inside a double-quoted HTML attribute.
 export function escAttr(s){return esc(String(s)).replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 
-export function renderNSP(data){
-    if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
+// ── Overview dashboard (default tab) ───────────────────────────────────────
+export function renderOverview(data){
+    const el=document.getElementById('overview');
+    if(!data||!data.content){ el.innerHTML='<div class="card"><span class="ov-empty">暂无数据 — 输入文本并点击「分析」</span></div>'; return; }
     const c=data.content;
     const meta=data.meta||{};
-    const trueNew=data.true_new_words||[];
-
-    // Language mode badge
     const langMode=meta.language_mode||'auto';
     const langBadge=langMode==='classical'?'<span class="lang-badge classical">🏯 古汉语</span>'
         :langMode==='modern'?'<span class="lang-badge modern">📄 现代汉语</span>'
         :langMode==='english'?'<span class="lang-badge english">🇬🇧 English</span>'
         :'<span class="lang-badge" style="background:#1a1a3a;color:#79c0ff">🔄 自动识别</span>';
 
-    // Language stats
-    const langSents=c.sentences||[];
-    const classicalCount=langSents.filter(s=>s.label==='classical').length;
-    const modernCount=langSents.filter(s=>s.label==='modern').length;
-    const englishCount=langSents.filter(s=>s.label==='english').length;
+    const stats=`<div class="ov-stats">
+        <div class="ov-stat"><span class="ov-num">${c.tokens.length}</span><span class="ov-cap">Tokens</span></div>
+        <div class="ov-stat"><span class="ov-num">${c.entities.length}</span><span class="ov-cap">实体</span></div>
+        <div class="ov-stat"><span class="ov-num">${c.relations.length}</span><span class="ov-cap">关系</span></div>
+        <div class="ov-stat"><span class="ov-num">${(c.events||[]).length}</span><span class="ov-cap">事件</span></div>
+        <div class="ov-stat"><span class="ov-num">${(c.sentences||[]).length}</span><span class="ov-cap">句子</span></div>
+        <div class="ov-stat"><span class="ov-num" style="font-size:12px;padding-top:6px">${langBadge}</span><span class="ov-cap">语言模式</span></div>
+    </div>`;
 
-    const tokens=c.tokens.map(t=>{
+    const ti=c.title;
+    const titleCard=ti&&ti.title_text?`
+        <div class="ov-card" data-goto-tab="title">
+            <h4>🏷️ 生成标题 <span class="ov-go">查看 →</span></h4>
+            <div class="ov-title-text">${esc(ti.title_text)}</div>
+        </div>`:`<div class="ov-card"><h4>🏷️ 生成标题</h4><div class="ov-empty">未生成</div></div>`;
+
+    const s=c.summary;
+    const summaryCard=s&&s.summary_text?`
+        <div class="ov-card" data-goto-tab="summary">
+            <h4>📝 摘要 <span class="ov-go">查看 →</span></h4>
+            <div class="ov-summary-text">${esc(s.summary_text)}</div>
+        </div>`:`<div class="ov-card"><h4>📝 摘要</h4><div class="ov-empty">未生成</div></div>`;
+
+    const entChips=c.entities.length?`
+        <div class="ov-card" data-goto-tab="nsp">
+            <h4>🏷️ 实体速览 <span class="ov-go">查看 →</span></h4>
+            <div class="ov-ent-chips">${c.entities.slice(0,12).map(e=>`<span class="entity-card ent-${e.category}"><b>${esc(e.text)}</b></span>`).join('')}${c.entities.length>12?`<span class="ov-empty">+${c.entities.length-12}</span>`:''}</div>
+        </div>`:`<div class="ov-card"><h4>🏷️ 实体速览</h4><div class="ov-empty">未识别到实体</div></div>`;
+
+    const evs=(c.events||[]).slice().sort((a,b)=>b.confidence-a.confidence).slice(0,3);
+    const eventCard=evs.length?`
+        <div class="ov-card" data-goto-tab="nsp">
+            <h4>⚡ 事件速览 <span class="ov-go">查看 →</span></h4>
+            ${evs.map(ev=>{
+                const agent=(ev.arguments||[]).find(a=>a.role==='Agent');
+                const patient=(ev.arguments||[]).find(a=>['Patient','Result','Product'].includes(a.role));
+                const args=[agent&&agent.text,patient&&patient.text].filter(Boolean).join(' → ');
+                return `<div class="ov-event-item"><span class="event-type">${esc(ev.event_type)}</span><span class="ov-trigger">${esc(ev.trigger)}</span><span class="ov-args">${esc(args)}</span></div>`;
+            }).join('')}
+        </div>`:`<div class="ov-card"><h4>⚡ 事件速览</h4><div class="ov-empty">未提取到事件</div></div>`;
+
+    el.innerHTML=`<div class="card">${stats}<div class="ov-grid">${titleCard}${summaryCard}${entChips}${eventCard}</div></div>`;
+}
+
+export function renderNSP(data){
+    if(!data||!data.content){ document.getElementById('nsp').innerHTML='<div class="error">分析失败：服务器未响应</div>'; return; }
+    const c=data.content;
+    const trueNew=data.true_new_words||[];
+
+    // Token stream: POS color + confidence bar + entity underline.
+    // Longest entity wins on overlapping token spans.
+    const entByToken={};
+    [...c.entities].sort((a,b)=>(b.span[1]-b.span[0])-(a.span[1]-a.span[0])).forEach(e=>{
+        for(let i=e.span[0];i<e.span[1];i++){ if(!entByToken[i]) entByToken[i]=e; }
+    });
+    const tokens=c.tokens.map((t,i)=>{
         const pct=Math.round((t.confidence||1)*100);
-        const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
+        const confCls=pct>=95?'conf-hi':pct>=80?'conf-mid':'conf-lo';
         const sourceDot=t.source==='hanlp_lzh'?'<span class="source-dot hanlp_lzh" title="古汉语模型"></span>'
             :t.source==='en_modernbert'?'<span class="source-dot en_modernbert" title="英文模型"></span>'
             :'<span class="source-dot hanlp_v2" title="现代汉语模型"></span>';
-        return `<span class="token ${t.pos}" title="POS:${t.pos} span:${t.span} conf:${pct}% source:${t.source}">${sourceDot}${t.text}<sub style="color:${color};font-size:0.65em">${pct}</sub></span>`;
+        const e=entByToken[i];
+        const entCls=e?` ent-${e.category}`:'';
+        const entTitle=e?` · 实体:${e.text} (${e.category})`:'';
+        return `<span class="token ${t.pos}${entCls}" title="POS:${t.pos} span:${t.span} conf:${pct}% source:${t.source}${entTitle}">${sourceDot}${t.text}<i class="conf ${confCls}"></i></span>`;
     }).join('');
 
-    // Build entity lookup for hierarchy display
+    // Entities grouped by category
     const entityMap={};
     c.entities.forEach(e=>entityMap[e.id]=e);
+    const byCat={};
+    c.entities.forEach(e=>{ (byCat[e.category]=byCat[e.category]||[]).push(e); });
 
-    // Build hierarchy tree for display
-    const rootEntities = c.entities.filter(e => !e.parent_entity_id);
-    const childEntities = c.entities.filter(e => e.parent_entity_id);
-    
-    // Group children by parent
-    const childrenByParent = {};
-    childEntities.forEach(e => {
-        if (!childrenByParent[e.parent_entity_id]) {
-            childrenByParent[e.parent_entity_id] = [];
-        }
-        childrenByParent[e.parent_entity_id].push(e);
-    });
-
-    function renderEntityCard(e) {
+    function entityChip(e){
         const pct=Math.round((e.confidence||1)*100);
-        const color=pct>=95?'#7ee787':pct>=80?'#e3b341':'#f85149';
-        const attrs=(e.attributes||[]).map(a=>{
-            const src=a.source_relation_id?`<small style="color:#484f58">←${a.source_relation_id}</small>`:'';
-            return `<small style="color:#e3b341;margin-left:2px">${a.key}=${a.value||'?'}</small>${src}`;
-        }).join('');
-        const parent=e.parent_entity_id?`<small style="color:#a5b4fc;margin-left:4px">⊂${esc((entityMap[e.parent_entity_id]||{}).text||e.parent_entity_id)}</small>`:'';
-        return `<span class="entity-card"><span class="cat">${e.category}</span>${e.text}${attrs}${parent} <small style="color:#484f58">[${e.span[0]}:${e.span[1]}]</small> <small style="color:${color}">${pct}%</small></span>`;
+        const confCls=pct>=95?'conf-hi':pct>=80?'conf-mid':'conf-lo';
+        const attrs=(e.attributes||[]).map(a=>`<span class="ent-attr">${a.key}=${a.value||'?'}</span>`).join(' ');
+        const parent=e.parent_entity_id?`<span class="ent-parent">⊂${esc((entityMap[e.parent_entity_id]||{}).text||e.parent_entity_id)}</span>`:'';
+        return `<span class="entity-card ent-${e.category}"><b>${esc(e.text)}</b>${attrs}${parent}<span class="ent-span">[${e.span[0]}:${e.span[1]}]</span><span class="ent-conf ${confCls}">${pct}%</span></span>`;
     }
 
-    function renderEntityHierarchy() {
-        let html = '';
-        // Show entities with hierarchy
-        const shown = new Set();
-        rootEntities.forEach(e => {
-            html += `<div style="margin:4px 0">${renderEntityCard(e)}</div>`;
-            shown.add(e.id);
-            const children = childrenByParent[e.id] || [];
-            if (children.length > 0) {
-                html += `<div style="margin-left:24px;border-left:2px solid #30363d;padding-left:12px">`;
-                children.forEach(child => {
-                    html += `<div style="margin:4px 0">${renderEntityCard(child)}</div>`;
-                    shown.add(child.id);
-                    // Recursively show grandchildren
-                    const grandchildren = childrenByParent[child.id] || [];
-                    if (grandchildren.length > 0) {
-                        html += `<div style="margin-left:24px;border-left:2px solid #484f58;padding-left:12px">`;
-                        grandchildren.forEach(gc => {
-                            html += `<div style="margin:4px 0">${renderEntityCard(gc)}</div>`;
-                            shown.add(gc.id);
-                        });
-                        html += `</div>`;
-                    }
-                });
-                html += `</div>`;
-            }
-        });
-        // Show any remaining entities not in hierarchy
-        c.entities.filter(e => !shown.has(e.id)).forEach(e => {
-            html += `<div style="margin:4px 0">${renderEntityCard(e)}</div>`;
-        });
-        return html;
-    }
+    const entGroups=Object.entries(byCat).map(([cat,list])=>{
+        list.sort((a,b)=>a.span[0]-b.span[0]);
+        return `<div class="ent-group"><span class="ent-cat">${cat}</span><span class="ent-count">×${list.length}</span><div class="ent-items">${list.map(entityChip).join('')}</div></div>`;
+    }).join('')||'<span class="empty">未识别到实体</span>';
 
-    const entities = renderEntityHierarchy();
+    const entities=entGroups;
 
-    // Events rendering — table with collapsible sub-events
-    const events = c.events && c.events.length
-        ? (() => {
-            // Separate main events and sub-events
-            const mainEvents = c.events.filter(ev => ev.is_main_event);
-            const subEventMap = {};
-            c.events.filter(ev => !ev.is_main_event).forEach(sub => {
-                for (const main of mainEvents) {
-                    if (main.sub_events && main.sub_events.includes(sub.id)) {
-                        if (!subEventMap[main.id]) subEventMap[main.id] = [];
-                        subEventMap[main.id].push(sub);
-                    }
+    // Events rendering — cards with collapsible sub-events
+    const events = c.events && c.events.length ? (()=>{
+        const mainEvents = c.events.filter(ev => ev.is_main_event);
+        const subEventMap = {};
+        c.events.filter(ev => !ev.is_main_event).forEach(sub => {
+            for (const main of mainEvents) {
+                if (main.sub_events && main.sub_events.includes(sub.id)) {
+                    if (!subEventMap[main.id]) subEventMap[main.id] = [];
+                    subEventMap[main.id].push(sub);
                 }
-            });
-
-            // Build args HTML for an event
-            const buildArgs = (ev) => {
-                const agent = (ev.arguments || []).find(a => a.role === 'Agent');
-                const patient = (ev.arguments || []).find(a => ['Patient','Result','Product'].includes(a.role));
-                const time = (ev.arguments || []).find(a => a.role === 'Time');
-                const location = (ev.arguments || []).find(a => a.role === 'Location');
-                const others = (ev.arguments || []).filter(a =>
-                    a.role !== 'Agent' && !['Patient','Result','Product'].includes(a.role)
-                    && a.role !== 'Time' && a.role !== 'Location'
-                );
-                const spatialBadge = (sr) => {
-                    if (!sr || sr === 'STATIC') return '';
-                    const colors = {CONTAINER:'#79c0ff',TARGET:'#7ee787',ORIGIN:'#f97583',PATH:'#d2a8ff',ACTOR:'#ffa657',MODIFIER:'#8b949e'};
-                    const c = colors[sr] || '#8b949e';
-                    return ` <small style="color:${c}">[${sr}]</small>`;
-                };
-                const argTag = (a) => a
-                    ? `<span class="tag" style="background:#e3b341;color:#0d1117">${esc(a.role)}: ${esc(a.text)}${spatialBadge(a.spatial_role)}</span>`
-                    : '<span style="color:#484f58">-</span>';
-                const othersHtml = others.map(a =>
-                    `<span class="tag" style="background:#30363d;color:#8b949e">${esc(a.role)}: ${esc(a.text)}${spatialBadge(a.spatial_role)}</span>`
-                ).join(' ') || '<span style="color:#484f58">-</span>';
-                // Verb spatial class: pick first non-NONE from any argument
-                const vsc = (ev.arguments || []).reduce((acc, a) => acc || (a.verb_spatial_class && a.verb_spatial_class !== 'NONE' ? a.verb_spatial_class : null), null);
-                const vscColors = {MOVE_TO:'#7ee787',MOVE_FROM:'#f97583',MOVE_ALONG:'#d2a8ff',STATIC_EXIST:'#79c0ff',STATIC_ACTION:'#ffa657',VIEW:'#e3b341'};
-                const verbClassHtml = vsc
-                    ? `<span class="tag" style="background:${vscColors[vsc]||'#30363d'};color:#0d1117;font-size:10px">${vsc}</span>`
-                    : '<span style="color:#484f58">-</span>';
-                // Spatial roles: collect unique non-STATIC roles
-                const spatialRoles = [...new Set((ev.arguments||[]).map(a=>a.spatial_role).filter(s=>s&&s!=='STATIC'))];
-                const spatialHtml = spatialRoles.length > 0
-                    ? spatialRoles.map(sr => `<span class="tag" style="background:#1a3a5c;color:#79c0ff;font-size:10px">${sr}</span>`).join(' ')
-                    : '<span style="color:#484f58">-</span>';
-                return { agent: argTag(agent), patient: argTag(patient), time: argTag(time), location: argTag(location), othersHtml, spatialHtml, verbClassHtml };
-            };
-
-            const rowHtml = (ev, isSub) => {
-                const rowStyle = isSub ? 'style="background:#161b22;display:none"' : '';
-                const firstCellStyle = isSub ? 'style="padding-left:24px"' : '';
-                const arrow = ev.sub_events && ev.sub_events.length > 0
-                    ? `<span class="event-toggle" data-event-id="${escAttr(ev.id)}">▶</span>`
-                    : (isSub ? '<span style="margin-right:14px;color:#484f58">└ </span>' : '<span style="margin-right:14px"></span>');
-                const mainBadge = ev.is_main_event && !isSub ? '<span class="tag" style="background:#1a3a5c;color:#58a6ff;margin-right:4px">主</span>' : '';
-                const subBadge = isSub ? '<span class="tag" style="background:#30363d;color:#8b949e;margin-right:4px">子</span>' : '';
-                const args = buildArgs(ev);
-
-                return `<tr ${rowStyle} class="event-row" data-event-id="${ev.id}" ${isSub ? '' : `data-main-event="${ev.id}"`}><td ${firstCellStyle}>${arrow}${mainBadge}${subBadge}<span class="cat" style="background:#58a6ff">${esc(ev.event_type)}</span></td>
-                    <td><span style="color:#7ee787;font-weight:600">${esc(ev.trigger)}</span></td>
-                    <td><small style="color:#484f58">[${ev.trigger_span[0]}:${ev.trigger_span[1]}]</small></td>
-                    <td>${args.agent}</td>
-                    <td>${args.patient}</td>
-                    <td>${args.time}</td>
-                    <td>${args.location}</td>
-                    <td style="font-size:11px">${args.othersHtml}</td>
-                    <td>${args.spatialHtml}</td>
-                    <td>${args.verbClassHtml}</td>
-                    <td><small style="color:#7ee787">${Math.round(ev.confidence*100)}%</small></td>
-                    <td><small style="color:#484f58">${esc(ev.source)}</small></td>
-                </tr>`;
-            };
-
-            let html = `<table class="event-table">
-                <thead><tr>
-                    <th>类型</th><th>触发词</th><th>位置</th>
-                    <th>Agent</th><th>Patient/Result</th><th>Time</th><th>Location</th>
-                    <th>其他参数</th><th>空间角色</th><th>动词语义类</th><th>置信度</th><th>来源</th>
-                </tr></thead><tbody>`;
-
-            // If all events are main events (no sub-events), just render them all
-            if (mainEvents.length === 0) {
-                c.events.forEach(ev => { html += rowHtml(ev, false); });
-            } else {
-                mainEvents.forEach(ev => {
-                    html += rowHtml(ev, false);
-                    const subs = subEventMap[ev.id] || [];
-                    subs.forEach(sub => {
-                        html += rowHtml(sub, true);
-                    });
-                });
-                // Orphan sub-events (not linked to any main event)
-                c.events.filter(ev =>
-                    !ev.is_main_event && !mainEvents.some(m => m.sub_events && m.sub_events.includes(ev.id))
-                ).forEach(ev => { html += rowHtml(ev, false); });
             }
+        });
+        const buildArgs = (ev) => {
+            const args = ev.arguments || [];
+            const find = role => args.find(a => a.role === role);
+            const patient = args.find(a => ['Patient','Result','Product'].includes(a.role));
+            const others = args.filter(a => a.role !== 'Agent' && !['Patient','Result','Product'].includes(a.role) && a.role !== 'Time' && a.role !== 'Location');
+            const tag = (a, dim) => a ? `<span class="arg-tag${dim?' dim':''}">${esc(a.role)}: ${esc(a.text)}${a.spatial_role && a.spatial_role !== 'STATIC' ? ` <span class="spatial-tag">[${a.spatial_role}]</span>` : ''}</span>` : '<span class="arg-none">-</span>';
+            return {
+                agent: tag(find('Agent')),
+                patient: tag(patient),
+                time: tag(find('Time')),
+                location: tag(find('Location')),
+                others: others.map(a => `<span class="arg-tag dim">${esc(a.role)}: ${esc(a.text)}</span>`).join(' ') || '<span class="arg-none">-</span>',
+                vsc: [...new Set(args.map(a => a.verb_spatial_class).filter(s => s && s !== 'NONE'))].map(s => `<span class="vsc-tag">${s}</span>`).join(' ') || '<span class="arg-none">-</span>'
+            };
+        };
+        const cardHtml = (ev, isSub) => {
+            const args = buildArgs(ev);
+            const pct = Math.round(ev.confidence * 100);
+            const confColor = pct >= 95 ? 'var(--green-text)' : pct >= 80 ? 'var(--yellow)' : 'var(--red)';
+            const arrow = ev.sub_events && ev.sub_events.length > 0 ? `<span class="event-toggle" data-event-id="${escAttr(ev.id)}">▶</span>` : (isSub ? '<span class="arg-none">└</span>' : '');
+            const badge = ev.is_main_event && !isSub ? '<span class="event-badge main">主</span>' : (isSub ? '<span class="event-badge subbadge">子</span>' : '');
+            return `<div class="event-card${isSub?' sub':''}" data-event-id="${escAttr(ev.id)}" ${isSub?'style="display:none"':''}>
+                <div class="event-head">
+                    ${arrow}${badge}
+                    <span class="event-type">${esc(ev.event_type)}</span>
+                    <span class="event-trigger">${esc(ev.trigger)}</span>
+                    <span class="event-span">[${ev.trigger_span[0]}:${ev.trigger_span[1]}]</span>
+                    <span class="event-conf"><span class="conf-track"><span class="conf-fill" style="width:${pct}%;background:${confColor}"></span></span>${pct}%</span>
+                    <span class="event-src">${esc(ev.source)}</span>
+                </div>
+                <div class="event-args">
+                    <div class="arg"><span class="arg-role">Agent</span>${args.agent}</div>
+                    <div class="arg"><span class="arg-role">Patient</span>${args.patient}</div>
+                    <div class="arg"><span class="arg-role">Time</span>${args.time}</div>
+                    <div class="arg"><span class="arg-role">Location</span>${args.location}</div>
+                    <div class="arg"><span class="arg-role">其他</span>${args.others}</div>
+                    <div class="arg"><span class="arg-role">语义类</span>${args.vsc}</div>
+                </div>
+            </div>`;
+        };
+        let html = '';
+        if (mainEvents.length === 0) {
+            c.events.forEach(ev => { html += cardHtml(ev, false); });
+        } else {
+            mainEvents.forEach(ev => {
+                html += cardHtml(ev, false);
+                (subEventMap[ev.id] || []).forEach(sub => { html += cardHtml(sub, true); });
+            });
+            c.events.filter(ev => !ev.is_main_event && !mainEvents.some(m => m.sub_events && m.sub_events.includes(ev.id))).forEach(ev => { html += cardHtml(ev, false); });
+        }
+        return html;
+    })() : '<span class="empty">未提取到事件（此文本暂不支持事件分析，或无明显的动作型关系三元组）</span>';
 
-            html += '</tbody></table>';
-            return html;
-        })()
-        : '<span style="color:#484f58">未提取到事件（此文本暂不支持事件分析，或无明显的动作型关系三元组）</span>';
-
+    // Relations — chip rows: subject → predicate → object
     const relations=c.relations.map(r=>{
-        const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<br><small style="color:#484f58">raw: ${esc(r.subject_raw)}</small>` : '';
-        const objRaw = r.object_raw && r.object_raw !== r.object ? `<br><small style="color:#484f58">raw: ${esc(r.object_raw)}</small>` : '';
-        const mods=(r.modifiers||[]).map(m=>{
-            const typeColor=m.type==='negation'?'#f85149':m.type==='degree'?'#e3b341':m.type==='scope'?'#79c0ff':'#8b949e';
-            return `<small style="color:${typeColor};margin-right:4px">[${m.text}:${m.type}]</small>`;
-        }).join('');
-        const modHtml=mods?`<span style="margin-left:8px">${mods}</span>`:'';
-        const srcLabel=r.source==='hierarchy/containment'?'<span style="color:#a5b4fc;font-size:10px">⊂hierarchy</span>':esc(r.source);
-        return `<div class="relation-row"><span class="subj">${esc(r.subject)}${subjRaw}</span> &rarr; <span class="pred">${esc(r.predicate)}</span> &rarr; <span class="obj">${esc(r.object)}${objRaw}</span>${modHtml}<span class="src">${srcLabel}</span></div>`;
-    }).join('')||'<span style="color:#484f58">-</span>';
+        const subjRaw = r.subject_raw && r.subject_raw !== r.subject ? `<small>raw: ${esc(r.subject_raw)}</small>` : '';
+        const objRaw = r.object_raw && r.object_raw !== r.object ? `<small>raw: ${esc(r.object_raw)}</small>` : '';
+        const mods=(r.modifiers||[]).map(m=>`<span class="rel-mod ${m.type}">[${esc(m.text)}:${m.type}]</span>`).join('');
+        const srcLabel=r.source==='hierarchy/containment'?'⊂hierarchy':esc(r.source);
+        return `<div class="relation-row">
+            <span class="rel-chip subj">${esc(r.subject)}${subjRaw}</span>
+            <span class="rel-arrow">→</span>
+            <span class="rel-chip pred">${esc(r.predicate)}</span>
+            <span class="rel-arrow">→</span>
+            <span class="rel-chip obj">${esc(r.object)}${objRaw}</span>
+            ${mods}
+            <span class="rel-src">${srcLabel}</span>
+        </div>`;
+    }).join('')||'<span class="empty">未抽取到关系</span>';
 
     let newWordsHtml='';
     const mode=document.getElementById('discoverMode').value;
@@ -222,29 +195,15 @@ export function renderNSP(data){
         const badges=trueNew.map(w=>`<span class="discover-item" data-word="${escAttr(w)}" style="border-color:${borderColor}" title="点击加入自定义词典">${mode==='enhance'?'✅':'🆕'} ${esc(w)}</span>`).join('');
         newWordsHtml=`<div class="card" style="border-color:${borderColor}"><h3 style="color:${titleColor}">${label} <small style="color:#8b949e;font-weight:normal">(点击加入自定义词典)</small></h3><div>${badges}</div><button data-action="apply-dict" style="margin-top:8px;font-size:12px;padding:6px 16px">📋 一键应用并重新分析</button></div>`;
     }else if(data.true_new_words!==undefined&&data.true_new_words!==null){
-        newWordsHtml='<div class="card"><h3>🔍 新词发现</h3><span style="color:#484f58">未发现真新词（所有候选词已在分词结果中）</span></div>';
+        newWordsHtml='<div class="card"><h3>🔍 新词发现</h3><span class="empty">未发现真新词（所有候选词已在分词结果中）</span></div>';
     }
 
-    const langStats=langSents.length>0?`
-    <div class="stat">${langBadge}</div>
-    <div class="stat">🏯 <b>${classicalCount}</b> 古汉语句</div>
-    <div class="stat">📄 <b>${modernCount}</b> 现代语句</div>
-    <div class="stat">🇬🇧 <b>${englishCount}</b> 英文句</div>`:'';
-
     document.getElementById('nsp').innerHTML=`
-    <div class="stats">
-    <div class="stat"><b>${c.tokens.length}</b> tokens</div>
-    <div class="stat"><b>${c.entities.length}</b> entities</div>
-    <div class="stat"><b>${c.relations.length}</b> relations</div>
-    <div class="stat"><b>${(c.events||[]).length}</b> events</div>
-    <div class="stat">source: <b>${data.meta.source}</b></div>
-    ${langStats}
-    </div>
     ${newWordsHtml}
-    <div class="card"><h3>📝 分词 & POS <span style="font-size:11px;color:#484f58">●蓝=现代 · ●黄=古汉语 · ●浅蓝=英文</span></h3><div style="line-height:2">${tokens}</div></div>
-    <div class="card"><h3>🏷️ 实体 Entities</h3><div>${entities}</div></div>
-    <div class="card"><h3>🔗 关系 Relations</h3><div>${relations}</div></div>
-    <div class="card"><h3>⚡ 事件 Events <small style="color:#484f58;font-weight:normal">(从 SRL 语义角色标注派生)</small></h3><div>${events}</div></div>`;
+    <div class="card"><h3>📝 分词 & POS <span class="empty" style="font-weight:normal">●蓝=现代 · ●黄=古汉语 · ●浅蓝=英文 · 底部色条=置信度 · 下划线=实体</span></h3><div style="line-height:2.1">${tokens}</div></div>
+    <div class="card"><h3>🏷️ 实体 Entities <span class="empty" style="font-weight:normal">按类别分组</span></h3>${entities}</div>
+    <div class="card"><h3>🔗 关系 Relations</h3>${relations}</div>
+    <div class="card"><h3>⚡ 事件 Events <span class="empty" style="font-weight:normal">(从 SRL 语义角色标注派生)</span></h3>${events}</div>`;
 }
 
 export function renderPretty(data){
@@ -479,38 +438,43 @@ export function renderCoref(data){
 
 export function renderSummary(data){
     if(!data||!data.content||!data.content.summary){
-        document.getElementById('summary').innerHTML='<div class="card"><h3>📝 摘要</h3><span style="color:#484f58">未生成摘要（文本过短或无句子结构）</span></div>';
+        document.getElementById('summary').innerHTML='<div class="card"><h3>📝 摘要</h3><span class="empty">未生成摘要（文本过短或无句子结构）</span></div>';
         return;
     }
     const s=data.content.summary;
-    const methodLabel=s.method==='nsp+textrank'?'NSP+TextRank 融合':s.method==='textrank'?'TextRank':'未知';
+    const methodLabel=s.method==='nsp+textrank'?'NSP+TextRank 融合':s.method==='textrank'?'TextRank':(s.method||'未知');
     const modeLabel=s.mode==='chars'?`按字数 (${s.target_chars}字)`:s.mode==='ratio'?`按比例 (${(s.target_ratio*100).toFixed(0)}%)`:'';
     const ratio=s.total_sentences>0?Math.round((s.key_sentences.length/s.total_sentences)*100):0;
-    const fusionInfo=s.fusion_weights?`<div style="margin-top:8px;font-size:11px;color:#8b949e">权重: NSP=${(s.fusion_weights.nsp_weight||0).toFixed(2)} / TextRank=${(s.fusion_weights.textrank_weight||0).toFixed(2)}</div>`:'';
+    const fusionInfo=s.fusion_weights?`<div class="empty" style="margin-bottom:10px">权重: NSP=${(s.fusion_weights.nsp_weight||0).toFixed(2)} / TextRank=${(s.fusion_weights.textrank_weight||0).toFixed(2)}</div>`:'';
 
-    // Key sentences with scores
-    const sentencesHtml=(s.key_sentences||[]).map((ks,i)=>{
-        const nsp=ks.nsp_score!==undefined?`<span style="color:#e3b341;margin-left:4px">NSP:${ks.nsp_score.toFixed(2)}</span>`:'';
-        const tr=ks.textrank_score!==undefined?`<span style="color:#79c0ff;margin-left:4px">TR:${ks.textrank_score.toFixed(2)}</span>`:'';
-        const entities=(ks.entities||[]).map(e=>`<span style="background:#1a3a1a;color:#7ee787;padding:1px 4px;border-radius:2px;font-size:10px;margin:1px">${esc(e)}</span>`).join('');
-        const events=(ks.events||[]).map(e=>`<span style="background:#1a1a3a;color:#79c0ff;padding:1px 4px;border-radius:2px;font-size:10px;margin:1px">${esc(e)}</span>`).join('');
-        return `<div style="padding:8px 12px;margin:4px 0;background:#0d1117;border-radius:4px;border-left:3px solid #58a6ff">
-            <div style="font-size:13px;color:#c9d1d9">${esc(ks.text)}</div>
-            <div style="font-size:11px;color:#8b949e;margin-top:4px">
-                <span style="color:#7ee787">综合:${(ks.score||0).toFixed(3)}</span>${nsp}${tr}
-                <span style="margin-left:8px;color:#484f58">[句${ks.sentence_index+1}]</span>
+    // Full text with key sentences highlighted
+    const keyIdx=new Set((s.key_sentences||[]).map(k=>k.sentence_index));
+    const sents=data.content.sentences||[];
+    const fullTextHtml=sents.length?`<div class="sum-fulltext">${sents.map((st,i)=>`<span class="sum-sent${keyIdx.has(i)?' key':''}" title="${keyIdx.has(i)?'关键句':''}">${esc(st.text)}</span>`).join('')}</div>`:'';
+
+    // Key sentences with fused score bar + selection reasons
+    const maxScore=Math.max(...(s.key_sentences||[]).map(k=>k.score||0),0.001);
+    const sentencesHtml=(s.key_sentences||[]).map(ks=>{
+        const pct=Math.max(4,Math.round(((ks.score||0)/maxScore)*100));
+        const reasons=(ks.reasons||[]).map(r=>`<span class="empty">${esc(r)}</span>`).join(' · ');
+        return `<div class="sum-key-item">
+            <div class="sum-text">${esc(ks.text)}</div>
+            <div class="sum-meta">
+                <span class="sum-score"><span class="conf-track"><span class="conf-fill" style="width:${pct}%"></span></span>综合:${(ks.score||0).toFixed(3)}</span>
+                <span class="empty">[句${(ks.sentence_index||0)+1}]</span>
+                ${reasons}
             </div>
-            ${entities||events?`<div style="margin-top:4px">${entities}${events}</div>`:''}
         </div>`;
     }).join('');
 
     document.getElementById('summary').innerHTML=`
     <div class="card">
-        <h3>📝 摘要 <small style="color:#484f58;font-weight:normal">${methodLabel} · ${modeLabel} · ${s.key_sentences.length}/${s.total_sentences} 句 (${ratio}%)</small></h3>
+        <h3>📝 摘要 <span class="empty" style="font-weight:normal">${methodLabel} · ${modeLabel} · ${s.key_sentences.length}/${s.total_sentences} 句 (${ratio}%)</span></h3>
         ${fusionInfo}
-        ${s.summary_text?`<div style="padding:12px;background:#0d1117;border-radius:4px;margin-bottom:12px;font-size:14px;line-height:1.8;color:#c9d1d9;border:1px solid #30363d">${esc(s.summary_text)}</div>`:''}
-        <h4 style="font-size:12px;color:#8b949e;margin-bottom:8px">关键句 (按综合得分排序)</h4>
-        ${sentencesHtml||'<span style="color:#484f58">无关键句</span>'}
+        ${s.summary_text?`<div style="padding:12px;background:var(--bg-inset);border-radius:var(--radius);margin-bottom:12px;font-size:14px;line-height:1.8;color:var(--text);border:1px solid var(--border)">${esc(s.summary_text)}</div>`:''}
+        ${fullTextHtml}
+        <h4 style="font-size:12px;color:var(--text-dim);margin-bottom:8px">关键句 (按综合得分排序)</h4>
+        ${sentencesHtml||'<span class="empty">无关键句</span>'}
     </div>`;
 }
 
@@ -629,26 +593,23 @@ export function toggleEndpoint(methodEl){
 // Sub-events are rendered immediately after their parent main event row,
 // and are identified by NOT having data-main-event attribute.
 export function toggleEventRow(el, eventId){
-    const mainRow = document.querySelector(`tr.event-row[data-event-id="${eventId}"]`);
-    if (!mainRow) return;
-    
-    // Collect consecutive sibling rows that are sub-events (no data-main-event attribute)
-    let next = mainRow.nextElementSibling;
-    const subRows = [];
-    while (next && next.classList.contains('event-row') && !next.hasAttribute('data-main-event')) {
-        subRows.push(next);
+    const mainCard = document.querySelector(`.event-card[data-event-id="${eventId}"]:not(.sub)`);
+    if (!mainCard) return;
+
+    // Sub-cards are rendered immediately after their parent main card
+    let next = mainCard.nextElementSibling;
+    const subCards = [];
+    while (next && next.classList.contains('event-card') && next.classList.contains('sub')) {
+        subCards.push(next);
         next = next.nextElementSibling;
     }
-    
-    if (subRows.length === 0) return;
-    
-    // Determine current visibility from the first sub-row
-    const isCurrentlyVisible = subRows[0].style.display !== 'none';
-    
-    subRows.forEach(row => {
-        row.style.display = isCurrentlyVisible ? 'none' : '';
+
+    if (subCards.length === 0) return;
+
+    const isCurrentlyVisible = subCards[0].style.display !== 'none';
+    subCards.forEach(card => {
+        card.style.display = isCurrentlyVisible ? 'none' : '';
     });
-    
-    // Toggle arrow direction
+
     el.textContent = isCurrentlyVisible ? '▶' : '▼';
 }

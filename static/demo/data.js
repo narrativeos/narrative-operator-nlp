@@ -16,16 +16,18 @@ export const SAMPLES = [
 
 // ── Data: tabs & panels ─────────────────────────────────────────────────────
 // id must match the panel element id; the first tab/panel is active by default.
+// group is used to render section separators in the tab bar.
 export const TABS = [
-  { id: 'nsp',        label: '📊 NSP 结构化' },
-  { id: 'pretty',     label: '🎨 HanLP 原生可视化' },
-  { id: 'depsvg',     label: '🧬 依存树 SVG' },
-  { id: 'discover',   label: '🔍 新词发现' },
-  { id: 'patterns',   label: '📊 句式模式' },
-  { id: 'coref',      label: '🔗 指代消解' },
-  { id: 'langdetect', label: '🏯 语言检测' },
-  { id: 'summary',    label: '📝 摘要' },
-  { id: 'title',      label: '🏷️ 标题' },
-  { id: 'json',       label: '{ } JSON Raw' },
-  { id: 'api',        label: '📋 API 接口' },
+  { id: 'overview',   label: '📋 总览',            group: '基础分析' },
+  { id: 'nsp',        label: '📊 NSP 结构化',      group: '基础分析' },
+  { id: 'pretty',     label: '🎨 HanLP 原生可视化', group: '基础分析' },
+  { id: 'depsvg',     label: '🧬 依存树 SVG',      group: '基础分析' },
+  { id: 'discover',   label: '🔍 新词发现',        group: '深度分析' },
+  { id: 'patterns',   label: '📊 句式模式',        group: '深度分析' },
+  { id: 'coref',      label: '🔗 指代消解',        group: '深度分析' },
+  { id: 'langdetect', label: '🏯 语言检测',        group: '深度分析' },
+  { id: 'summary',    label: '📝 摘要',            group: '生成' },
+  { id: 'title',      label: '🏷️ 标题',            group: '生成' },
+  { id: 'json',       label: '{ } JSON Raw',       group: '原始数据' },
+  { id: 'api',        label: '📋 API 接口',        group: '原始数据' },
 ];
