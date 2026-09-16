@@ -105,35 +105,46 @@ def _resolve_ner_conflicts(candidates: list[Entity]) -> None:
 
     Modifies candidates list in-place (removes discarded entities).
     """
-    if len(candidates) <= 1:
+    n = len(candidates)
+    if n <= 1:
         return
 
-    # Group by span overlap
-    groups: list[list[int]] = []  # list of lists of candidate indices
-    assigned: set[int] = set()
+    # ── Union-find over pairwise conflicts (transitive closure) ──
+    # The previous seed-only grouping only linked candidates similar to
+    # the group seed, so A~B and B~C with A!~C produced two groups.
+    # Union-find over all conflicting pairs gives the true closure.
+    parent = list(range(n))
 
-    for i in range(len(candidates)):
-        if i in assigned:
-            continue
-        group = [i]
-        assigned.add(i)
-        for j in range(i + 1, len(candidates)):
-            if j in assigned:
-                continue
-            iou = _compute_iou(candidates[i].span, candidates[j].span)
-            # P1: supplement IoU with text containment for partial overlaps
-            # e.g. "北京市"[0,3] vs "北京"[0,2] has IoU=0.5 but clearly related
-            text_contained = (
-                candidates[i].text in candidates[j].text
-                or candidates[j].text in candidates[i].text
-            )
-            if iou > 0.8 or (iou > 0.5 and text_contained):
-                group.append(j)
-                assigned.add(j)
-        groups.append(group)
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path halving
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    def _conflicts(a: Entity, b: Entity) -> bool:
+        iou = _compute_iou(a.span, b.span)
+        # P1: supplement IoU with text containment for partial overlaps
+        # e.g. "北京市"[0,3] vs "北京"[0,2] has IoU=0.5 but clearly related
+        text_contained = a.text in b.text or b.text in a.text
+        return iou > 0.8 or (iou > 0.5 and text_contained)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _conflicts(candidates[i], candidates[j]):
+                union(i, j)
+
+    groups: dict[int, list[int]] = {}
+    for idx in range(n):
+        groups.setdefault(find(idx), []).append(idx)
 
     # Resolve each group
-    for group in groups:
+    remove: set[int] = set()
+    for group in groups.values():
         if len(group) == 1:
             continue
 
@@ -153,11 +164,12 @@ def _resolve_ner_conflicts(candidates: list[Entity]) -> None:
         winner = candidates[best_idx]
         winner.ner_disputed = True
         winner.ner_labels = ner_labels
+        remove.update(idx for idx in group if idx != best_idx)
 
-        # Remove losers (iterate in reverse to preserve indices)
-        for idx in sorted(group, reverse=True):
-            if idx != best_idx:
-                candidates.pop(idx)
+    if remove:
+        candidates[:] = [
+            c for i, c in enumerate(candidates) if i not in remove
+        ]
 
 
 class EntityMappingRules:

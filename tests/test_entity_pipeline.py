@@ -318,3 +318,108 @@ class TestPosSuffixCategory:
     def test_no_suffix(self):
         assert self.f("立方庭", self.ORG, self.LOC, self.PROD) == "UNKNOWN"
 
+
+class TestDeduplicatorSameText:
+    """Same text + same category at different spans collapses to one."""
+
+    def test_repeated_mention_collapsed(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        b = _ent("ent_002", "北京", "LOCATION", (10, 12), confidence=0.8)
+        out = EntityDeduplicator.deduplicate([a, b])
+        assert len(out) == 1
+        assert out[0].id == "ent_001"
+        assert "ent_002" in out[0].merged_from
+
+    def test_higher_confidence_wins_regardless_of_position(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.5)
+        b = _ent("ent_002", "北京", "LOCATION", (10, 12), confidence=0.95)
+        out = EntityDeduplicator.deduplicate([a, b])
+        assert len(out) == 1
+        assert out[0].id == "ent_002"
+        assert "ent_001" in out[0].merged_from
+
+    def test_tie_keeps_earlier_span(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        b = _ent("ent_002", "北京", "LOCATION", (10, 12), confidence=0.9)
+        out = EntityDeduplicator.deduplicate([a, b])
+        assert len(out) == 1
+        assert out[0].id == "ent_001"
+        assert "ent_002" in out[0].merged_from
+
+    def test_three_mentions_one_winner(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.7)
+        b = _ent("ent_002", "北京", "LOCATION", (10, 12), confidence=0.9)
+        c = _ent("ent_003", "北京", "LOCATION", (20, 22), confidence=0.8)
+        out = EntityDeduplicator.deduplicate([a, b, c])
+        assert len(out) == 1
+        assert out[0].id == "ent_002"
+        assert set(out[0].merged_from) == {"ent_001", "ent_003"}
+
+    def test_same_text_different_category_not_collapsed(self):
+        # Different categories are a labeling question, not a repeat —
+        # only identical-span conflicts are resolved, distinct spans stay.
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        b = _ent("ent_002", "北京", "ORGANIZATION", (10, 12), confidence=0.9)
+        out = EntityDeduplicator.deduplicate([a, b])
+        assert {e.id for e in out} == {"ent_001", "ent_002"}
+
+    def test_distinct_texts_not_collapsed(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        b = _ent("ent_002", "海淀", "LOCATION", (10, 12), confidence=0.9)
+        out = EntityDeduplicator.deduplicate([a, b])
+        assert {e.id for e in out} == {"ent_001", "ent_002"}
+
+
+class TestNerConflictUnionFind:
+    """Conflict grouping must be the transitive closure of pairwise
+    conflicts (union-find), not seed-only comparison."""
+
+    def _resolve(self, candidates):
+        from core.entity_mapper import _resolve_ner_conflicts
+        _resolve_ner_conflicts(candidates)
+        return candidates
+
+    def test_transitive_chain_collapses_to_one(self):
+        # A~B (IoU 2/3 + containment), B~C (IoU 3/4 + containment),
+        # but A!~C (IoU exactly 0.5). Seed-only grouping on A would
+        # leave C in its own group; union-find merges all three.
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2),
+                 confidence=0.5, )
+        a.source = "ner/pku"
+        b = _ent("ent_002", "北京市", "FACILITY", (0, 3), confidence=0.9)
+        b.source = "ner/msra"
+        c = _ent("ent_003", "北京市东", "ORGANIZATION", (0, 4),
+                 confidence=0.7)
+        c.source = "ner/ontonotes"
+        out = self._resolve([a, b, c])
+        assert len(out) == 1
+        assert out[0].id == "ent_002"  # highest confidence wins
+        assert out[0].ner_disputed is True
+        assert out[0].ner_labels == {
+            "ner/pku": "LOCATION",
+            "ner/msra": "FACILITY",
+            "ner/ontonotes": "ORGANIZATION",
+        }
+
+    def test_agreeing_group_untouched(self):
+        # Overlapping candidates with the SAME category are not a
+        # conflict — all are kept.
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        a.source = "ner/pku"
+        b = _ent("ent_002", "北京市", "LOCATION", (0, 3), confidence=0.8)
+        b.source = "ner/msra"
+        out = self._resolve([a, b])
+        assert {e.id for e in out} == {"ent_001", "ent_002"}
+
+    def test_two_independent_conflicts_resolved_separately(self):
+        a = _ent("ent_001", "北京", "LOCATION", (0, 2), confidence=0.9)
+        a.source = "ner/pku"
+        b = _ent("ent_002", "北京市", "FACILITY", (0, 3), confidence=0.5)
+        b.source = "ner/msra"
+        c = _ent("ent_003", "上海", "LOCATION", (20, 22), confidence=0.9)
+        c.source = "ner/pku"
+        d = _ent("ent_004", "上海市", "FACILITY", (20, 23), confidence=0.5)
+        d.source = "ner/msra"
+        out = self._resolve([a, b, c, d])
+        assert {e.id for e in out} == {"ent_001", "ent_003"}
+

@@ -37,6 +37,30 @@ class EntityDeduplicator:
         if not entities:
             return []
 
+        # ── Entity-level dedup: same text + same category ──
+        # Repeated mentions of the same entity (e.g. "北京" at two
+        # positions, both LOCATION) are collapsed into one. Keep the
+        # highest-confidence occurrence (earlier span breaks ties, which
+        # also preserves containment hierarchies like 钢 ⊂ 碳钢) and
+        # record the dropped mentions in the winner's merged_from.
+        best: dict[tuple[str, str], Entity] = {}
+        for ent in entities:
+            key = (ent.text, ent.category)
+            cur = best.get(key)
+            if cur is None:
+                best[key] = ent
+            elif (ent.confidence > cur.confidence
+                    or (ent.confidence == cur.confidence
+                        and ent.span[0] < cur.span[0])):
+                if cur.id not in ent.merged_from:
+                    ent.merged_from.append(cur.id)
+                best[key] = ent
+            elif ent.id not in cur.merged_from:
+                cur.merged_from.append(ent.id)
+        winner_ids = {e.id for e in best.values()}
+        if len(winner_ids) < len(entities):
+            entities = [e for e in entities if e.id in winner_ids]
+
         # Sort by span length descending (longer = more specific = parent candidate)
         sorted_entities = sorted(entities, key=lambda e: (
             -(e.span[1] - e.span[0]),
