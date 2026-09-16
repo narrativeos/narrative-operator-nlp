@@ -754,8 +754,10 @@ def analyze(
 
     # Modifier Extraction
     # Extract relation modifiers (degree, negation, scope, etc.)
+    # Tokens are passed so polysemous words (将/既/乃/即) are only matched
+    # when their POS tag is adverbial, not when used as function words.
     modifier_extractor = ModifierExtractor()
-    modifier_extractor.extract_batch(text, all_relations)
+    modifier_extractor.extract_batch(text, all_relations, tokens=all_tokens)
 
     # Relation Classification
     # Classify relations into entity relations vs entity attributes
