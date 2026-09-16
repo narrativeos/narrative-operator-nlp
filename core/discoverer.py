@@ -3,12 +3,33 @@ New Word Discovery — Hybrid PMI + MTL Comparison.
 
 Three strategies combined:
 1. PMI + LLR + Left/Right Entropy (statistical, needs enough text).
-2. MTL diff: compare MTL tokenizer output against known patterns —
-   sequences of low-confidence / unknown-character tokens are candidates.
-3. Internal cohesion test: check if characters within a candidate are
-   tightly bound (low internal entropy = high cohesion).
+2. MTL diff: consecutive single-char content tokens in the MTL output
+   are merge candidates — sequences MTL split that should be one word.
+3. Internal cohesion test: characters within a candidate are tightly
+   bound (high internal PMI = high cohesion).
 
-Works on both single sentences (MTL diff) and longer texts (PMI).
+Candidate filters (applied after scoring):
+- Function-char filter: candidates containing pure function characters
+  (的/了/和/是/...) are rejected.
+- MTL boundary alignment: when MTL tokens are provided, a candidate must
+  be a union of whole MTL tokens. Cutting across a token means the
+  candidate is a fragment of a known word.
+- Locked-fragment filter: a candidate that is almost always extended on
+  BOTH sides (a sliding window of a longer repeated unit) is rejected.
+  Boundary-marking function chars (和/与/是/…) keep a side open; attaching
+  ones (的/在/了/…) do not.
+
+Scores are normalized to [0, 1] before weighting, so every component
+contributes on the same scale:
+    score = 0.3 * pmi_norm + 0.3 * llr_norm + 0.2 * entropy_norm
+            + 0.2 * cohesion
+
+Left/right entropy semantics: a true word combines with diverse contexts
+on both sides (high entropy); a fragment of a longer unit has at least
+one fixed side (low entropy). When one side has no neighbor at all
+(sentence edge), the other side is used instead of zeroing the signal.
+
+Works on both single sentences (MTL merge) and longer texts (PMI).
 
 References
 ----------
@@ -22,6 +43,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
@@ -83,10 +105,58 @@ class DiscoverResult:
 # Core Algorithm
 # ---------------------------------------------------------------------------
 
-# Characters that typically mark sentence boundaries (split ngrams here)
-_SENT_SPLIT_RE = re.compile(r"[。！？；\n]")
-# Punctuation to remove from cleaned text
-_PUNCT_RE = re.compile(r"[，、：""''（）《》【】\s]")
+# Sentence/clause boundaries (ngrams never span these). Commas and the
+# enumeration mark are included so ngrams do not cross clause boundaries.
+_SENT_SPLIT_RE = re.compile(r"[。！？；，、\n]")
+# Punctuation to remove from cleaned text (a single raw string; _clean_text
+# additionally keeps only CJK chars + digits)
+_PUNCT_RE = re.compile(r"[，、：；！？“”‘’（）《》【】\s]")
+
+# Pure function characters — a candidate containing any of these is not a
+# word. Deliberately conservative: only characters that are (almost)
+# exclusively function words. Content morphemes (高/大/新/...) are NOT
+# included so compounds like 高铁/新型/高强度 remain discoverable.
+_FUNCTION_CHARS: frozenset[str] = frozenset(
+    "的了着在过吗呢吧啊嘛呀哦嗯是和与或而且但却就都也又再才只还把被"
+)
+
+# Boundary-marking function characters (coordinators, copula, discourse
+# markers). A candidate pinned to one of these sits at a NORMAL phrase
+# boundary, so that side is NOT locked: 高强度 in "具有高强度和高韧性"
+# keeps its right side open because 和 marks a coordination boundary.
+#
+# The remaining function characters (的/在/了/着/过/吗/...) ATTACH tightly
+# to neighboring content — they are part of a longer unit (正在/了的/的X) —
+# so a candidate pinned to them IS locked on that side: 成本正 in
+# "的成本正在下降" is locked on both sides and rejected as a fragment.
+_BOUNDARY_FUNC: frozenset[str] = frozenset("和与或而但就都也又再才只还把被是")
+
+# Do not extend a merge run across these (right-side guard for MTL merges)
+_DONT_MERGE_AFTER: frozenset[str] = frozenset("的了和与或是有")
+
+# POS tags that may form compound words. Covers both HanLP CTB tags
+# (NN/NR/JJ/NT/VV) and Universal POS tags (NOUN/PROPN/ADJ/VERB) so the
+# merge path works regardless of which tagset the pipeline exposes.
+_MERGE_POS: frozenset[str] = frozenset(
+    {"NN", "NR", "JJ", "NT", "VV", "NOUN", "PROPN", "ADJ", "VERB"}
+)
+
+# Score normalization caps (all components mapped to [0, 1] before weighting)
+_PMI_NORM_CAP = 10.0               # bits; PMI >= 10 is maximally strong
+_LLR_NORM_CAP = math.log(1001.0)   # LLR = 1000 saturates
+_ENT_NORM_CAP = 2.0                # bits; 4+ distinct neighbors per side
+
+
+def _norm_pmi(pmi: float) -> float:
+    return min(max(pmi, 0.0), _PMI_NORM_CAP) / _PMI_NORM_CAP
+
+
+def _norm_llr(llr: float) -> float:
+    return min(math.log1p(max(llr, 0.0)), _LLR_NORM_CAP) / _LLR_NORM_CAP
+
+
+def _norm_entropy(ent: float) -> float:
+    return min(max(ent, 0.0), _ENT_NORM_CAP) / _ENT_NORM_CAP
 
 
 def discover(
@@ -101,13 +171,22 @@ def discover(
     """
     Discover new words using hybrid PMI + LLR + MTL comparison.
 
-    - Short texts (< 100 cleaned chars): MTL hybrid is primary, PMI supplementary.
-    - Longer texts: both PMI + LLR and MTL contribute.
+    Pipeline:
+    1. Build per-sentence n-gram / char statistics (punctuation removed,
+       ngrams never span sentence or clause boundaries).
+    2. MTL merge candidates: consecutive single-char content tokens that
+       MTL split but should be one word (primary signal for short texts).
+    3. PMI + LLR candidates: n-grams with enough frequency, scored with
+       PMI + LLR + left/right entropy + internal cohesion.
+    4. Filters: function-char, MTL boundary alignment (when tokens are
+       given), locked-fragment, subsumption.
+
+    All scores are normalized to [0, 1]:
+        score = 0.3*pmi_norm + 0.3*llr_norm + 0.2*entropy_norm + 0.2*cohesion
 
     Adaptive parameters:
     - min_freq: auto-adjusted based on text length
-    - entropy threshold: auto-adjusted based on text length
-    - n-gram range: 2-6 characters (extended from 2-4)
+    - min_score: auto-adjusted based on text length (already on [0, 1])
 
     Parameters
     ----------
@@ -116,15 +195,16 @@ def discover(
     min_len : int
         Minimum n-gram length.
     max_len : int
-        Maximum n-gram length (default 6, extended from 4).
+        Maximum n-gram length (default 6).
     min_freq : int
         Minimum occurrence count for PMI candidates (auto-adjusted).
     min_score : float
-        Minimum combined score threshold.
+        Minimum combined score threshold in [0, 1] (auto-adjusted).
     max_candidates : int
         Max candidates to return.
     mtl_tokens : list, optional
-        MTL tokenizer output for hybrid comparison.
+        MTL tokenizer output (objects with .text and .pos) for the merge
+        path and the boundary-alignment filter.
 
     Returns
     -------
@@ -141,68 +221,70 @@ def discover(
         return DiscoverResult(text_length=len(text), total_ngrams=0)
 
     total_chars = sum(len(s) for s in cleaned)
-    candidates: list[Candidate] = []
-
-    # ---- Adaptive parameters based on text length ----
     adaptive_min_freq = _adaptive_min_freq(total_chars, min_freq)
     adaptive_min_score = _adaptive_min_score(total_chars, min_score)
 
-    # ---- MTL Hybrid (primary for short texts) ----
-    if mtl_tokens:
-        candidates.extend(_discover_from_mtl(mtl_tokens, cleaned))
-
-    # ---- PMI + LLR (supplementary, only when enough statistics) ----
-    if total_chars >= 30:  # lowered from 50 for better short-text support
-        ngram_counts: dict[int, Counter] = {}
-        for n in range(min_len, max_len + 1):
-            ngram_counts[n] = Counter()
-            for sent in cleaned:
-                ngram_counts[n].update(_count_ngrams(sent, n))
-
-        # Build char-level counts for LLR
-        char_counts = Counter()
+    # ---- Statistics (per sentence, so ngrams never cross boundaries) ----
+    ngram_counts: dict[int, Counter] = {}
+    total_ngrams = 0
+    for n in range(min_len, max_len + 1):
+        counts: Counter = Counter()
         for sent in cleaned:
-            char_counts.update(sent)
+            counts.update(_count_ngrams(sent, n))
+        ngram_counts[n] = counts
+        total_ngrams += len(counts)
 
-        existing = {c.word for c in candidates}
+    char_counts: Counter = Counter()
+    for sent in cleaned:
+        char_counts.update(sent)
 
+    # Number of n-gram positions per length (per-sentence sum)
+    pos_totals = {
+        n: sum(max(len(s) - n + 1, 0) for s in cleaned)
+        for n in range(min_len, max_len + 1)
+    }
+
+    # ---- MTL boundary index (for the alignment filter) ----
+    mtl_full: Optional[str] = None
+    mtl_boundaries: Optional[set[int]] = None
+    if mtl_tokens:
+        mtl_full, mtl_boundaries = _build_mtl_index([t.text for t in mtl_tokens])
+
+    candidates: list[Candidate] = []
+    mtl_words: set[str] = set()
+
+    # ---- MTL merge candidates (primary for short texts) ----
+    if mtl_tokens:
+        for word in _discover_from_mtl(mtl_tokens):
+            if not (min_len <= len(word) <= max_len):
+                continue
+            if _contains_function_char(word):
+                continue
+            cand = _score_ngram(
+                word, ngram_counts, char_counts, cleaned, total_chars, pos_totals
+            )
+            if cand.frequency == 0:
+                continue
+            candidates.append(cand)
+            mtl_words.add(word)
+
+    # ---- PMI + LLR candidates (supplementary, needs some statistics) ----
+    if total_chars >= 30:
         for n in range(min_len, max_len + 1):
             for ngram, freq in ngram_counts[n].items():
-                if freq < adaptive_min_freq or ngram in existing:
+                if freq < adaptive_min_freq or ngram in mtl_words:
                     continue
-
-                # PMI
-                pmi_val = _compute_pmi(ngram, freq, ngram_counts, total_chars)
-
-                # LLR (Log-Likelihood Ratio)
-                llr_val = _compute_llr(ngram, freq, char_counts, total_chars)
-
-                # Entropy
-                le = _compute_entropy_multisentence(ngram, cleaned, "left")
-                re_val = _compute_entropy_multisentence(ngram, cleaned, "right")
-
-                # Cohesion (internal binding strength)
-                cohesion = _compute_cohesion(ngram, ngram_counts, total_chars)
-
-                # Combined score: weighted sum
-                score = (
-                    pmi_val * 0.3 +
-                    llr_val * 0.3 +
-                    min(le, re_val) * 0.2 +
-                    cohesion * 0.2
+                if _contains_function_char(ngram):
+                    continue
+                if not _is_mtl_aligned(ngram, mtl_full, mtl_boundaries):
+                    continue
+                if _is_locked_fragment(ngram, freq, ngram_counts, cleaned, max_len):
+                    continue
+                cand = _score_ngram(
+                    ngram, ngram_counts, char_counts, cleaned, total_chars, pos_totals
                 )
-
-                if score >= adaptive_min_score:
-                    candidates.append(Candidate(
-                        word=ngram,
-                        score=score,
-                        pmi=pmi_val,
-                        llr=llr_val,
-                        left_entropy=le,
-                        right_entropy=re_val,
-                        cohesion=cohesion,
-                        frequency=freq,
-                    ))
+                if cand.score >= adaptive_min_score:
+                    candidates.append(cand)
 
     # ---- Sort & Filter ----
     candidates.sort(key=lambda c: (-c.score, -len(c.word)))
@@ -211,7 +293,7 @@ def discover(
     return DiscoverResult(
         candidates=filtered[:max_candidates],
         text_length=total_chars,
-        total_ngrams=0,
+        total_ngrams=total_ngrams,
     )
 
 
@@ -234,76 +316,134 @@ def _adaptive_min_freq(total_chars: int, default_min_freq: int) -> int:
 
 
 def _adaptive_min_score(total_chars: int, default_min_score: float) -> float:
-    """Adapt min_score based on text length.
+    """Adapt min_score (in [0, 1]) based on text length.
 
-    Short texts: lower threshold (0.3) to allow more candidates
-    Long texts: use default threshold
+    Short texts: lower threshold to allow more candidates.
     """
     if total_chars < 50:
         return min(default_min_score, 0.3)
     if total_chars < 100:
-        return default_min_score * 0.6
+        return min(default_min_score, 0.4)
     return default_min_score
 
 
 # ---------------------------------------------------------------------------
-# LLR (Log-Likelihood Ratio) Test
+# Scoring
 # ---------------------------------------------------------------------------
+
+def _score_ngram(
+    word: str,
+    ngram_counts: dict[int, Counter],
+    char_counts: Counter,
+    sentences: list[str],
+    total_chars: int,
+    pos_totals: dict[int, int],
+) -> Candidate:
+    """Compute all statistics and the normalized combined score for a word."""
+    n = len(word)
+    freq = ngram_counts.get(n, Counter()).get(word, 0)
+    pmi_val = _compute_pmi(word, freq, ngram_counts, char_counts, total_chars)
+    llr_val = _compute_llr(
+        word, freq, char_counts, total_chars, pos_totals.get(n, 0)
+    )
+    le, le_n = _compute_entropy_multisentence(word, sentences, "left")
+    re_val, re_n = _compute_entropy_multisentence(word, sentences, "right")
+    cohesion = _compute_cohesion(word, ngram_counts, char_counts, total_chars)
+    ent = _effective_entropy(le, le_n, re_val, re_n)
+    score = (
+        _norm_pmi(pmi_val) * 0.3
+        + _norm_llr(llr_val) * 0.3
+        + _norm_entropy(ent) * 0.2
+        + cohesion * 0.2
+    )
+    return Candidate(
+        word=word,
+        score=score,
+        pmi=pmi_val,
+        llr=llr_val,
+        left_entropy=le,
+        right_entropy=re_val,
+        cohesion=cohesion,
+        frequency=freq,
+    )
+
+
+def _compute_pmi(
+    ngram: str,
+    freq: int,
+    ngram_counts: dict[int, Counter],
+    char_counts: Counter,
+    total_chars: int,
+) -> float:
+    """Compute average PMI over all internal splits of an n-gram.
+
+    Single-char sub-parts use the true character counts (char_counts);
+    longer sub-parts use the n-gram counts. Splits whose sub-part never
+    occurs are skipped (no smoothing bias), so 2-gram and longer n-grams
+    are scored on the same footing.
+    """
+    n = len(ngram)
+    if n == 1 or freq == 0 or total_chars < n:
+        return 0.0
+    pmis = []
+    for split in range(1, n):
+        left = ngram[:split]
+        right = ngram[split:]
+        lf = (char_counts.get(left, 0) if len(left) == 1
+              else ngram_counts.get(len(left), Counter()).get(left, 0))
+        rf = (char_counts.get(right, 0) if len(right) == 1
+              else ngram_counts.get(len(right), Counter()).get(right, 0))
+        if lf == 0 or rf == 0:
+            continue
+        p_joint = freq / max(total_chars - n + 1, 1)
+        p_left = lf / max(total_chars - len(left) + 1, 1)
+        p_right = rf / max(total_chars - len(right) + 1, 1)
+        if p_joint > 0 and p_left * p_right > 0:
+            pmis.append(math.log2(p_joint / (p_left * p_right)))
+    return sum(pmis) / len(pmis) if pmis else 0.0
+
 
 def _compute_llr(
     ngram: str,
     freq: int,
     char_counts: Counter,
     total_chars: int,
+    ngram_positions: int,
 ) -> float:
-    """Compute log-likelihood ratio for an n-gram.
+    """Compute log-likelihood ratio (G-test) for an n-gram.
 
-    LLR tests whether the characters in the n-gram co-occur more often
-    than expected by chance. Higher LLR = stronger evidence of a word.
+    Tests whether the characters in the n-gram co-occur more often than
+    expected under character independence. Higher LLR = stronger evidence
+    of a word.
 
-    Formula: LLR = 2 * sum(observed * log(observed/expected))
+    Full four-cell G-test:
+        LLR = 2 * sum over cells of O * ln(O / E)
     """
     n = len(ngram)
-    if n == 1 or total_chars < n:
+    if n == 1 or freq == 0 or ngram_positions <= 0 or total_chars < n:
         return 0.0
 
-    # Count individual characters in the n-gram
-    ngram_char_counts = Counter(ngram)
-
-    # Expected frequency: product of individual char probabilities * total
-    # For each character, compute its standalone probability
+    # Expected frequency under the independence model
     expected_freq = 1.0
-    for ch, ch_freq in ngram_char_counts.items():
+    for ch, ch_freq in Counter(ngram).items():
         ch_prob = char_counts.get(ch, 0) / max(total_chars, 1)
         expected_freq *= ch_prob ** ch_freq
 
-    expected_count = expected_freq * max(total_chars - n + 1, 1)
-
+    expected_count = expected_freq * ngram_positions
     if expected_count < 0.001:
         return 0.0
 
-    # LLR = 2 * (observed * log(obs/expected) + (total-obs) * log(...))
-    total_ngrams = max(total_chars - n + 1, 1)
-    obs = freq
-    exp = expected_count
-
-    if obs == 0 or exp == 0:
-        return 0.0
-
-    # Full G-test LLR formula:
-    # LLR = 2 * [obs * ln(obs/exp) + (total-obs) * ln((total-obs)/(total-exp))]
-    # Using natural log as standard for G-test
-    remaining = total_ngrams - obs
-    expected_remaining = total_ngrams - exp
-
+    remaining = ngram_positions - freq
+    expected_remaining = ngram_positions - expected_count
     if remaining <= 0 or expected_remaining <= 0:
         return 0.0
 
-    llr = 2.0 * (
-        obs * math.log(obs / exp) +
-        remaining * math.log(remaining / expected_remaining)
+    return 2.0 * (
+        freq * math.log(freq / expected_count)
+        + expected_count * math.log(expected_count / freq)
+        + remaining * math.log(remaining / expected_remaining)
+        + expected_remaining * math.log(expected_remaining / remaining)
     )
-    return llr
 
 
 # ---------------------------------------------------------------------------
@@ -313,16 +453,15 @@ def _compute_llr(
 def _compute_cohesion(
     ngram: str,
     ngram_counts: dict[int, Counter],
+    char_counts: Counter,
     total_chars: int,
 ) -> float:
     """Compute internal cohesion of an n-gram.
 
     Cohesion measures how tightly the characters within a candidate word
-    are bound together. A true word has high internal cohesion — its
-    sub-parts don't appear independently very often.
-
-    Formula: cohesion = PMI of internal splits / number of splits
-    Normalized to [0, 1] range via sigmoid-like function.
+    are bound together: the average PMI over all internal splits, mapped
+    to [0, 1] via a sigmoid (scaled by 2 so typical PMI values of a few
+    bits do not saturate the curve).
     """
     n = len(ngram)
     if n <= 1:
@@ -332,13 +471,14 @@ def _compute_cohesion(
     for split in range(1, n):
         left = ngram[:split]
         right = ngram[split:]
-
-        lf = ngram_counts.get(len(left), Counter()).get(left, 0)
-        rf = ngram_counts.get(len(right), Counter()).get(right, 0)
+        lf = (char_counts.get(left, 0) if len(left) == 1
+              else ngram_counts.get(len(left), Counter()).get(left, 0))
+        rf = (char_counts.get(right, 0) if len(right) == 1
+              else ngram_counts.get(len(right), Counter()).get(right, 0))
         joint = ngram_counts.get(n, Counter()).get(ngram, 0)
 
         if lf == 0 or rf == 0 or joint == 0:
-            pmis.append(0)
+            pmis.append(0.0)
             continue
 
         p_joint = joint / max(total_chars - n + 1, 1)
@@ -346,101 +486,31 @@ def _compute_cohesion(
         p_right = rf / max(total_chars - len(right) + 1, 1)
 
         if p_left * p_right > 0:
-            pmi = math.log2(p_joint / (p_left * p_right))
+            pmis.append(math.log2(p_joint / (p_left * p_right)))
         else:
-            pmi = 0
+            pmis.append(0.0)
 
-        pmis.append(pmi)
+    avg_pmi = sum(pmis) / len(pmis) if pmis else 0.0
 
-    avg_pmi = sum(pmis) / len(pmis) if pmis else 0
-
-    # Normalize to [0, 1] via sigmoid: 1 / (1 + exp(-avg_pmi))
-    # This maps PMI (-inf to +inf) to (0, 1)
     try:
-        cohesion = 1.0 / (1.0 + math.exp(-avg_pmi))
+        return 1.0 / (1.0 + math.exp(-avg_pmi / 2.0))
     except OverflowError:
-        cohesion = 1.0 if avg_pmi > 0 else 0.0
-
-    return cohesion
+        return 1.0 if avg_pmi > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Left/Right Entropy
 # ---------------------------------------------------------------------------
 
-def _split_sentences(text: str) -> list[str]:
-    """Split at sentence-boundary punctuation."""
-    parts = _SENT_SPLIT_RE.split(text)
-    return [p.strip() for p in parts if p.strip()]
+def _compute_entropy_multisentence(
+    ngram: str, sentences: list[str], side: str
+) -> tuple[float, int]:
+    """Compute branching entropy of the neighbor on one side of an n-gram.
 
-
-def _clean_text(text: str) -> str:
-    """Keep CJK chars + digits; remove punctuation."""
-    text = _PUNCT_RE.sub("", text)
-    return "".join(
-        ch for ch in text
-        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" or ch.isdigit()
-    )
-
-
-def _count_ngrams(text: str, n: int) -> Counter:
-    """Count all n-grams in text."""
-    counts: Counter = Counter()
-    for i in range(len(text) - n + 1):
-        ngram = text[i : i + n]
-        counts[ngram] += 1
-    return counts
-
-
-def _compute_pmi(
-    ngram: str,
-    freq: int,
-    ngram_counts: dict[int, Counter],
-    total_chars: int,
-) -> float:
-    """Compute average PMI for an n-gram."""
-    n = len(ngram)
-    if n == 2:
-        c1 = ngram_counts[2].get(ngram, 0)
-        if total_chars < 2:
-            return 0.0
-        p_ab = c1 / (total_chars - 1)
-        c_a = ngram_counts.get(1, Counter()).get(ngram[0], 0) or _count_char_fallback(ngram[0], ngram_counts)
-        c_b = ngram_counts.get(1, Counter()).get(ngram[1], 0) or _count_char_fallback(ngram[1], ngram_counts)
-        if c_a == 0 or c_b == 0:
-            return 0.0
-        p_a = c_a / total_chars
-        p_b = c_b / total_chars
-        return math.log2(p_ab / (p_a * p_b)) if p_a * p_b > 0 else 0.0
-    else:
-        pmis = []
-        for split in range(1, n):
-            left = ngram[:split]
-            right = ngram[split:]
-            lf = ngram_counts.get(len(left), Counter()).get(left, 1)
-            rf = ngram_counts.get(len(right), Counter()).get(right, 1)
-            if lf == 0 or rf == 0:
-                continue
-            p_joint = freq / max(total_chars - n + 1, 1)
-            p_left = lf / max(total_chars - len(left) + 1, 1)
-            p_right = rf / max(total_chars - len(right) + 1, 1)
-            if p_joint > 0 and p_left * p_right > 0:
-                pmis.append(math.log2(p_joint / (p_left * p_right)))
-        return sum(pmis) / len(pmis) if pmis else 0.0
-
-
-def _count_char_fallback(ch: str, ngram_counts: dict[int, Counter]) -> int:
-    """Count single character occurrences across all n-gram levels."""
-    count = 0
-    for n in [2, 3, 4]:
-        if n in ngram_counts:
-            for ng, c in ngram_counts[n].items():
-                count += ng.count(ch) * c
-    return max(count, 1)
-
-
-def _compute_entropy_multisentence(ngram: str, sentences: list[str], side: str) -> float:
-    """Compute branching entropy across multiple sentences."""
+    Returns (entropy, neighbor_count). neighbor_count == 0 means the
+    n-gram never has a neighbor on that side (e.g. always at sentence
+    start) — callers must not treat that as a "stable boundary".
+    """
     neighbors: Counter = Counter()
     n = len(ngram)
     for text in sentences:
@@ -456,103 +526,212 @@ def _compute_entropy_multisentence(ngram: str, sentences: list[str], side: str) 
             idx += 1
     total = sum(neighbors.values())
     if total == 0:
+        return 0.0, 0
+    return -sum((c / total) * math.log2(c / total) for c in neighbors.values()), total
+
+
+def _effective_entropy(le: float, le_n: int, re_val: float, re_n: int) -> float:
+    """Combine left/right entropy into one boundary-diversity signal.
+
+    A true word combines with diverse contexts on BOTH sides; a fragment
+    of a longer unit has at least one fixed side. When one side has no
+    neighbor at all (sentence edge), fall back to the other side instead
+    of letting min() zero out the signal.
+    """
+    if le_n == 0 and re_n == 0:
         return 0.0
-    return -sum((c / total) * math.log2(c / total) for c in neighbors.values())
+    if le_n == 0:
+        return re_val
+    if re_n == 0:
+        return le
+    return min(le, re_val)
+
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+def _contains_function_char(word: str) -> bool:
+    """True if the word contains a pure function character (的/了/和/...)."""
+    return any(ch in _FUNCTION_CHARS for ch in word)
+
+
+def _build_mtl_index(token_texts: list[str]) -> tuple[str, set[int]]:
+    """Build the concatenated token string and the set of token boundaries."""
+    parts: list[str] = []
+    boundaries: set[int] = {0}
+    pos = 0
+    for t in token_texts:
+        parts.append(t)
+        pos += len(t)
+        boundaries.add(pos)
+    return "".join(parts), boundaries
+
+
+def _is_mtl_aligned(
+    word: str, mtl_full: Optional[str], mtl_boundaries: Optional[set[int]]
+) -> bool:
+    """Check whether a candidate is a union of whole MTL tokens.
+
+    A true new word is something MTL splits into pieces but should be one
+    word — it must start and end on token boundaries. A candidate that
+    cuts across a token is a fragment of a known word.
+
+    If the token stream does not contain the word at all (e.g. the
+    tokenizer normalized the text differently), the check is skipped
+    (returns True) rather than filtering on bad data.
+    """
+    if mtl_full is None or mtl_boundaries is None:
+        return True
+    n = len(word)
+    start = 0
+    found_any = False
+    while True:
+        idx = mtl_full.find(word, start)
+        if idx < 0:
+            return not found_any
+        found_any = True
+        if idx in mtl_boundaries and idx + n in mtl_boundaries:
+            return True
+        start = idx + 1
+
+
+def _is_locked_fragment(
+    word: str,
+    freq: int,
+    ngram_counts: dict[int, Counter],
+    sentences: list[str],
+    max_len: int,
+) -> bool:
+    """Detect fragments locked inside a longer repeated unit.
+
+    A side is "locked" when the candidate is almost always (>= 80% of
+    occurrences, at least 2 times) extended on that side by a single fixed
+    character, or pinned to a sentence boundary. The one exception is a
+    boundary-marking function character (和/与/是/...): it marks a normal
+    phrase boundary, so that side stays open (高强度 in "…高强度和高韧性").
+    Attaching function characters (的/在/了/…) are NOT an exception —
+    they belong to a longer unit, so 成本正 in "的成本正在下降" is locked
+    on both sides and rejected.
+    If BOTH sides are locked, the candidate is a sliding-window fragment
+    of a longer string rather than a word.
+    """
+    n = len(word)
+    if n + 1 > max_len or freq < 2:
+        return False
+    ext = ngram_counts.get(n + 1, Counter())
+    threshold = 0.8 * freq
+
+    left_exts = [(ng, c) for ng, c in ext.items() if ng.endswith(word)]
+    right_exts = [(ng, c) for ng, c in ext.items() if ng.startswith(word)]
+
+    left_boundary = _count_at_boundary(word, sentences, "left")
+    right_boundary = _count_at_boundary(word, sentences, "right")
+
+    return (_side_locked(left_exts, left_boundary, "left", threshold)
+            and _side_locked(right_exts, right_boundary, "right", threshold))
+
+
+def _side_locked(
+    exts: list[tuple[str, int]], boundary_count: int, side: str, threshold: float
+) -> bool:
+    """True if one side of a candidate is locked (see _is_locked_fragment).
+
+    A dominant single-character extension locks the side unless the
+    neighbor is a boundary-marking function character (和/与/是/...),
+    which denotes a normal phrase edge rather than a longer word unit.
+    """
+    for ng, c in exts:
+        if c >= 2 and c >= threshold:
+            neighbor = ng[0] if side == "left" else ng[-1]
+            if neighbor not in _BOUNDARY_FUNC:
+                return True
+    return boundary_count >= 2 and boundary_count >= threshold
+
+
+def _count_at_boundary(word: str, sentences: list[str], side: str) -> int:
+    """Count occurrences of word at the start/end of a sentence."""
+    n = len(word)
+    count = 0
+    for s in sentences:
+        idx = 0
+        while True:
+            idx = s.find(word, idx)
+            if idx < 0:
+                break
+            if (side == "left" and idx == 0) or (side == "right" and idx + n == len(s)):
+                count += 1
+            idx += 1
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _split_sentences(text: str) -> list[str]:
+    """Split at sentence/clause-boundary punctuation."""
+    parts = _SENT_SPLIT_RE.split(text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _clean_text(text: str) -> str:
+    """Keep CJK chars + digits; remove punctuation."""
+    text = _PUNCT_RE.sub("", text)
+    return "".join(
+        ch for ch in text
+        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" or ch.isdigit()
+    )
+
+
+def _count_ngrams(text: str, n: int) -> Counter:
+    """Count all (overlapping) n-grams in text."""
+    counts: Counter = Counter()
+    for i in range(len(text) - n + 1):
+        counts[text[i : i + n]] += 1
+    return counts
 
 
 # ---------------------------------------------------------------------------
 # MTL-Based Discovery
 # ---------------------------------------------------------------------------
 
-_COMPOUND_POS: set[str] = {"NN", "NR", "JJ", "NT"}
+def _discover_from_mtl(tokens: list) -> list[str]:
+    """Find merge candidates from MTL token output.
 
-# Merge POS types: nouns, adjectives, verbs (for compound verbs like 分析, 优化)
-_MERGE_POS: set[str] = {"NN", "NR", "JJ", "NT", "VV"}
-
-# Don't merge if one side is a common single char
-_DONT_MERGE_AFTER: set[str] = {"的", "了", "和", "与", "或", "是", "有"}
-
-# Common single-char tokens unlikely to form new words
-_COMMON_SINGLE: set[str] = {
-    "的", "了", "是", "在", "和", "与", "或", "不", "也", "都", "就",
-    "把", "被", "让", "给", "对", "从", "到", "向", "由", "以", "为",
-    "因", "所", "而", "且", "但", "却", "只", "还", "又", "再", "才",
-    "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
-    "个", "些", "种", "次", "回", "遍", "趟", "这", "那", "哪", "每",
-    "我", "你", "他", "她", "它", "们", "其",
-    "着", "过", "得", "地", "之", "已", "将", "能", "会", "可", "要",
-    "上", "下", "中", "里", "外", "前", "后", "左", "右",
-    "大", "小", "多", "少", "新", "旧", "好", "坏", "高", "低",
-    "用", "做", "来", "去", "出", "进", "开", "关", "有", "没",
-    "年", "月", "日", "时", "分", "秒", "今", "明", "昨",
-    "说", "想", "看", "听", "吃", "喝", "走", "跑", "写", "读",
-    "人", "手", "口", "心", "水", "火", "土", "木", "金",
-    "第", "如", "等", "吗", "呢", "吧", "啊", "嘛", "呀",
-}
-
-
-def _discover_from_mtl(tokens: list, sentences: list[str]) -> list[Candidate]:
-    """Find candidate compound words from MTL token output.
-
-    Strategy:
-    - Multi-char tokens → direct candidates
-    - Consecutive single-char NN/NR/JJ tokens → merge candidate
+    Consecutive single-char content tokens (nouns/verbs/adjectives, both
+    CTB and Universal POS tagsets) are merged into candidates — these are
+    sequences MTL split that should probably be one word.
     """
-    candidates: list[Candidate] = []
-    if not tokens:
-        return candidates
-
-    all_text = "".join(sentences)
-
+    candidates: list[str] = []
+    seen: set[str] = set()
     i = 0
     while i < len(tokens):
         t = tokens[i]
-
-        # Multi-char token: add as candidate (only for content-word POS)
-        if len(t.text) >= 2:
-            if t.text not in _COMMON_SINGLE and getattr(t, "pos", "") in _COMPOUND_POS:
-                freq = all_text.count(t.text)
-                candidates.append(Candidate(
-                    word=t.text, score=5.0 + (0.5 if freq >= 2 else 0),
-                    pmi=0, llr=0, left_entropy=0, right_entropy=0,
-                    cohesion=1.0, frequency=freq,
-                ))
-            i += 1
-            continue
-
-        # Single char: try merging consecutive MERGE_POS tokens
         pos_tag = getattr(t, "pos", "")
         if (len(t.text) == 1
-                and t.text not in _COMMON_SINGLE
+                and t.text not in _FUNCTION_CHARS
+                and t.text not in _DONT_MERGE_AFTER
                 and pos_tag in _MERGE_POS):
             run_text = t.text
             j = i + 1
-            while j < len(tokens) and j - i < 4:  # extended from 3 to 4
+            while j < len(tokens) and j - i < 4:  # merge runs up to 4 chars
                 nt = tokens[j]
                 nt_pos = getattr(nt, "pos", "")
                 if (len(nt.text) == 1
-                        and nt.text not in _COMMON_SINGLE
+                        and nt.text not in _FUNCTION_CHARS
                         and nt.text not in _DONT_MERGE_AFTER
                         and nt_pos in _MERGE_POS):
                     run_text += nt.text
                     j += 1
                 else:
                     break
-            if len(run_text) >= 2:
-                freq = all_text.count(run_text)
-                le = _compute_entropy_multisentence(run_text, sentences, "left")
-                re_val = _compute_entropy_multisentence(run_text, sentences, "right")
-                # Score: merge length * 1.5 + entropy bonus
-                score = (j - i) * 1.5 + min(le, re_val) + (0.5 if freq >= 2 else 0)
-                candidates.append(Candidate(
-                    word=run_text, score=score, pmi=j - i, llr=0,
-                    left_entropy=le, right_entropy=re_val,
-                    cohesion=0.8, frequency=freq,
-                ))
+            if len(run_text) >= 2 and run_text not in seen:
+                seen.add(run_text)
+                candidates.append(run_text)
             i = j
         else:
             i += 1
-
     return candidates
 
 
@@ -589,6 +768,7 @@ def discover_words(text: str, **kwargs) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _coarse_tok: object | None = None
+_coarse_tok_lock = threading.Lock()
 
 
 def _get_coarse_tok():
@@ -596,13 +776,16 @@ def _get_coarse_tok():
     global _coarse_tok
     if _coarse_tok is not None:
         return _coarse_tok
-    try:
-        import hanlp
-        _coarse_tok = hanlp.load(hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH, verbose=False)
-        return _coarse_tok
-    except Exception as exc:
-        logger.warning("Coarse tokenizer not available: %s", exc)
-        return None
+    with _coarse_tok_lock:
+        if _coarse_tok is not None:  # double-checked after acquiring lock
+            return _coarse_tok
+        try:
+            import hanlp
+            _coarse_tok = hanlp.load(hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH, verbose=False)
+            return _coarse_tok
+        except Exception as exc:
+            logger.warning("Coarse tokenizer not available: %s", exc)
+            return None
 
 
 def discover_convseg(text: str) -> dict | None:
