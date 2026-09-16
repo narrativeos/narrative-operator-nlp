@@ -44,7 +44,17 @@ def _toks(pairs: list[tuple[str, str, int, int]]) -> list[Token]:
 
 
 def _chains(resolver: CorefResolver, ents, toks, language: str):
-    return resolver.resolve("x", ents, toks, language).chains
+    # Reconstruct surface text by placing each token at its span offset
+    # (gaps such as English spaces stay blank) so sentence-boundary checks
+    # see real punctuation.
+    if toks:
+        buf = [""] * toks[-1].span[1]
+        for t in toks:
+            buf[t.span[0]:t.span[1]] = list(t.text)
+        text = "".join(buf)
+    else:
+        text = ""
+    return resolver.resolve(text, ents, toks, language).chains
 
 
 def _chain_with(chains, text: str):
@@ -242,3 +252,181 @@ class TestMentionCategoryField:
                         if m.mention_type == "entity"]
         assert ent_mentions and all(m.category == "PERSON"
                                     for m in ent_mentions)
+
+
+class TestFirstConjunctPreference:
+    """H1: coordinated pairs (A 和 B) prefer the left conjunct."""
+
+    def test_coordinated_subject_prefers_first(self, resolver):
+        # 张三 和 李四 去 北京 。 他 …  →  他 = 张三
+        # (person tier skips the LOCATION object, first conjunct wins)
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2)),
+                _ent("ent_002", "李四", "PERSON", (3, 5)),
+                _ent("ent_003", "北京", "LOCATION", (6, 8))]
+        toks = _toks([("张三", "NR", 0, 2), ("和", "CC", 2, 3),
+                      ("李四", "NR", 3, 5), ("去", "VV", 5, 6),
+                      ("北京", "NR", 6, 8), ("。", "PU", 8, 9),
+                      ("他", "PRP", 9, 10)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert chain is not None
+        assert any(m.text == "张三" for m in chain.mentions)
+        assert not any(m.text == "李四" for m in chain.mentions)
+
+    def test_object_reference_kept_without_conjunction(self, resolver):
+        # 张三 打 了 李四 。 他 …  →  他 = 李四 (no CC between the anchors)
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2)),
+                _ent("ent_002", "李四", "PERSON", (4, 6))]
+        toks = _toks([("张三", "NR", 0, 2), ("打", "VV", 2, 3),
+                      ("了", "AS", 3, 4), ("李四", "NR", 4, 6),
+                      ("。", "PU", 6, 7), ("他", "PRP", 7, 8)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert chain is not None
+        assert any(m.text == "李四" for m in chain.mentions)
+        assert not any(m.text == "张三" for m in chain.mentions)
+
+    def test_non_conjunction_verb_does_not_trigger(self, resolver):
+        # 不及 is a verb (VV), not a conjunction — must NOT trigger the
+        # first-conjunct preference.
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2)),
+                _ent("ent_002", "李四", "PERSON", (4, 6))]
+        toks = _toks([("张三", "NR", 0, 2), ("不及", "VV", 2, 4),
+                      ("李四", "NR", 4, 6), ("。", "PU", 6, 7),
+                      ("他", "PRP", 7, 8)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert chain is not None
+        assert any(m.text == "李四" for m in chain.mentions)
+
+
+class TestSentenceBoundaryDistance:
+    """H1: cross-sentence resolution is penalized and distance-capped."""
+
+    def test_cross_sentence_short_distance_resolves(self, resolver):
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2))]
+        toks = _toks([("张三", "NR", 0, 2), ("说", "VV", 2, 3),
+                      ("了", "AS", 3, 4), ("。", "PU", 4, 5),
+                      ("他", "PRP", 5, 6)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert any(m.text == "张三" for m in chain.mentions)
+
+    def test_cross_sentence_long_distance_unresolved(self, resolver):
+        # Anchor > 60 chars away across a sentence boundary → no resolution.
+        # Filler alternates NN/VV so no long nominal anchor is extracted.
+        filler = [(("字", "NN", 6 + i * 4, 8 + i * 4),
+                   ("走", "VV", 8 + i * 4, 10 + i * 4)) for i in range(15)]
+        pron_start = 66  # distance from 张三 (ends 2) = 64 > 60
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2))]
+        toks = _toks([("张三", "NR", 0, 2), ("说", "VV", 2, 3),
+                      ("了", "AS", 3, 4), ("。", "PU", 4, 5),
+                      ("。", "PU", 5, 6)] + [t for pair in filler for t in pair]
+                 + [("他", "PRP", pron_start, pron_start + 1)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert chain is not None
+        assert all(m.mention_type == "pronoun" for m in chain.mentions)
+
+    def test_same_sentence_long_distance_allowed(self, resolver):
+        # No sentence-final punctuation → same sentence → no distance cap.
+        # Filler alternates NN/VV so no long nominal anchor is extracted.
+        filler = [(("字", "NN", 3 + i * 4, 5 + i * 4),
+                   ("走", "VV", 5 + i * 4, 7 + i * 4)) for i in range(15)]
+        pron_start = 63
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2))]
+        toks = _toks([("张三", "NR", 0, 2), ("的", "DEG", 2, 3)]
+                 + [t for pair in filler for t in pair]
+                 + [("他", "PRP", pron_start, pron_start + 1)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert any(m.text == "张三" for m in chain.mentions)
+
+    def test_same_sentence_beats_distant_cross_sentence(self, resolver):
+        # A far cross-sentence anchor must lose to a near same-sentence one
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2)),
+                _ent("ent_002", "李四", "PERSON", (12, 14))]
+        toks = _toks([("张三", "NR", 0, 2), ("说", "VV", 2, 3),
+                      ("了", "AS", 3, 4), ("。", "PU", 4, 5),
+                      ("填", "VV", 5, 12), ("李四", "NR", 12, 14),
+                      ("他", "PRP", 14, 15)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert any(m.text == "李四" for m in chain.mentions)
+        assert not any(m.text == "张三" for m in chain.mentions)
+
+
+class TestPersonTierPreference:
+    """S3/H1: 他/她 prefer PERSON anchors over known non-PERSON ones."""
+
+    def test_person_pronoun_skips_location_object(self, resolver):
+        # 李四 参观 了 北京 。 他 …  →  他 = 李四, not the nearer 北京
+        ents = [_ent("ent_001", "李四", "PERSON", (0, 2)),
+                _ent("ent_002", "北京", "LOCATION", (5, 7))]
+        toks = _toks([("李四", "NR", 0, 2), ("参观", "VV", 2, 4),
+                      ("了", "AS", 4, 5), ("北京", "NR", 5, 7),
+                      ("。", "PU", 7, 8), ("他", "PRP", 8, 9)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "他")
+        assert chain is not None
+        assert any(m.text == "李四" for m in chain.mentions)
+        assert not any(m.text == "北京" for m in chain.mentions)
+
+    def test_english_he_skips_location_object(self, resolver):
+        # Alice visited Paris. He …  →  He = Alice (not Paris)
+        ents = [_ent("ent_001", "Alice", "PERSON", (0, 5)),
+                _ent("ent_002", "Paris", "LOCATION", (13, 18))]
+        toks = _toks([("Alice", "PROPN", 0, 5), ("visited", "VERB", 5, 12),
+                      ("Paris", "PROPN", 13, 18), (".", "PUNCT", 18, 19),
+                      ("He", "PRP", 19, 21)])
+        chains = _chains(resolver, ents, toks, "english")
+        chain = _chain_with(chains, "He")
+        assert chain is not None
+        assert any(m.text == "Alice" for m in chain.mentions)
+        assert not any(m.text == "Paris" for m in chain.mentions)
+
+
+class TestGenderConsistency:
+    """S3: 他 and 她 must not share one chain."""
+
+    def test_opposite_gender_pronouns_split(self, resolver):
+        # 张三 帮 她 买 了 他  →  她 joins 张三; 他 must NOT
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2))]
+        toks = _toks([("张三", "NR", 0, 2), ("帮", "VV", 2, 3),
+                      ("她", "PRP", 3, 4), ("买", "VV", 4, 5),
+                      ("了", "AS", 5, 6), ("他", "PRP", 6, 7)])
+        chains = _chains(resolver, ents, toks, "modern")
+        she_chain = _chain_with(chains, "她")
+        he_chain = _chain_with(chains, "他")
+        assert she_chain is not None and he_chain is not None
+        assert she_chain is not he_chain, "他 and 她 share a chain"
+        assert any(m.text == "张三" for m in she_chain.mentions)
+        assert all(m.mention_type == "pronoun" for m in he_chain.mentions)
+
+    def test_same_gender_pronouns_share(self, resolver):
+        # 她 … 她 → same chain
+        ents = [_ent("ent_001", "张三", "PERSON", (0, 2))]
+        toks = _toks([("张三", "NR", 0, 2), ("帮", "VV", 2, 3),
+                      ("她", "PRP", 3, 4), ("买", "VV", 4, 5),
+                      ("了", "AS", 5, 6), ("她", "PRP", 6, 7)])
+        chains = _chains(resolver, ents, toks, "modern")
+        chain = _chain_with(chains, "她")
+        assert sum(1 for m in chain.mentions if m.text == "她") == 2
+
+
+class TestClassicalUnpunctuated:
+    """Classical text has no punctuation — long-distance must still work."""
+
+    def test_long_distance_without_punctuation(self, resolver):
+        # Filler alternates NOUN/VERB so no long nominal anchor appears.
+        filler = [(("字", "NOUN", 3 + i * 4, 5 + i * 4),
+                   ("走", "VERB", 5 + i * 4, 7 + i * 4)) for i in range(15)]
+        pron_start = 63
+        ents = [_ent("ent_001", "项羽", "PERSON", (0, 2))]
+        toks = _toks([("项羽", "PROPN", 0, 2), ("举", "VERB", 2, 3)]
+                 + [t for pair in filler for t in pair]
+                 + [("之", "PRON", pron_start, pron_start + 1)])
+        chains = _chains(resolver, ents, toks, "classical")
+        chain = _chain_with(chains, "之")
+        assert chain is not None
+        assert any(m.text == "项羽" for m in chain.mentions)

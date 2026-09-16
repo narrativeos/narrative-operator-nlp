@@ -105,6 +105,30 @@ _EN_PRONUN = {
 # "She"/"He"/"They" must match the lowercase dictionary keys).
 _EN_PRONUN_LOWER = frozenset(w.lower() for w in _EN_PRONUN)
 
+# ---------------------------------------------------------------------------
+# Pronoun resolution strategy (batch 3)
+# ---------------------------------------------------------------------------
+
+# Sentence-final punctuation that bounds coreference distance.
+# Unpunctuated classical text simply has no boundaries — every anchor
+# stays "same sentence", which is the intended degraded behavior.
+_SENTENCE_END_CHARS = frozenset("。！？!?…\n")
+
+# Maximum character distance for CROSS-sentence pronoun resolution.
+# Same-sentence anchors are never distance-capped (sentences are bounded).
+_CROSS_SENTENCE_MAX_DIST = 60
+
+# Penalty added to the distance score of cross-sentence anchors so that
+# same-sentence anchors always win at comparable distance.
+_CROSS_SENTENCE_PENALTY = 100
+
+# Tier separator: person pronouns (他/她/he/she) strongly prefer PERSON
+# anchors over known non-PERSON anchors (e.g. 他 after "…去了北京" should
+# not take the LOCATION object). Anchors with unknown category (nominals)
+# are never penalized. Deliberately larger than any realistic distance or
+# the cross-sentence penalty so it acts as a hard tier.
+_NON_PERSON_PENALTY = 1000
+
 
 # ---------------------------------------------------------------------------
 # Core Resolver
@@ -158,7 +182,7 @@ class CorefResolver:
             return CorefResult(language=language)
 
         # Step 2: Group mentions into chains
-        chains = self._cluster_mentions(mentions, language)
+        chains = self._cluster_mentions(mentions, language, text, tokens)
 
         # Step 3: Build CoreferenceChain objects
         result_chains = self._build_chains(chains, language)
@@ -349,12 +373,14 @@ class CorefResolver:
         self,
         mentions: list[Mention],
         language: str,
+        text: str,
+        tokens: list[Token],
     ) -> list[list[Mention]]:
         """Cluster mentions into coreference chains.
 
         Algorithm:
         1. Group by exact text match (same-name entities AND nominals)
-        2. Resolve pronouns to nearest compatible anchor (entity or nominal)
+        2. Resolve pronouns to best compatible anchor (entity or nominal)
         3. Resolve nominal mentions to nearest compatible anchor
         """
         clusters: list[list[Mention]] = []
@@ -400,10 +426,12 @@ class CorefResolver:
                     clusters.append([m])
                     used.add(id(m))
 
-        # Step 2: Resolve pronouns to nearest compatible anchor
+        # Step 2: Resolve pronouns to best compatible anchor
         for m in mentions:
             if m.mention_type == "pronoun" and id(m) not in used:
-                target = self._resolve_pronoun(m, mentions, clusters, language)
+                target = self._resolve_pronoun(
+                    m, mentions, clusters, language, text, tokens,
+                )
                 if target is not None:
                     target.append(m)
                     used.add(id(m))
@@ -466,25 +494,150 @@ class CorefResolver:
         all_mentions: list[Mention],
         clusters: list[list[Mention]],
         language: str,
+        text: str,
+        tokens: list[Token],
     ) -> Optional[list[Mention]]:
-        """Resolve a pronoun to the nearest compatible anchor (entity or nominal)."""
+        """Resolve a pronoun to the best compatible anchor cluster.
+
+        Strategy (rule-based):
+        1. Candidate anchors: entity/nominal mentions before the pronoun.
+        2. Hard filters: person compatibility (``_is_compatible``) and
+           gender consistency with pronouns already in the cluster.
+        3. Scoring: character distance; cross-sentence anchors pay a
+           penalty and are rejected beyond ``_CROSS_SENTENCE_MAX_DIST``;
+           person pronouns (他/她/he/she) pay a tier penalty for known
+           non-PERSON anchors so a nearby location/object loses to a
+           farther person.
+        4. First-conjunct preference: if the winning anchor is the right
+           conjunct of a coordinated pair (a CC token sits between the
+           two anchors), the left conjunct's cluster wins instead.
+        """
         pronoun_features = self._get_pronoun_features(pronoun.text, language)
 
-        best_cluster = None
-        best_distance = float("inf")
+        best_cluster: Optional[list[Mention]] = None
+        best_anchor: Optional[Mention] = None
+        best_score = float("inf")
 
         for cluster in clusters:
-            # Find the nearest anchor (entity or nominal) before the pronoun
+            if not self._cluster_gender_compatible(cluster, pronoun_features, language):
+                continue
             for m in cluster:
-                if m.span[1] <= pronoun.span[0] and m.mention_type in ("entity", "nominal"):
-                    distance = pronoun.span[0] - m.span[1]
-                    if distance < best_distance:
-                        # Check compatibility
-                        if self._is_compatible(m, pronoun_features, language):
-                            best_distance = distance
-                            best_cluster = cluster
+                if m.mention_type not in ("entity", "nominal"):
+                    continue
+                if m.span[1] > pronoun.span[0]:
+                    continue
+                if not self._is_compatible(m, pronoun_features, language):
+                    continue
+                distance = pronoun.span[0] - m.span[1]
+                gap = text[m.span[1]:pronoun.span[0]]
+                if any(ch in _SENTENCE_END_CHARS for ch in gap):
+                    # Cross-sentence: bounded distance + penalty so that
+                    # same-sentence anchors win at comparable distance.
+                    if distance > _CROSS_SENTENCE_MAX_DIST:
+                        continue
+                    score = distance + _CROSS_SENTENCE_PENALTY
+                else:
+                    score = distance
+                if not self._person_tier_ok(m, pronoun_features):
+                    score += _NON_PERSON_PENALTY
+                if score < best_score:
+                    best_score = score
+                    best_cluster = cluster
+                    best_anchor = m
+
+        if best_anchor is not None:
+            left = self._left_conjunct_of(
+                pronoun, best_anchor, best_cluster,
+                clusters, language, text, tokens,
+            )
+            if left is not None:
+                best_cluster = left
 
         return best_cluster
+
+    def _cluster_gender_compatible(
+        self,
+        cluster: list[Mention],
+        pronoun_features: dict,
+        language: str,
+    ) -> bool:
+        """A gendered pronoun must not join a cluster that already contains
+        a gendered pronoun of a different gender (他 vs 她 / he vs she).
+
+        Entity gender is not annotated anywhere in this pipeline, so only
+        pronoun-vs-pronoun agreement can be enforced (documented limit).
+        """
+        gender = pronoun_features.get("gender")
+        if gender not in ("M", "F"):
+            return True
+        for m in cluster:
+            if m.mention_type != "pronoun":
+                continue
+            other_gender = self._get_pronoun_features(m.text, language).get("gender")
+            if other_gender in ("M", "F") and other_gender != gender:
+                return False
+        return True
+
+    def _person_tier_ok(self, anchor: Mention, pronoun_features: dict) -> bool:
+        """Person pronouns (他/她/he/she) prefer PERSON anchors.
+
+        Anchors with unknown category (nominals) always pass — we never
+        guess against missing information.
+        """
+        if pronoun_features.get("gender") not in ("M", "F"):
+            return True
+        return anchor.category in (None, "PERSON")
+
+    def _left_conjunct_of(
+        self,
+        pronoun: Mention,
+        best_anchor: Mention,
+        best_cluster: list[Mention],
+        clusters: list[list[Mention]],
+        language: str,
+        text: str,
+        tokens: list[Token],
+    ) -> Optional[list[Mention]]:
+        """First-conjunct preference for coordinated pairs (张三 和 李四).
+
+        If another compatible anchor sits to the LEFT of the winning anchor
+        with a CC (conjunction) token between them, the pair is a
+        coordinated subject/object and the left conjunct is the preferred
+        antecedent. The check is POS-based (CC in both CTB and Universal
+        tagsets), so verbs like 不及 (VV) do not trigger it. The two
+        anchors must share a sentence (the pair may sit in the previous
+        sentence relative to the pronoun).
+        """
+        pronoun_features = self._get_pronoun_features(pronoun.text, language)
+        for cluster in clusters:
+            if cluster is best_cluster:
+                continue
+            if not self._cluster_gender_compatible(cluster, pronoun_features, language):
+                continue
+            for m in cluster:
+                if m.mention_type not in ("entity", "nominal"):
+                    continue
+                if not (m.span[1] <= best_anchor.span[0] <= pronoun.span[0]):
+                    continue
+                if not self._is_compatible(m, pronoun_features, language):
+                    continue
+                if not self._person_tier_ok(m, pronoun_features):
+                    continue
+                # The two anchors must share a sentence (a coordinated
+                # pair never spans a sentence boundary). The pair may
+                # itself sit in the previous sentence.
+                gap = text[m.span[1]:best_anchor.span[0]]
+                if any(ch in _SENTENCE_END_CHARS for ch in gap):
+                    continue
+                # A conjunction token strictly between the two anchors
+                lo, hi = m.span[1], best_anchor.span[0]
+                has_conjunction = any(
+                    t.pos == "CC" and t.span[0] >= lo and t.span[1] <= hi
+                    for t in tokens
+                )
+                if has_conjunction:
+                    return cluster
+        return None
 
     def _resolve_nominal(
         self,
