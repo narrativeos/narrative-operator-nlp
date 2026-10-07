@@ -305,3 +305,6 @@ _build/
 _templates/
 # Large local databases (download separately, see scripts/sync_cbdb.py)
 config/classical/databases/*.sqlite
+
+# Archify — 生成的架构图产物与验证证据（candidate.json / HTML / 回执）
+.archify/
