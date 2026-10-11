@@ -19,7 +19,13 @@ extras_require = {
         'perin-parser>=0.0.12',
     ],
     'fasttext': [FASTTEXT],
-    'tf': [FASTTEXT, 'tensorflow>=2.6.0,<2.14', "transformers<4.55"],
+    'tf': [FASTTEXT,
+           'tensorflow>=2.6.0,<2.14; python_version < "3.12"',
+           'tensorflow>=2.16,<2.17; python_version >= "3.12" and python_version < "3.13"',
+           'tf-keras>=2.16,<2.17; python_version >= "3.12" and python_version < "3.13"',
+           'tensorflow>=2.21,<2.22; python_version >= "3.13" and python_version < "3.14" and (sys_platform != "darwin" or platform_machine != "x86_64")',
+           'tf-keras>=2.21,<2.22; python_version >= "3.13" and python_version < "3.14" and (sys_platform != "darwin" or platform_machine != "x86_64")',
+           'transformers<4.55; python_version < "3.14"'],  # TF is deprecated in Transformers and no longer maintained
     # NarrativeOS protocol adapters
     'narrative': [
         'pydantic>=2.0',
@@ -56,7 +62,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'termcolor',
-        'pynvml',
+        'nvidia-ml-py',
         'toposort==1.5',
         'transformers>=4.30,<5.0',  # HanLP 2.1.x compat: encode_plus removed in 5.x
         'sentencepiece>=0.1.91',  # Essential for tokenization_bert_japanese
