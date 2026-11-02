@@ -67,7 +67,7 @@ setup(
         'transformers>=4.30,<5.0',  # HanLP 2.1.x compat: encode_plus removed in 5.x
         'sentencepiece>=0.1.91',  # Essential for tokenization_bert_japanese
         'torch>=1.6.0',
-        'hanlp-common>=0.0.23',
+        'hanlp-common>=0.0.24',
         'hanlp-trie>=0.0.4',
         'hanlp-downloader',
         'pyyaml>=5.0',  # Required for config-driven entity extraction
