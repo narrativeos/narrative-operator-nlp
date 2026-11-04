@@ -17,6 +17,8 @@ configure
 nlp_development_guidelines
 gap_analysis
 new_word_discovery
+gliner_integration_design
+annotation_pipeline_design
 classical_chinese
 dictionary_architecture
 cbdb_integration
