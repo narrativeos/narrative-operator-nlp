@@ -24,6 +24,20 @@ contributes on the same scale:
     score = 0.3 * pmi_norm + 0.3 * llr_norm + 0.2 * entropy_norm
             + 0.2 * cohesion
 
+CNG and BM25 are computed and reported per candidate but deliberately DO
+NOT enter the score. They were evaluated on a 1051-char domain corpus
+(`scripts/bench_discoverer_indicators.py`) and every integration form lost
+quality, because both indicators are dominated by raw frequency, which at
+document scale correlates with commonness rather than with termhood:
+- as a headroom boost they lifted all 131 candidates over the threshold
+  (43 new, including junk like 以保证 / 常采用 / 基复);
+- as a convex weight they dropped real terms (增材制造, 成型工艺, 温度)
+  and added none;
+- as a CNG floor of 0.2 they rejected 58 of 88 passing candidates, almost
+  all legitimate (高温合金, 蠕变, 层间, 检测).
+These indicators assume a corpus, not a document — they belong to Phase 2
+(labeled/large-scale data), so they stay observable diagnostics only.
+
 Left/right entropy semantics: a true word combines with diverse contexts
 on both sides (high entropy); a fragment of a longer unit has at least
 one fixed side (low entropy). When one side has no neighbor at all
@@ -36,6 +50,9 @@ References
 - Sun Maosong et al., "Chinese New Word Identification: A Statistical Approach"
 - HanLP 1.x ``com.hankcs.hanlp.mining.word.NewWordDiscover``
 - Duan et al., "New Word Discovery with Log-Likelihood Ratio Test"
+- Feng Songguo, CNG combination principle (组合度)
+- Zhang & Zhang (2017), BCBM25 — the BM25 half of the unsupervised
+  keyphrase score, as packaged by ``termweight`` (calmaloner/termweight)
 """
 
 from __future__ import annotations
@@ -70,6 +87,9 @@ class Candidate:
     right_entropy: float
     cohesion: float
     frequency: int
+    # Diagnostics only — never part of `score` (see module docstring).
+    cng: float = 0.0
+    bm25: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +100,8 @@ class Candidate:
             "left_entropy": round(self.left_entropy, 4),
             "right_entropy": round(self.right_entropy, 4),
             "cohesion": round(self.cohesion, 4),
+            "cng": round(self.cng, 4),
+            "bm25": round(self.bm25, 4),
             "frequency": self.frequency,
         }
 
@@ -146,6 +168,9 @@ _PMI_NORM_CAP = 10.0               # bits; PMI >= 10 is maximally strong
 _LLR_NORM_CAP = math.log(1001.0)   # LLR = 1000 saturates
 _ENT_NORM_CAP = 2.0                # bits; 4+ distinct neighbors per side
 
+# Diagnostics only (see the module docstring for why they are not scored).
+_FREQ_SAT_K1 = 1.5     # Okapi k1: tf = 1.5 saturates at 0.5, 9 at 0.86
+
 
 def _norm_pmi(pmi: float) -> float:
     return min(max(pmi, 0.0), _PMI_NORM_CAP) / _PMI_NORM_CAP
@@ -157,6 +182,19 @@ def _norm_llr(llr: float) -> float:
 
 def _norm_entropy(ent: float) -> float:
     return min(max(ent, 0.0), _ENT_NORM_CAP) / _ENT_NORM_CAP
+
+
+def _norm_cng(cng: float, total_chars: int) -> float:
+    """Map CNG to [0, 1] on a corpus-size-relative logarithmic scale.
+
+    CNG = freq * min(boundary char freq) is bounded by total_chars**2
+    (neither factor can exceed the number of characters), so
+    log1p(cng) / (2 * log1p(total_chars)) is guaranteed to land in [0, 1]
+    and stays comparable across short and long inputs.
+    """
+    if cng <= 0.0 or total_chars <= 1:
+        return 0.0
+    return min(math.log1p(cng) / (2.0 * math.log1p(total_chars)), 1.0)
 
 
 def discover(
@@ -177,7 +215,8 @@ def discover(
     2. MTL merge candidates: consecutive single-char content tokens that
        MTL split but should be one word (primary signal for short texts).
     3. PMI + LLR candidates: n-grams with enough frequency, scored with
-       PMI + LLR + left/right entropy + internal cohesion.
+       PMI + LLR + left/right entropy + internal cohesion (CNG and BM25 are
+       attached as diagnostics only).
     4. Filters: function-char, MTL boundary alignment (when tokens are
        given), locked-fragment, subsumption.
 
@@ -349,6 +388,8 @@ def _score_ngram(
     le, le_n = _compute_entropy_multisentence(word, sentences, "left")
     re_val, re_n = _compute_entropy_multisentence(word, sentences, "right")
     cohesion = _compute_cohesion(word, ngram_counts, char_counts, total_chars)
+    cng_val = _compute_cng(word, freq, char_counts)
+    bm25_val = _compute_bm25(freq)
     ent = _effective_entropy(le, le_n, re_val, re_n)
     score = (
         _norm_pmi(pmi_val) * 0.3
@@ -365,6 +406,8 @@ def _score_ngram(
         right_entropy=re_val,
         cohesion=cohesion,
         frequency=freq,
+        cng=cng_val,
+        bm25=bm25_val,
     )
 
 
@@ -496,6 +539,60 @@ def _compute_cohesion(
         return 1.0 / (1.0 + math.exp(-avg_pmi / 2.0))
     except OverflowError:
         return 1.0 if avg_pmi > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Frequency Diagnostics: CNG + BM25 (reported, not scored)
+# ---------------------------------------------------------------------------
+
+def _compute_cng(
+    ngram: str,
+    freq: int,
+    char_counts: Counter,
+) -> float:
+    """Compute CNG (combination principle) for an n-gram — diagnostic only.
+
+    CNG = freq(ngram) * min(freq(first char), freq(last char))
+
+    The boundary characters are what hold a candidate up as a word: a pair
+    whose weaker edge character is rare in the corpus is often a slice of a
+    longer unit. It is exposed in the response so the demo page and future
+    tuning can see it, but it stays out of the score: on a single document
+    the min-boundary-char factor tracks character commonness, not termhood,
+    and folding it in was measured to reject real terms (see the module
+    docstring).
+    """
+    if len(ngram) < 2 or freq == 0:
+        return 0.0
+    left_freq = char_counts.get(ngram[0], 0)
+    right_freq = char_counts.get(ngram[-1], 0)
+    return float(freq) * float(min(left_freq, right_freq))
+
+
+def _compute_bm25(freq: int) -> float:
+    """Saturating frequency diagnostic in [0, 1] — reported, not scored.
+
+        bm25 = tf / (k1 + tf)
+
+    This is the corpus-independent tf-saturation half of the BM25 in the
+    BCBM25 keyphrase score (Zhang & Zhang 2017, as packaged by
+    ``termweight``). Two deliberate deviations from that recipe:
+
+    - The idf half is DROPPED. BCBM25 counts documents in a corpus;
+      ``discover()`` only ever sees one document, so sentence-level df
+      marks a genuine term that recurs in every sentence as
+      non-discriminative (idf -> 0) — the opposite of the truth.
+    - The BC (boundary entropy) half is already covered by the existing
+      left/right entropy component, so it would be double-counted.
+
+    What is left is a saturating recurrence curve (a term seen 200 times is
+    not 10x better than one seen 20 times). It is useful as a displayed
+    diagnostic; as a score component it only promoted frequent common words
+    (see the module docstring).
+    """
+    if freq <= 0:
+        return 0.0
+    return freq / (_FREQ_SAT_K1 + freq)
 
 
 # ---------------------------------------------------------------------------

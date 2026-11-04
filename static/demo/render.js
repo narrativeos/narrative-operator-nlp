@@ -310,10 +310,11 @@ export function renderDiscover(data){
     const candidates=data.candidates;
     const convseg=data.convseg;
 
-    // PMI+MTL candidates
+    // PMI+MTL candidates (score is normalized to [0, 1])
     const pmiItems=candidates.length?candidates.map(c=>{
-        const color=c.score>=5?'#7ee787':c.score>=3?'#e3b341':'#f85149';
-        return `<span class="discover-item" data-word="${escAttr(c.word)}" title="点击添加到自定义词典">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(1)}</span></span>`;
+        const color=c.score>=0.7?'#7ee787':c.score>=0.5?'#e3b341':'#f85149';
+        const diag=`PMI ${(c.pmi||0).toFixed(2)} · LLR ${(c.llr||0).toFixed(1)} · 内聚 ${(c.cohesion||0).toFixed(2)} · 词频 ${c.frequency||0}\nCNG ${(c.cng||0).toFixed(1)} · BM25 ${(c.bm25||0).toFixed(3)}（诊断项，不计入 score）`;
+        return `<span class="discover-item" data-word="${escAttr(c.word)}" title="${escAttr(diag)}">${esc(c.word)}<span class="score" style="color:${color}">${c.score.toFixed(2)}</span></span>`;
     }).join(''):'<span style="color:#484f58">-</span>';
 
     // Coarse ELECTRA comparison (PyTorch, no TF needed)
@@ -573,7 +574,7 @@ export function renderAPIDocs(){
                 {name:'text',type:'string',desc:'(必填) 待分析的中文文本'},
                 {name:'dict_combine',type:'string[]',desc:'自定义词典',default:'[]'},
             ],
-            resp:'<pre class="pretty">{\n  "candidates": [{"word": "高强度", "score": 8.5, "freq": 3}, ...],\n  "convseg": {"candidates": ["立方庭", ...]}\n}</pre>',
+            resp:'<pre class="pretty">{\n  "candidates": [{"word": "高强度", "score": 0.5158, "cng": 81.0, "bm25": 0.857, "frequency": 9}, ...],\n  "convseg": {"candidates": ["立方庭", ...]}\n}</pre>',
             ex:'curl -X POST http://localhost:8000/analyze/discover -H "Content-Type: application/json" -d \'{"text":"碳钢是钢的一种，具有高强度。"}\''},
         {method:'POST',path:'/analyze/pretty',badge:'post',summary:'HanLP 原生可视化 — 返回 pretty-print 文本',
             desc:'<p>返回 HanLP Document 的 <code>to_pretty()</code> 文本输出，与 Jupyter Notebook 中的展示效果一致。</p>',

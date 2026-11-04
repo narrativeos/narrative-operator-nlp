@@ -8,6 +8,8 @@ Covers the audit fixes:
 - Fragment noise: function-char filter, MTL boundary alignment,
   locked-fragment filter (boundary vs attaching function chars).
 - Score normalization to [0, 1].
+Plus the CNG/BM25 diagnostics: they are reported per candidate but must not
+move the calibrated score (see scripts/bench_discoverer_indicators.py).
 """
 
 from __future__ import annotations
@@ -28,7 +30,11 @@ from core.discoverer import (
     Candidate,
     _build_mtl_index,
     _clean_text,
+    _compute_bm25,
+    _compute_cng,
+    _compute_cohesion,
     _compute_entropy_multisentence,
+    _compute_llr,
     _compute_pmi,
     _contains_function_char,
     _count_ngrams,
@@ -36,6 +42,11 @@ from core.discoverer import (
     _effective_entropy,
     _is_locked_fragment,
     _is_mtl_aligned,
+    _norm_cng,
+    _norm_entropy,
+    _norm_llr,
+    _norm_pmi,
+    _score_ngram,
     _side_locked,
     _split_sentences,
     _subsume_filter,
@@ -355,14 +366,14 @@ class TestScoresAndResult:
         assert res2.candidates == []
 
     def test_to_dict_shape(self):
-        res = discover("碳纤维复合材料。碳纤维复合材料。")
+        res = discover(TestEndToEnd.TEXT)
         d = res.to_dict()
         assert set(d) == {"candidates", "text_length", "total_ngrams", "top_words"}
-        if d["candidates"]:
-            assert set(d["candidates"][0]) == {
-                "word", "score", "pmi", "llr", "left_entropy",
-                "right_entropy", "cohesion", "frequency",
-            }
+        assert d["candidates"], "expected candidates to exercise the payload shape"
+        assert set(d["candidates"][0]) == {
+            "word", "score", "pmi", "llr", "left_entropy", "right_entropy",
+            "cohesion", "cng", "bm25", "frequency",
+        }
 
     def test_text_length_is_cleaned_length(self):
         res = discover("碳纤维，复合材料。")
@@ -423,6 +434,72 @@ class TestEndToEnd:
         words = {c.word for c in res.candidates}
         assert "成本正" not in words
         assert "复合材料" in words
+
+
+# ---------------------------------------------------------------------------
+# Frequency diagnostics: CNG + BM25 (reported, never scored)
+# ---------------------------------------------------------------------------
+
+class TestFrequencyDiagnostics:
+    def test_cng_multiplies_freq_by_weaker_boundary_char(self):
+        cc = Counter({"碳": 8, "钢": 4, "复": 2})
+        assert _compute_cng("碳钢", 3, cc) == 3 * 4
+        assert _compute_cng("复钢", 3, cc) == 3 * 2
+
+    def test_cng_zero_for_single_char_or_missing_freq(self):
+        cc = Counter({"碳": 5})
+        assert _compute_cng("碳", 5, cc) == 0.0
+        assert _compute_cng("碳钢", 0, cc) == 0.0
+
+    def test_cng_saturates_at_the_rarer_of_both_edges(self):
+        cc = Counter({"钢": 9, "材": 1})
+        assert _compute_cng("钢材", 2, cc) == 2 * 1
+
+    def test_bm25_is_monotone_and_saturating(self):
+        assert _compute_bm25(0) == 0.0
+        vals = [_compute_bm25(f) for f in (1, 2, 5, 20, 200)]
+        assert vals == sorted(vals)
+        assert all(0.0 <= v < 1.0 for v in vals)
+        # 10x the frequency must not give 10x the score
+        assert vals[-1] < 10 * vals[-2]
+
+    def test_norm_cng_is_bounded_by_one(self):
+        # CNG cannot exceed total_chars**2, so the log scale caps at 1.
+        assert _norm_cng(10 ** 9, 120) == 1.0
+        assert _norm_cng(0.0, 120) == 0.0
+        assert _norm_cng(5.0, 1) == 0.0
+        assert 0.0 < _norm_cng(81.0, 144) < 1.0
+
+    def test_diagnostics_do_not_move_the_score(self):
+        """The score stays the calibrated 4-way sum; cng/bm25 are extras."""
+        sentences = ["碳纤维复合材料具有高强度", "碳纤维复合材料广泛应用"]
+        ns = (2, 3, 4, 5, 6, 7)
+        nc = _ngram_stats(sentences, ns)
+        cc: Counter = Counter()
+        for s in sentences:
+            cc.update(s)
+        total = sum(len(s) for s in sentences)
+        pos = {n: sum(max(len(s) - n + 1, 0) for s in sentences) for n in ns}
+
+        word = "复合材料"
+        cand = _score_ngram(word, nc, cc, sentences, total, pos)
+        freq = nc[len(word)].get(word, 0)
+        pmi = _compute_pmi(word, freq, nc, cc, total)
+        llr = _compute_llr(word, freq, cc, total, pos[len(word)])
+        le, le_n = _compute_entropy_multisentence(word, sentences, "left")
+        re, re_n = _compute_entropy_multisentence(word, sentences, "right")
+        ent = _effective_entropy(le, le_n, re, re_n)
+        coh = _compute_cohesion(word, nc, cc, total)
+        expected = (_norm_pmi(pmi) * 0.3 + _norm_llr(llr) * 0.3
+                    + _norm_entropy(ent) * 0.2 + coh * 0.2)
+        assert cand.score == pytest.approx(expected)
+        assert cand.cng > 0.0 and cand.bm25 > 0.0
+
+    def test_discover_reports_nonzero_diagnostics(self):
+        res = discover(TestEndToEnd.TEXT)
+        assert res.candidates
+        assert any(c.cng > 0.0 for c in res.candidates)
+        assert any(0.0 < c.bm25 < 1.0 for c in res.candidates)
 
 
 if __name__ == "__main__":
