@@ -31,20 +31,17 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
 
-import yaml  # noqa: E402
-
 from core.annotation import (  # noqa: E402
-    AgreementTier,
     BookRecord,
     CorpusManifest,
     GoldSpan,
-    Prelabel,
     SectionRecord,
     content_sha256,
     book_path,
+    dictionary_spans,
     iter_sections,
     load_manifest,
-    retriage,
+    merge_proposals,
     save_manifest,
     split_book,
     to_eval_jsonl,
@@ -52,27 +49,12 @@ from core.annotation import (  # noqa: E402
     review_workload,
 )
 
-DICT_PATH = _project_root / "config" / "domain_keywords.yaml"
-# Only the categories the dictionary actually covers; the classical labels
-# need their own eval set before they are worth prompting for.
-DICT_CATEGORIES = {"MATERIAL": "material", "STANDARD": "standard", "PARAMETER": "parameter"}
-
 GLINER_LABELS = ["材料", "material", "标准", "标准规范", "standard", "参数", "性能指标", "parameter"]
 
 
 def _dictionary_spans(text: str) -> list[tuple[str, str, tuple[int, int]]]:
     """(text, category, span) for every dictionary term present in text."""
-    config = yaml.safe_load(DICT_PATH.read_text(encoding="utf-8")) or {}
-    found = []
-    for category, key in DICT_CATEGORIES.items():
-        for term in sorted(set(config.get(key, []) or [])):
-            if not term:
-                continue
-            start = text.find(term)
-            while start != -1:
-                found.append((term, category, (start, start + len(term))))
-                start = text.find(term, start + 1)
-    return found
+    return dictionary_spans(text)
 
 
 def _gliner_spans(text: str, engine) -> list[tuple[str, str, tuple[int, int]]]:
@@ -152,26 +134,10 @@ def cmd_prelabel(args) -> int:
 
     records = list(iter_sections(args.book_id))
     for rec in records:
-        merged: dict[tuple[int, int], Prelabel] = {}
         proposals = [("dictionary", _dictionary_spans(rec.text)),
                      ("gliner", _gliner_spans(rec.text, engine) if engine else []),
                      ("mtl", _mtl_spans(rec.text, pipeline) if pipeline else [])]
-        for source, spans in proposals:
-            for surface, category, span in spans:
-                if span[1] > len(rec.text):
-                    continue
-                p = merged.get(span)
-                if p is None:
-                    merged[span] = Prelabel(text=surface, category=category, span=span,
-                                            sources={source: True})
-                    continue
-                p.sources[source] = True
-                if p.category != category:
-                    p.disputed = True
-                    if p.category == "UNKNOWN":
-                        p.category = category
-        rec.prelabels = [merged[k] for k in sorted(merged)]
-        retriage(rec)
+        rec.prelabels = merge_proposals(proposals, len(rec.text))
         if rec.prelabels and rec.status == "pending":
             rec.status = "in_review"
     _write(args.book_id, records)

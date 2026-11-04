@@ -331,6 +331,98 @@ def validate_section(record: SectionRecord) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Pre-labeling: the one implementation shared by the CLI and the MCP tool
+# ---------------------------------------------------------------------------
+
+# Only the categories the domain dictionary actually covers. The classical
+# labels need their own eval set before they are worth proposing.
+DICT_CATEGORIES = {"MATERIAL": "material", "STANDARD": "standard", "PARAMETER": "parameter"}
+
+DICT_PATH = _project_root / "config" / "domain_keywords.yaml"
+
+
+def dictionary_spans(text: str,
+                     categories: tuple[str, ...] = tuple(DICT_CATEGORIES)) -> list[tuple[str, str, tuple[int, int]]]:
+    """(surface, category, span) for every dictionary term present in text.
+
+    Read straight from the YAML KeywordExtractor loads, so the pre-labeler and
+    the online dictionary cannot drift apart silently.
+    """
+    import yaml
+
+    config = yaml.safe_load(DICT_PATH.read_text(encoding="utf-8")) or {}
+    found: list[tuple[str, str, tuple[int, int]]] = []
+    for category in categories:
+        key = DICT_CATEGORIES.get(category)
+        if not key:
+            continue
+        for term in sorted(set(config.get(key, []) or [])):
+            if not term:
+                continue
+            start = text.find(term)
+            while start != -1:
+                found.append((term, category, (start, start + len(term))))
+                start = text.find(term, start + 1)
+    return found
+
+
+def merge_proposals(proposals: list[tuple[str, list[tuple[str, str, tuple[int, int]]]]],
+                    text_len: int) -> list[Prelabel]:
+    """Fold (engine, spans) pairs into one Prelabel per span, then triage.
+
+    Two engines proposing the same span with different categories mark it
+    disputed, which triage turns into CONFLICT — that is the signal worth
+    sending to a human first.
+    """
+    merged: dict[tuple[int, int], Prelabel] = {}
+    for source, spans in proposals:
+        for surface, category, span in spans:
+            if span[1] > text_len:
+                continue
+            existing = merged.get(span)
+            if existing is None:
+                merged[span] = Prelabel(text=surface, category=category, span=span,
+                                        sources={source: True})
+                continue
+            existing.sources[source] = True
+            if existing.category != category:
+                # UNKNOWN means an engine could not classify it, not that it
+                # disagrees — only two concrete labels are a real conflict.
+                if "UNKNOWN" not in (existing.category, category):
+                    existing.disputed = True
+                if existing.category == "UNKNOWN":
+                    existing.category = category
+    out = [merged[k] for k in sorted(merged)]
+    for p in out:
+        p.tier = triage(p)
+    return out
+
+
+def suggest_spans(text: str, categories: Optional[tuple[str, ...]] = None,
+                  gliner_engine=None,
+                  gliner_labels: Optional[list[str]] = None) -> list[Prelabel]:
+    """Deterministic pre-labels for one text, with review tiers attached.
+
+    This is the read-only perception channel for an external labeling agent:
+    it proposes and classifies, it never writes. Committing gold labels stays
+    an explicit offline act in scripts/label_corpus.py, so no network-facing
+    surface can mutate the labeled corpus as a side effect of a query.
+    """
+    proposals: list[tuple[str, list[tuple[str, str, tuple[int, int]]]]] = [
+        ("dictionary", dictionary_spans(text, categories or tuple(DICT_CATEGORIES)))]
+    if gliner_engine is not None:
+        labels = gliner_labels or ["材料", "material", "标准", "standard", "参数", "parameter"]
+        spans = []
+        for e in gliner_engine.predict_entities(text, labels, threshold=0.5):
+            label = (e.get("label") or "").upper()
+            category = label if label in EntityCategory.ALL else "UNKNOWN"
+            spans.append((e["text"], category, (e["start"], e["end"])))
+        proposals.append(("gliner", spans))
+    return merge_proposals(proposals, len(text))
+
+
+
+# ---------------------------------------------------------------------------
 # Export for the gate, and the review workload estimate
 # ---------------------------------------------------------------------------
 

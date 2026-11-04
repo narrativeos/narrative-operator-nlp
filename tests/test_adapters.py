@@ -309,6 +309,55 @@ class TestMCPAdapter:
         content = response["result"]["content"][0]["text"]
         assert "title_text" in content
 
+    def test_suggest_labels_tool_definition(self):
+        from adapters.mcp_server import LABEL_TOOL_DEFINITION
+        assert LABEL_TOOL_DEFINITION["name"] == "suggest_labels"
+        assert "READ-ONLY" in LABEL_TOOL_DEFINITION["description"]
+        assert "text" in LABEL_TOOL_DEFINITION["inputSchema"]["required"]
+
+    def test_tools_list_includes_suggest_labels(self, handler):
+        response = handler({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        names = [t["name"] for t in response["result"]["tools"]]
+        assert "suggest_labels" in names
+
+    def test_suggest_labels_missing_text(self, handler):
+        response = handler({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "suggest_labels", "arguments": {}},
+        })
+        assert response["error"]["code"] == -32602
+
+    def test_suggest_labels_reports_one_engine_honestly(self, handler):
+        """One engine must never present its output as agreement.
+
+        The tier and the note are the agent's only cue that nothing here has
+        been verified, so both must say so.
+        """
+        response = handler({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"name": "suggest_labels",
+                       "arguments": {"text": "碳钢具有高强度，按 GB/T 3001 检测。"}},
+        })
+        assert "result" in response, response
+        payload = json.loads(response["result"]["content"][0]["text"])
+        assert payload["spans"], "dictionary should match at least one term"
+        assert payload["engines_seen"] == ["dictionary"]
+        assert all(s["tier"] == "partial" for s in payload["spans"])
+        assert "no span can be tier=agree" in payload["note"]
+
+    def test_suggest_labels_does_not_touch_the_corpus(self, handler, tmp_path, monkeypatch):
+        """The read-only claim must be real, not just documentation."""
+        import core.annotation as ann
+
+        monkeypatch.setattr(ann, "ANNOTATION_DIR", tmp_path)
+        monkeypatch.setattr(ann, "MANIFEST_PATH", tmp_path / "manifest.json")
+        handler({
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "suggest_labels", "arguments": {"text": "碳钢是钢的一种。"}},
+        })
+        assert list(tmp_path.iterdir()) == []
+
+
 
 # ---------------------------------------------------------------------------
 # gRPC Client Tests (unit, without server)

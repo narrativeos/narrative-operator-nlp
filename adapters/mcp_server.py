@@ -144,6 +144,35 @@ TITLE_TOOL_DEFINITION = {
 }
 
 
+LABEL_TOOL_DEFINITION = {
+    "name": "suggest_labels",
+    "description": (
+        "Propose entity spans for a text with an agreement tier, for corpus "
+        "labeling. READ-ONLY: it never writes the labeled corpus. Committing "
+        "gold labels stays an explicit offline act via scripts/label_corpus.py. "
+        "tier=agree needs two engines to propose the same span+category; "
+        "tier=conflict means engines disagree or the quality layer demoted it, "
+        "and is what a human should look at first."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": "Section text to pre-label.",
+            },
+            "categories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Categories to propose for. Defaults to "
+                               "MATERIAL, STANDARD, PARAMETER (dictionary coverage).",
+            },
+        },
+        "required": ["text"],
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # MCP JSON-RPC Handler
 # ---------------------------------------------------------------------------
@@ -175,7 +204,8 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
     if method == "tools/list":
         return _response(req_id, {
-            "tools": [TOOL_DEFINITION, SUMMARIZE_TOOL_DEFINITION, TITLE_TOOL_DEFINITION],
+            "tools": [TOOL_DEFINITION, SUMMARIZE_TOOL_DEFINITION,
+                      TITLE_TOOL_DEFINITION, LABEL_TOOL_DEFINITION],
         })
 
     if method == "tools/call":
@@ -189,6 +219,8 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             return _handle_summarize(req_id, arguments)
         if tool_name == "generate_title":
             return _handle_title(req_id, arguments)
+        if tool_name == "suggest_labels":
+            return _handle_suggest_labels(req_id, arguments)
 
         return _error(req_id, -32601, f"Unknown tool: {tool_name}")
 
@@ -291,6 +323,40 @@ def _handle_title(req_id, arguments: dict) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # JSON-RPC Helpers
 # ---------------------------------------------------------------------------
+
+def _handle_suggest_labels(req_id, arguments: dict) -> dict[str, Any]:
+    """Execute the suggest_labels tool (read-only)."""
+    text = arguments.get("text", "")
+    if not text:
+        return _error(req_id, -32602, "Missing required parameter: text")
+
+    categories = arguments.get("categories")
+    try:
+        from core.annotation import suggest_spans
+
+        spans = suggest_spans(text, tuple(categories) if categories else None)
+        engines = sorted({e for s in spans for e in s.sources})
+        note = ("dictionary only: no span can be tier=agree, because agreement "
+                "needs two independent engines. Every span here is unverified."
+                if len(engines) < 2 else
+                "multi-engine: tier=agree spans may be auto-accepted; review "
+                "tier=conflict first.")
+        return _response(req_id, {
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "spans": [s.model_dump() for s in spans],
+                    "engines_seen": engines,
+                    "note": note,
+                }, ensure_ascii=False, indent=2),
+            }],
+        })
+    except ValueError as exc:
+        return _error(req_id, -32000, str(exc))
+    except Exception as exc:
+        return _error(req_id, -32603, f"Internal error: {exc}")
+
+
 
 def _response(req_id, result: dict) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}

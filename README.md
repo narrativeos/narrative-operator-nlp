@@ -31,7 +31,7 @@ narrative-operator-nlp/
 │   ├── entity_mapper.py   # Entity mapping rules
 │   └── relation_mapper.py # Relation extraction rules
 ├── adapters/              # Protocol adapters (one per protocol)
-│   ├── mcp_server.py      # MCP Tool: analyze_text
+│   ├── mcp_server.py      # MCP Tools: analyze_text, summarize_text, generate_title, suggest_labels
 │   ├── grpc_server.py     # gRPC NarrativeService
 │   ├── grpc_client.py     # gRPC client for Worker Runtime
 │   └── fastapi_app.py     # FastAPI POST /analyze

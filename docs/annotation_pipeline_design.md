@@ -86,4 +86,60 @@ python scripts/bench_gliner_cpu.py --eval /tmp/eval.jsonl     # 回到 go/no-go 
 - 不在本仓内置 agent 或 LLM 客户端。
 - 不把标注数据存成二进制库。
 - 不用单引擎结果冒充"引擎一致"。
+
+## 7. 边界在哪：契约内置，执行体外置
+
+已实现的分界线：
+
+- **仓内**：数据契约、切分、确定性预标、分流、校验、导出，以及一个**只读**的
+  MCP `suggest_labels` tool。
+- **仓外**：标注执行体。它是 MCP client，调用 `suggest_labels` 拿到候选与
+  分流档位，自行决定采纳哪些，再落盘。
+
+`analyze_text` 是同步、确定性的在线服务面，把 LLM 调用塞进 `core/` 会同时破坏
+可复现性并让离线标注占用线上算力。因此**写盘动作不在 MCP 面**：gold 标签只能由
+`scripts/label_corpus.py` 显式提交。一次查询不可能顺手改坏已标注语料——这条约束
+由 `test_suggest_labels_does_not_touch_the_corpus` 守着，而不是只写在文档里。
+
+`suggest_labels` 返回 `engines_seen` 与一句 `note`。单引擎时它明确说"没有任何
+span 能算 agree"，而不是让 agent 把一堆 `partial` 误读成"引擎没有分歧"。
+
+## 8. 预标的三个引擎
+
+| 引擎 | 来源 | 成本 |
+|---|---|---|
+| `dictionary` | `config/domain_keywords.yaml` | 近零 |
+| `gliner` | GLiNER sidecar，见 `docs/gliner_integration_design.md` | 需过 CPU 闸门 |
+| `mtl` | 现有 HanLP MTL 的 NER 输出，经 `ner_label_mapper` 映射 | 复用已加载模型 |
+
+三者都只产出**候选**。MTL 的 NER 标签经映射器转换，未命中的落 `UNKNOWN`；
+`UNKNOWN` 表示"这个引擎分不出类别"，不算与别的引擎冲突——只有两个具体标签互斥
+才标 `disputed`。把分不出类别当成反对，会制造一堆假的人工复核项。
+
+## 9. 数据格式
+
+```
+data/annotations/manifest.json     # 书级元数据
+data/annotations/<book_id>.jsonl   # 一行一个 section
+```
+
+每行 = `{section_id, text, start, end, labels[], prelabels[], status}`。选 JSONL
+而非 sqlite：标注数据的价值在于**可审阅**，`git diff` 能直接看懂谁改了哪个 span，
+sqlite 做不到。目录可用 `NARRATIVE_ANNOTATION_DIR` 覆盖，测试因此不写进仓库。
+
+## 10. 与闸门的关系
+
+标注管线把 `bench_gliner_cpu.py` 等的那块缺口补上了：导出 gold JSONL → 计算
+"词典召回 / 词典+GLiNER 召回 / GLiNER-only 召回" → 决定 GLiNER 的 go/no-go。
+闸门对**未评测**与**低于 1ms 计时分辨率**的比值都判 NO-GO，否则空实现能骗过延迟
+闸门。GLiNER 若不过关，退路是在现有 HanLP MTL 里加自定义 NER 任务。
+
+## 11. 待确认
+
+1. 标注数据的授权与可分发性——决定语料能否进仓库。
+2. 类别体系是否沿用 `EntityCategory` 的 MATERIAL/STANDARD/PARAMETER，还是为
+   预训练另立更细的 schema。
+3. 目标 CPU 机型与内存上限——`bench_gliner_cpu.py` 需要在那台机器上跑。
+4. ~~MCP 面要不要新增标注 tool~~ **已实现**：只读的 `suggest_labels`；写盘仍留在 CLI。
+
 - 不按句子切分后再按书统计——切分与统计必须同一粒度。

@@ -26,9 +26,11 @@ from core.annotation import (
     Prelabel,
     SectionRecord,
     content_sha256,
+    merge_proposals,
     review_workload,
     retriage,
     split_book,
+    suggest_spans,
     to_eval_jsonl,
     triage,
     validate_section,
@@ -210,6 +212,61 @@ def test_sections_roundtrip_keeps_spans(tmp_path, monkeypatch):
     back = list(ann.iter_sections("b2"))
     assert back[0].labels[0].span == (0, 3)
     assert validate_section(back[0]) == []
+
+
+# ── pre-labeling ──
+
+def test_dictionary_spans_return_offsets_that_match_the_text():
+    from core.annotation import dictionary_spans
+
+    text = "碳纤维复合材料与钢的疲劳对比。"
+    for surface, category, (start, end) in dictionary_spans(text):
+        assert text[start:end] == surface
+        assert category in ("MATERIAL", "STANDARD", "PARAMETER")
+
+
+def test_suggest_spans_without_gliner_is_never_agree():
+    spans = suggest_spans("碳钢具有高强度，按 GB/T 3001 检测。")
+    assert spans
+    assert all(s.tier == AgreementTier.PARTIAL for s in spans)
+
+
+def test_suggest_spans_with_gliner_can_reach_agree():
+    class FakeEngine:
+        def predict_entities(self, text, labels, threshold=0.5):
+            i = text.index("钢")
+            return [{"text": "钢", "label": "MATERIAL", "start": i, "end": i + 1}]
+
+    spans = suggest_spans("碳钢是钢的一种。", gliner_engine=FakeEngine())
+    agree = [s for s in spans if s.tier == AgreementTier.AGREE]
+    assert any(s.text == "钢" for s in agree), "dictionary+gliner overlap must read as agreement"
+
+
+def test_unknown_label_is_not_a_category_conflict():
+    """An engine that cannot classify is not an engine that disagrees."""
+    class FakeEngine:
+        def predict_entities(self, text, labels, threshold=0.5):
+            i = text.index("钢")
+            return [{"text": "钢", "label": "怪标签", "start": i, "end": i + 1}]
+
+    spans = suggest_spans("碳钢是钢的一种。", gliner_engine=FakeEngine())
+    hit = [s for s in spans if s.text == "钢"]
+    assert hit and not hit[0].disputed
+    assert hit[0].category == "MATERIAL" and hit[0].tier == AgreementTier.AGREE
+
+
+def test_merge_proposals_flags_category_conflict():
+    spans = merge_proposals([
+        ("dictionary", [("钛合金", "MATERIAL", (0, 3))]),
+        ("gliner", [("钛合金", "PARAMETER", (0, 3))]),
+    ], text_len=10)
+    assert len(spans) == 1
+    assert spans[0].disputed and spans[0].tier == AgreementTier.CONFLICT
+
+
+def test_merge_proposals_drops_spans_beyond_the_text():
+    spans = merge_proposals([("dictionary", [("越界", "MATERIAL", (5, 50))])], text_len=10)
+    assert spans == []
 
 
 # ── CLI ──
