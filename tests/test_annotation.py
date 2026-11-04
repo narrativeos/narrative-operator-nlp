@@ -234,7 +234,7 @@ def test_suggest_spans_without_gliner_is_never_agree():
 def test_suggest_spans_with_gliner_can_reach_agree():
     class FakeEngine:
         def predict_entities(self, text, labels, threshold=0.5):
-            i = text.index("钢")
+            i = text.index("钢", 2)  # the standalone occurrence, not the one in 碳钢
             return [{"text": "钢", "label": "MATERIAL", "start": i, "end": i + 1}]
 
     spans = suggest_spans("碳钢是钢的一种。", gliner_engine=FakeEngine())
@@ -246,13 +246,23 @@ def test_unknown_label_is_not_a_category_conflict():
     """An engine that cannot classify is not an engine that disagrees."""
     class FakeEngine:
         def predict_entities(self, text, labels, threshold=0.5):
-            i = text.index("钢")
+            i = text.index("钢", 2)
             return [{"text": "钢", "label": "怪标签", "start": i, "end": i + 1}]
 
     spans = suggest_spans("碳钢是钢的一种。", gliner_engine=FakeEngine())
     hit = [s for s in spans if s.text == "钢"]
     assert hit and not hit[0].disputed
     assert hit[0].category == "MATERIAL" and hit[0].tier == AgreementTier.AGREE
+
+
+def test_engine_boundary_disagreement_is_not_agreement():
+    """An engine that cuts 钢 out of 碳钢 disagrees on the boundary, not agrees."""
+    class FakeEngine:
+        def predict_entities(self, text, labels, threshold=0.5):
+            return [{"text": "钢", "label": "MATERIAL", "start": 1, "end": 2}]
+
+    spans = suggest_spans("碳钢是钢的一种。", gliner_engine=FakeEngine())
+    assert not [s for s in spans if s.tier == AgreementTier.AGREE and s.text == "钢"]
 
 
 def test_merge_proposals_flags_category_conflict():
@@ -267,6 +277,29 @@ def test_merge_proposals_flags_category_conflict():
 def test_merge_proposals_drops_spans_beyond_the_text():
     spans = merge_proposals([("dictionary", [("越界", "MATERIAL", (5, 50))])], text_len=10)
     assert spans == []
+
+
+def test_dictionary_spans_are_non_overlapping_longest_match():
+    """The dictionary holds both GB and GB/T, 钢 and 碳钢 — never nest them.
+
+    Nested hits inflate the count and become phantom CONFLICTs once a second
+    engine proposes only the longer span.
+    """
+    from core.annotation import dictionary_spans
+
+    text = "参照 GB/T 3001，碳钢与钢的强度不同。"
+    found = dictionary_spans(text)
+    spans = sorted(s for _, _, s in found)
+    for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+        assert a2 >= b1, f"nested spans: {(a1, b1)} inside {(a2, b2)}"
+
+    by_start = {a: text[a:b] for _, _, (a, b) in found}
+    gb_at = text.index("GB")
+    assert by_start[gb_at] == "GB/T", "GB must not be emitted inside a GB/T reference"
+    # A separate occurrence of the shorter term is still a legitimate hit.
+    assert any(s == "钢" for s in by_start.values())
+    assert any(s == "碳钢" for s in by_start.values())
+    assert any(s == "强度" for s in by_start.values())
 
 
 # ── CLI ──

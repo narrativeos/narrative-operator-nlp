@@ -343,15 +343,21 @@ DICT_PATH = _project_root / "config" / "domain_keywords.yaml"
 
 def dictionary_spans(text: str,
                      categories: tuple[str, ...] = tuple(DICT_CATEGORIES)) -> list[tuple[str, str, tuple[int, int]]]:
-    """(surface, category, span) for every dictionary term present in text.
+    """(surface, category, span) for dictionary terms present in text, non-overlapping.
 
     Read straight from the YAML KeywordExtractor loads, so the pre-labeler and
     the online dictionary cannot drift apart silently.
+
+    Longest match wins at each position: the dictionary holds both "GB" and
+    "GB/T", and both "钢" and "碳钢". Emitting every match put "GB" inside every
+    "GB/T" reference — on a real standard that inflated the STANDARD count by
+    a third and, worse, would surface as a phantom CONFLICT the moment a second
+    engine proposed only the longer span.
     """
     import yaml
 
     config = yaml.safe_load(DICT_PATH.read_text(encoding="utf-8")) or {}
-    found: list[tuple[str, str, tuple[int, int]]] = []
+    found: list[tuple[int, int, str, str]] = []
     for category in categories:
         key = DICT_CATEGORIES.get(category)
         if not key:
@@ -361,9 +367,18 @@ def dictionary_spans(text: str,
                 continue
             start = text.find(term)
             while start != -1:
-                found.append((term, category, (start, start + len(term))))
+                found.append((start, start + len(term), term, category))
                 start = text.find(term, start + 1)
-    return found
+
+    found.sort(key=lambda m: (m[0], -(m[1] - m[0])))
+    out: list[tuple[str, str, tuple[int, int]]] = []
+    consumed_to = 0
+    for start, end, term, category in found:
+        if start < consumed_to:
+            continue
+        out.append((term, category, (start, end)))
+        consumed_to = end
+    return out
 
 
 def merge_proposals(proposals: list[tuple[str, list[tuple[str, str, tuple[int, int]]]]],

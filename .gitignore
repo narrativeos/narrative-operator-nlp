@@ -308,3 +308,7 @@ config/classical/databases/*.sqlite
 
 # Archify — 生成的架构图产物与验证证据（candidate.json / HTML / 回执）
 .archify/
+
+# 标注数据：派生自受版权限制的标准与图书（见 docs/annotation_pipeline_design.md
+# §12），不能进仓库。测试用 NARRATIVE_ANNOTATION_DIR 指向临时目录。
+data/annotations/
