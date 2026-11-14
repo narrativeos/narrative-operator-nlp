@@ -11,18 +11,16 @@ Covers (audit 2026-09):
 
 from __future__ import annotations
 
-import sys
+from collections import Counter
 from pathlib import Path
-
-_project_root = Path(__file__).resolve().parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
 
 import pytest
 
 from core.analyzer import analyze
 from core.coref_resolver import CorefResolver, _CN_CLASSICAL_PRONUN
 from core.schema import Entity, Token
+
+_project_root = Path(__file__).resolve().parent.parent
 
 
 def _ent(eid: str, text: str, category: str, span: tuple[int, int]) -> Entity:

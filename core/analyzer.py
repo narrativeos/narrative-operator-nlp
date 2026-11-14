@@ -12,6 +12,9 @@ import logging
 import re
 from typing import Optional
 
+# The modern pipeline is called at runtime to split and analyse text
+# before the HanLP model loads; HanLP is imported lazily inside the
+# _get_*_pipeline() helpers.
 from .language_detector import (
     detect_language,
     classical_confidence,
@@ -880,6 +883,10 @@ def analyze(
         for frame in all_srl:
             remapped = []
             for (t, r, ts, te) in frame:
+                # get() always yields an int: pos_to_new covers every
+                # position and the fallback is an int too (Pyright cannot
+                # see the value-type correlation through the unpacked
+                # heterogeneous frame tuple).
                 new_ts: int = pos_to_new.get(ts, ts)
                 new_te: int = pos_to_new.get(te - 1, te - 1) + 1
                 remapped.append((t, r, new_ts, max(new_te, new_ts + 1)))
