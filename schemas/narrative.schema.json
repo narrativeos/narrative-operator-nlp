@@ -320,7 +320,7 @@
         "syntactic_role": { "type": "string", "description": "Subject/Object/Adverbial/Attributive/unknown" },
         "score": { "type": "number", "minimum": 0, "maximum": 1, "description": "Block-level salience score (POS + syntax, not global frequency)" },
         "span": { "$ref": "#/$defs/Span" },
-        "evidence": { "type": "object", "description": "Linguistic evidence, e.g. {head_rel, governing_verb}" }
+        "evidence": { "type": "object", "description": "Linguistic evidence for audit. Stable keys: head_rel (null when unknown), governing_verb (single-token governing verb, null when unresolved), governing_verb_status (dep | coarse_token | not_found); governing_verb_raw added when a coarse multi-word verb token was seen" }
       }
     }
   }

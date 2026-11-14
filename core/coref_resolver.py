@@ -19,12 +19,39 @@ References
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .modifier_extractor import _BUILTIN_MODIFIER_DICT
 from .schema import CoreferenceChain, Entity, Mention, Token
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Noun-chunk (nominal mention) guards
+# ---------------------------------------------------------------------------
+
+# A chunk may only extend into a token that directly follows the previous
+# one. In Chinese any gap means the two tokens are not one word: merging
+# 「第5章」 + 「绝缘」 yields the text "第5章绝缘" with a span covering
+# "第5章 绝缘" — text and span disagree and the span swallows the space
+# (or, worse, a comma). English words are separated by exactly one space,
+# so a 1-character gap is legitimate there.
+#
+# This mirrors the merge guards in entity_merger.merge_same_category
+# (strict adjacency + no punctuation in between); the NP chunker used to
+# have neither, so the same document produced one merged "noun" on one
+# worker and two mentions on another.
+_MAX_NP_GAP_CHARS_ZH = 0
+_MAX_NP_GAP_CHARS_EN = 1
+# Longer chunks are a run-on of several nouns, not one mention.
+_MAX_NP_CHUNK_TOKENS = 3
+_MAX_NP_CHUNK_CHARS_ZH = 8
+# Adverbs are never part of a noun phrase, whatever the tagger says —
+# 试验/NN 工作量/NN 较/NN must not become "试验工作量较".
+_NON_NOUN_CHUNK_WORDS = _BUILTIN_MODIFIER_DICT["degree"]
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +259,7 @@ class CorefResolver:
 
         # ── 2. Noun phrase mentions (from POS tags, independent of NER) ──
         # This is the key fix: extract noun phrases even when NER fails
-        noun_mention_spans = self._extract_noun_phrases(tokens, language, entities)
+        noun_mention_spans = self._extract_noun_phrases(tokens, language, entities, text)
         for np_text, np_span in noun_mention_spans:
             # Skip if already covered by an entity
             if self._is_covered_by_entity(np_span, entities):
@@ -283,17 +310,27 @@ class CorefResolver:
         tokens: list[Token],
         language: str,
         entities: list[Entity] | None = None,
+        text: str = "",
     ) -> list[tuple[str, tuple[int, int]]]:
         """Extract noun phrases from POS tags.
 
         Returns a list of (text, span) tuples for multi-word noun phrases
-        and significant single-word nouns.
+        and significant single-word nouns. When ``text`` (the source
+        document) is given, the characters it holds between two chunk tokens
+        are used as the chunk surface, so text and span always describe the
+        same characters.
 
         Strategy:
         - Chinese: consecutive NR/NN tokens, or NR alone
         - English: consecutive NOUN/PROPN tokens, or PROPN alone
         - Extension stops at the start of a recognized entity, so two
           adjacent entities (北京 上海) are never merged into one NP.
+        - Extension additionally requires the next token to be contiguous
+          with the chunk, keeps chunks short, and never absorbs an adverb
+          (see the guards above). Without those, the chunk text and its
+          span diverge and a single merged "noun" is emitted for text that
+          is not a noun phrase at all (第5章 + 绝缘 → span over
+          "第5章 绝缘").
         """
         phrases: list[tuple[str, tuple[int, int]]] = []
         if not tokens:
@@ -306,25 +343,10 @@ class CorefResolver:
         if language == "english":
             # English: PROPN sequences are entity-like mentions
             noun_poses = {"PROPN", "NOUN", "NNP", "NN"}
-            i = 0
-            while i < len(tokens):
-                if tokens[i].pos in noun_poses:
-                    start = i
-                    i += 1  # first token always included in the chunk
-                    # Extend while consecutive nouns (stop at entity starts)
-                    while (i < len(tokens) and tokens[i].pos in noun_poses
-                           and tokens[i].span[0] not in entity_starts):
-                        i += 1
-                    # Only keep if: PROPN (always) or multi-word or significant NN
-                    chunk_tokens = tokens[start:i]
-                    has_proper = any(t.pos in ("PROPN", "NNP") for t in chunk_tokens)
-                    is_multi = len(chunk_tokens) >= 2
-                    if has_proper or is_multi:
-                        text = " ".join(t.text for t in chunk_tokens)
-                        span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
-                        phrases.append((text, span))
-                else:
-                    i += 1
+            proper_poses = ("PROPN", "NNP")
+            max_gap: int = _MAX_NP_GAP_CHARS_EN
+            max_chars: Optional[int] = None
+            joiner = " "
         else:
             # Chinese: NR (proper noun) or NN sequences.
             # Accept both CTB tags (NR/NN/NT) and Universal tags
@@ -332,25 +354,70 @@ class CorefResolver:
             # emits upos values even though they are stored under
             # the pos/ctb key.
             noun_poses = {"NR", "NN", "NT", "NOUN", "PROPN"}
-            i = 0
-            while i < len(tokens):
-                if tokens[i].pos in noun_poses:
-                    start = i
-                    i += 1  # first token always included in the chunk
-                    # Extend while consecutive nouns (stop at entity starts)
-                    while (i < len(tokens) and tokens[i].pos in noun_poses
-                           and tokens[i].span[0] not in entity_starts):
-                        i += 1
-                    chunk_tokens = tokens[start:i]
-                    has_proper = any(t.pos in ("NR", "PROPN") for t in chunk_tokens)
-                    is_multi = len(chunk_tokens) >= 2
-                    # Always extract proper nouns, or multi-word noun phrases
-                    if has_proper or is_multi:
-                        text = "".join(t.text for t in chunk_tokens)
-                        span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
-                        phrases.append((text, span))
-                else:
-                    i += 1
+            proper_poses = ("NR", "PROPN")
+            max_gap = _MAX_NP_GAP_CHARS_ZH
+            max_chars = _MAX_NP_CHUNK_CHARS_ZH
+            joiner = ""
+
+        def _gap_between(prev_tok: Token, nxt_tok: Token) -> str:
+            """The characters between two tokens in the source text.
+
+            Returns ``""`` when the source text is unavailable or its
+            coordinates do not line up with the tokens: only a gap made of
+            whitespace or punctuation is trusted, because anything else
+            means the offsets and this text are not in the same coordinate
+            space (test fixtures rebuild text with the gaps removed). The
+            caller falls back to the language joiner in that case, so the
+            chunk text never claims characters that are not in its span.
+            """
+            if not text:
+                return ""
+            lo, hi = prev_tok.span[1], nxt_tok.span[0]
+            if not (0 <= lo <= hi <= len(text)):
+                return ""
+            gap = text[lo:hi]
+            trusted = all(
+                ch.isspace() or unicodedata.category(ch)[0] in ("P", "Z", "C")
+                for ch in gap
+            )
+            return gap if trusted else ""
+
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok.pos not in noun_poses or tok.text in _NON_NOUN_CHUNK_WORDS:
+                i += 1
+                continue
+            start = i
+            i += 1  # first token always included in the chunk
+            # Extend while consecutive nouns (stop at entity starts, at any
+            # gap in the source text, and at the chunk size caps).
+            while (
+                i < len(tokens)
+                and tokens[i].pos in noun_poses
+                and tokens[i].text not in _NON_NOUN_CHUNK_WORDS
+                and tokens[i].span[0] not in entity_starts
+                and i - start < _MAX_NP_CHUNK_TOKENS
+                and tokens[i].span[0] - tokens[i - 1].span[1] <= max_gap
+                and (max_chars is None
+                     or tokens[i].span[1] - tokens[start].span[0] <= max_chars)
+            ):
+                i += 1
+            chunk_tokens = tokens[start:i]
+            has_proper = any(t.pos in proper_poses for t in chunk_tokens)
+            is_multi = len(chunk_tokens) >= 2
+            # Always extract proper nouns, or multi-word noun phrases
+            if has_proper or is_multi:
+                span = (chunk_tokens[0].span[0], chunk_tokens[-1].span[1])
+                # Rebuild the surface from the tokens plus whatever really
+                # sits between them, so text and span always cover the same
+                # characters (joiner only fills gaps the source cannot).
+                parts = [chunk_tokens[0].text]
+                for k in range(1, len(chunk_tokens)):
+                    gap = _gap_between(chunk_tokens[k - 1], chunk_tokens[k])
+                    parts.append(gap if gap else joiner)
+                    parts.append(chunk_tokens[k].text)
+                phrases.append(("".join(parts), span))
 
         return phrases
 

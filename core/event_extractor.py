@@ -32,6 +32,7 @@ import re
 from collections import defaultdict
 from typing import Optional
 
+from .dep_walk import build_parent_index, find_governing_verb
 from .schema import (
     DependencyEdge, Entity, Event, EventArgument, Relation,
     SentenceLanguage, SentencePattern,
@@ -1163,7 +1164,9 @@ class EventExtractor:
         dependency relation to determine:
         - syntactic_role: Subject (nsubj), Object (dobj), Adverbial (loc/lobj),
           or Attributive (nn/amod).
-        - governing_verb: The first verb ancestor in the dependency tree.
+        - governing_verb: The first *single-token* verb ancestor in the
+          dependency tree (shared dep_walk implementation; stays None when
+          the chain only offers coarse verb tokens or no verb at all).
 
         Token matching strategy:
         Uses maximum overlap to find the best-matching token. For multi-word
@@ -1177,10 +1180,7 @@ class EventExtractor:
         if not deps or not tokens:
             return
 
-        parent_of: dict[int, tuple[int, str]] = {}
-        for dep in deps:
-            if dep.child >= 0:
-                parent_of[dep.child] = (dep.head, dep.rel)
+        parent_of = build_parent_index(deps)
 
         def _find_token_idx(arg_span: tuple[int, int]) -> Optional[int]:
             best_idx: Optional[int] = None
@@ -1216,20 +1216,13 @@ class EventExtractor:
                     if syn_role is not None:
                         arg.syntactic_role = syn_role
 
-                # Walk up to first V-pos ancestor
-                current = token_idx
-                visited: set[int] = set()
-                while current in parent_of and current not in visited:
-                    visited.add(current)
-                    head_idx, _rel = parent_of[current]
-                    if head_idx < 0:
-                        break
-                    if 0 <= head_idx < len(tokens):
-                        head_pos = getattr(tokens[head_idx], 'pos', '')
-                        if head_pos and head_pos[0] == 'V':
-                            arg.governing_verb = getattr(tokens[head_idx], 'text', '')
-                            break
-                    current = head_idx
+                # Governing verb: the first *single-token* verb ancestor
+                # (shared with noun-signal Step B, so both call sites agree).
+                # Strict: unresolved stays None — never a verb phrase, never a
+                # guess.
+                arg.governing_verb = find_governing_verb(
+                    tokens, parent_of, token_idx,
+                )[0]
 
     # ── Spatial role assignment (Step 4b) ──
 
@@ -1269,10 +1262,7 @@ class EventExtractor:
             return
 
         # Build parent lookup
-        parent_of: dict[int, tuple[int, str]] = {}
-        for dep in deps:
-            if dep.child >= 0:
-                parent_of[dep.child] = (dep.head, dep.rel)
+        parent_of = build_parent_index(deps)
 
         def _find_token_idx(arg_span: tuple[int, int]) -> Optional[int]:
             best_idx: Optional[int] = None

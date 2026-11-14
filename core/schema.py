@@ -685,7 +685,7 @@ class NounSignal(BaseModel):
     span: tuple[int, int] = Field(..., description="Character offset [start, end) in original text")
     evidence: dict = Field(
         default_factory=dict,
-        description="Linguistic evidence for audit, e.g. {'head_rel': 'dobj', 'governing_verb': '测量'}"
+        description="Linguistic evidence for audit. Stable keys: 'head_rel' (dep relation to the head, null when unknown), 'governing_verb' (single-token governing verb, null when unresolved), 'governing_verb_status' ('dep' | 'coarse_token' | 'not_found'); 'governing_verb_raw' is added when a coarse multi-word verb token was seen."
     )
 
     @field_validator("span")

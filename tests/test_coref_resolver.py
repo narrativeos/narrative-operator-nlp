@@ -609,3 +609,58 @@ class TestWholeDocumentLanguageRouting:
         labels = [s.label for s in doc.content.sentences]
         assert labels[0] == "modern"
         assert labels[1] == "classical"
+
+
+class TestNounChunkContiguity:
+    """NP chunks must stay one contiguous word (audit 2026-11).
+
+    The chunker used to merge any run of noun-tagged tokens, so the same
+    document yielded one merged "noun" on one worker and two mentions on
+    another, and the merged span covered the space or punctuation between
+    its tokens (text 「第5章绝缘」 with a span over 「第5章 绝缘」).
+    """
+
+    def test_no_merge_across_a_space(self, resolver):
+        text = "第5章 绝缘试验"
+        toks = _toks([("第5章", "NN", 0, 3), ("绝缘", "NN", 4, 6),
+                      ("试验", "NN", 6, 8)])
+        phrases = resolver._extract_noun_phrases(toks, "modern", [], text)
+        assert ("绝缘试验", (4, 8)) in phrases
+        # 第5章 is not contiguous with 绝缘 → it stays on its own.
+        assert not any(t == "第5章绝缘试验" for t, _ in phrases)
+        # Every chunk's text must be exactly what its span covers.
+        assert all(text[s:e] == t for t, (s, e) in phrases)
+
+    def test_no_merge_across_punctuation(self, resolver):
+        text = "介损，测量"
+        toks = _toks([("介损", "NN", 0, 2), ("，", "PU", 2, 3),
+                      ("测量", "NN", 3, 5)])
+        phrases = resolver._extract_noun_phrases(toks, "modern", [], text)
+        assert not any("，" in t for t, _ in phrases)
+        assert all(text[s:e] == t for t, (s, e) in phrases)
+
+    def test_adverb_tail_not_absorbed(self, resolver):
+        # A tagger that labels 较 as NN must not turn it into a noun tail.
+        text = "试验工作量较大"
+        toks = _toks([("试验", "NN", 0, 2), ("工作量", "NN", 2, 5),
+                      ("较", "NN", 5, 6), ("大", "JJ", 6, 7)])
+        phrases = resolver._extract_noun_phrases(toks, "modern", [], text)
+        assert ("试验工作量", (0, 5)) in phrases
+        assert not any(t.endswith("较") for t, _ in phrases)
+        assert all(text[s:e] == t for t, (s, e) in phrases)
+
+    def test_chunk_size_cap(self, resolver):
+        text = "绝缘电阻测试标准"
+        toks = _toks([("绝缘", "NN", 0, 2), ("电阻", "NN", 2, 4),
+                      ("测试", "NN", 4, 6), ("标准", "NN", 6, 8)])
+        phrases = resolver._extract_noun_phrases(toks, "modern", [], text)
+        assert phrases == [("绝缘电阻测试", (0, 6))]
+
+    def test_adjacent_compound_still_merges(self, resolver):
+        """The guards must not break genuine compounds."""
+        text = "绝缘电阻很大"
+        toks = _toks([("绝缘", "NN", 0, 2), ("电阻", "NN", 2, 4),
+                      ("很", "RB", 4, 5), ("大", "JJ", 5, 6)])
+        phrases = resolver._extract_noun_phrases(toks, "modern", [], text)
+        assert ("绝缘电阻", (0, 4)) in phrases
+

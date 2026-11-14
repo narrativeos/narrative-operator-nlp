@@ -327,3 +327,48 @@ class TestNounSignals:
         tokens = [Token(id=0, text="钢", pos="NN", span=(0, 1))]
         cfg = NounSignalConfig.from_dict({"enabled": True})
         assert extract_noun_signals(tokens, [], cfg) == []
+
+    def test_governing_verb_key_always_present(self):
+        """No verb ancestor → explicit null + status, never a missing key.
+
+        A missing key serialized as null was indistinguishable from a
+        worker whose dependency tree was flat, which made Step B output look
+        worker-dependent.
+        """
+        tokens = [
+            Token(id=0, text="绝缘", pos="NN", span=(0, 2)),
+            Token(id=1, text="测量", pos="NN", span=(2, 4)),
+        ]
+        deps = [
+            DependencyEdge(child=0, head=1, rel="nn"),
+            DependencyEdge(child=1, head=-1, rel="root"),
+        ]
+        cfg = NounSignalConfig.from_dict({"enabled": True})
+        sigs = {s.text: s for s in extract_noun_signals(tokens, deps, cfg)}
+        assert sigs["绝缘"].evidence["governing_verb"] is None
+        assert sigs["绝缘"].evidence["governing_verb_status"] == "not_found"
+        # Same shape when there is no dependency data at all.
+        sigs = {s.text: s for s in extract_noun_signals(tokens, [], cfg)}
+        assert sigs["绝缘"].evidence["governing_verb"] is None
+        assert sigs["绝缘"].evidence["governing_verb_status"] == "not_found"
+
+    def test_coarse_verb_token_is_not_reported_as_the_verb(self):
+        """A clause-sized verb token stays null; its text is kept as evidence."""
+        tokens = [
+            Token(id=0, text="电阻", pos="NN", span=(0, 2)),
+            Token(id=1, text="电阻应大于", pos="VV", span=(2, 7)),
+        ]
+        deps = [DependencyEdge(child=0, head=1, rel="nsubj")]
+        cfg = NounSignalConfig.from_dict({"enabled": True})
+        sigs = {s.text: s for s in extract_noun_signals(tokens, deps, cfg)}
+        assert sigs["电阻"].syntactic_role == "Subject"
+        assert sigs["电阻"].evidence["governing_verb"] is None
+        assert sigs["电阻"].evidence["governing_verb_status"] == "coarse_token"
+        assert sigs["电阻"].evidence["governing_verb_raw"] == "电阻应大于"
+
+    def test_token_merged_across_whitespace_is_dropped(self):
+        """A merged token whose span covers a space is not a noun signal."""
+        tokens = [Token(id=0, text="第5章 绝缘", pos="NN", span=(29, 35))]
+        cfg = NounSignalConfig.from_dict({"enabled": True})
+        assert extract_noun_signals(tokens, [], cfg) == []
+

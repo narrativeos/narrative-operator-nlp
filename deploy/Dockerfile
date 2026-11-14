@@ -32,12 +32,14 @@ ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 # Layer 1: install heavy deps first for cache
 COPY setup.py hanlp/version.py ./
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+    && pip install --no-cache-dir torch --index-url https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cpu
 
 # Layer 2: copy app and install narrative extras
+# 先装随仓库的 hanlp_common（0.0.24，pypi 仅到 0.0.23）再装主包，
+# 否则 hanlp-common>=0.0.24 在镜像源上解析失败
 COPY . .
-RUN pip install --no-cache-dir -e ".[narrative]" \
-    && pip install --no-cache-dir -e plugins/hanlp_common
+RUN pip install --no-cache-dir -e plugins/hanlp_common \
+    && pip install --no-cache-dir -e ".[narrative]"
 
 # ── Environment ──────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1

@@ -835,8 +835,43 @@ def analyze(
         else:
             id_base = (max(id_base[0], seg_max_ent), max(id_base[1], seg_max_rel))
 
-    # Re-number token IDs globally, sorted by position
-    for i, t in enumerate(sorted(all_tokens, key=lambda t: t.span[0])):
+    # Re-number token IDs globally, sorted by position, and reorder the list
+    # with them so the invariant every consumer relies on holds by
+    # construction: tokens[i].id == i.
+    #
+    # Dependency indices were built from segment concatenation order
+    # (token_offset above), which equals span order only while every
+    # segment's token spans are monotonic. When they are not (the mapper's
+    # text.find() fallback drifts on an unexpected token), renumbering
+    # alone would leave ids and dep indices in different orders — the
+    # governing-verb walk-up would then land on another token's head, which
+    # is exactly the kind of run-to-run difference seen in Step B. The
+    # permutation is the identity in every normal document.
+    order = sorted(range(len(all_tokens)), key=lambda p: all_tokens[p].span[0])
+    if order != list(range(len(all_tokens))):
+        logger.warning(
+            "Token spans are not monotonic in text order; applying the span "
+            "permutation to %d dependency edges and SRL frame indices.",
+            len(all_deps),
+        )
+        pos_to_new = {old: new for new, old in enumerate(order)}
+        all_tokens = [all_tokens[old] for old in order]
+        for dep in all_deps:
+            if dep.child in pos_to_new:
+                dep.child = pos_to_new[dep.child]
+            if dep.head in pos_to_new:
+                dep.head = pos_to_new[dep.head]
+        # SRL frames carry [start, end) ranges; remap both endpoints. The
+        # permutation need not be contiguous, so a range can only be
+        # approximated here — good enough to stay in the right sentence.
+        for frame in all_srl:
+            remapped = []
+            for (t, r, ts, te) in frame:
+                new_ts = pos_to_new.get(ts, ts)
+                new_te = pos_to_new.get(te - 1, te - 1) + 1
+                remapped.append((t, r, new_ts, max(new_te, new_ts + 1)))
+            frame[:] = remapped
+    for i, t in enumerate(all_tokens):
         t.id = i
 
     # Event Extraction from Relation clustering (V3)
