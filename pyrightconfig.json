@@ -1,5 +1,5 @@
 {
-  "$comment": "Project-level type-check config for Zed's Pyright-based diagnostics. Editor noise is off repo-wide because the repo's real gate is the targeted CLI check ('.venv/bin/pyright core/' = 12 errors, docs/test-plan.md); full-repo strict mode surfaces 2,640 across the vendored hanlp fork and fixtures. pyrightPath points the editor at the venv's own pyright (same Python 3.10 that runs the tests; the bare binary on PATH falls back to system Python).",
+  "$comment": "Project-level type-check config for Zed's Pyright-based diagnostics. Editor noise is off repo-wide because the repo's real gate is the targeted CLI check ('.venv/bin/pyright --project /dev/null core/' = 0 errors, run in strict mode; docs/test-plan.md keeps the Pyright-0-errors-on-core/ bar) — full-repo strict mode surfaces 2,640 across the vendored hanlp fork and fixtures. pyrightPath points the editor at the venv's own pyright (same Python 3.10 that runs the tests; the bare binary on PATH falls back to system Python).",
   "python": {
     "pyrightPath": ".venv/bin/pyright-langserver"
   },
