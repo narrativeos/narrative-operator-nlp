@@ -8,13 +8,11 @@ with global offset remapping.
 
 from __future__ import annotations
 
-import logging
-import re
 from typing import Optional
 
-# The modern pipeline is called at runtime to split and analyse text
-# before the HanLP model loads; HanLP is imported lazily inside the
-# _get_*_pipeline() helpers.
+import logging
+import re
+
 from .language_detector import (
     detect_language,
     classical_confidence,
@@ -164,6 +162,9 @@ def _analyze_modern(
     id_base: tuple[int, int] | None = None,
 ) -> tuple[list, list, list, list, list, list, bool]:
     try:
+        # Loaded here, not in _get_modern_pipeline(): _split_sentences has
+        # already run by this point and must not trigger a HanLP import
+        # failure outside this guard.
         pipeline = _get_modern_pipeline()
         if dict_combine:
             try:
