@@ -17,8 +17,6 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-import pytest
-
 from core.schema import DependencyEdge, Entity, EntityCategory, Token
 from core.entity_quality import (
     QualityPolicy,

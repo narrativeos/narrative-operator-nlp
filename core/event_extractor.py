@@ -113,7 +113,7 @@ _SPATIAL_VERB_CLASSES: dict[str, str] = {
     "建立": "STATIC_ACTION", "创办": "STATIC_ACTION", "设立": "STATIC_ACTION",
     "修建": "STATIC_ACTION", "搭建": "STATIC_ACTION", "兴修": "STATIC_ACTION",
     "举办": "STATIC_ACTION", "开展": "STATIC_ACTION", "兴建": "STATIC_ACTION",
-    "修建": "STATIC_ACTION", "营造": "STATIC_ACTION",
+    "营造": "STATIC_ACTION",
     # VIEW — visual perception with spatial direction
     "看": "VIEW", "望": "VIEW", "眺": "VIEW", "俯瞰": "VIEW",
     "眺望": "VIEW", "观望": "VIEW", "俯视": "VIEW", "远眺": "VIEW",

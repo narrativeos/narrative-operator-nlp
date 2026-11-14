@@ -15,11 +15,10 @@ from typing import Optional
 from .language_detector import (
     detect_language,
     classical_confidence,
-    LanguageClass,
     CLASSICAL_INHERIT_FLOOR,
 )
 from .mapper import HanlpSchemaMapper
-from .schema import CoreferenceChain, DependencyEdge, Event, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
+from .schema import CoreferenceChain, DependencyEdge, NarrativeContent, NarrativeDocument, NarrativeMeta, SentenceLanguage, Token
 from .coref_resolver import CorefResolver
 from .modifier_extractor import ModifierExtractor
 from .relation_classifier import RelationClassifier
@@ -178,11 +177,12 @@ def _analyze_modern(
         auto_discover_entities=auto_discover_entities,
         id_base=id_base,
     )
+    content = _content_or_empty(doc)
     _apply_offset(doc, offset)
     deps = _extract_deps(raw)
     srl_frames = _validate_srl_frames(raw.get("srl", []))
-    return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, deps, srl_frames, _assess_quality(doc.content.tokens, raw))
+    return (content.tokens, content.entities, content.relations,
+            content.patterns, deps, srl_frames, _assess_quality(content.tokens, raw))
 
 
 def _analyze_classical(
@@ -241,8 +241,9 @@ def _analyze_classical(
         auto_discover_entities=auto_discover_entities,
         id_base=id_base,
     )
+    content = _content_or_empty(doc)
     _apply_offset(doc, offset)
-    for t in doc.content.tokens:
+    for t in content.tokens:
         t.source = "hanlp_lzh"
 
     # Fill evidence for entities using on-demand CBDB lookup
@@ -254,10 +255,10 @@ def _analyze_classical(
         dict_loader = DictionaryLoader(config_dir, load_cbdb_to_memory=False)
         dict_loader.load_all()
         # Build token list for smart lookup
-        token_list = [(t.text, t.span[0], t.span[1]) for t in doc.content.tokens]
+        token_list = [(t.text, t.span[0], t.span[1]) for t in content.tokens]
         discovered = dict_loader.lookup_tokens(token_list, text)
         discovered_map = {d.keyword: d for d in discovered}
-        for entity in doc.content.entities:
+        for entity in content.entities:
             entity.evidence.tokenizer = entity.text in all_dict_words
             entry = dict_loader.get_entry(entity.text)
             if entry is not None:
@@ -271,8 +272,8 @@ def _analyze_classical(
         logger.debug("Failed to fill entity evidence: %s", exc)
 
     deps = _extract_deps(normalized)
-    return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, deps, _assess_quality(doc.content.tokens, normalized))
+    return (content.tokens, content.entities, content.relations,
+            content.patterns, deps, _assess_quality(content.tokens, normalized))
 
 
 def _analyze_english(
@@ -306,13 +307,14 @@ def _analyze_english(
         auto_discover_entities=auto_discover_entities,
         id_base=id_base,
     )
+    content = _content_or_empty(doc)
     _apply_offset(doc, offset)
-    for t in doc.content.tokens:
+    for t in content.tokens:
         t.source = "en_modernbert"
     deps = _extract_deps(raw)
     # English pipeline: SRL not extracted (empty list)
-    return (doc.content.tokens, doc.content.entities, doc.content.relations,
-            doc.content.patterns, deps, [], _assess_quality(doc.content.tokens, raw))
+    return (content.tokens, content.entities, content.relations,
+            content.patterns, deps, [], _assess_quality(content.tokens, raw))
 
 
 def _extract_deps(raw: dict) -> list[DependencyEdge]:
@@ -373,6 +375,15 @@ def _validate_srl_frames(srl_data: list) -> list:
         )
 
     return valid_frames
+
+
+def _content_or_empty(doc: Optional[NarrativeDocument]):
+    """The document's content, or an empty one when mapping produced nothing.
+
+    Keeps the _analyze_* call sites free of ``assert``/``# type: ignore``
+    noise: every accessor below is type-checked against NarrativeContent.
+    """
+    return doc.content if doc is not None else NarrativeContent()
 
 
 def _apply_offset(doc: NarrativeDocument, offset: int):
@@ -862,13 +873,15 @@ def analyze(
             if dep.head in pos_to_new:
                 dep.head = pos_to_new[dep.head]
         # SRL frames carry [start, end) ranges; remap both endpoints. The
-        # permutation need not be contiguous, so a range can only be
-        # approximated here — good enough to stay in the right sentence.
+        # indices are token positions validated upstream (_validate_srl_frames),
+        # so they are ints here. The permutation need not be contiguous, so a
+        # range can only be approximated — good enough to stay in the right
+        # sentence.
         for frame in all_srl:
             remapped = []
             for (t, r, ts, te) in frame:
-                new_ts = pos_to_new.get(ts, ts)
-                new_te = pos_to_new.get(te - 1, te - 1) + 1
+                new_ts: int = pos_to_new.get(ts, ts)
+                new_te: int = pos_to_new.get(te - 1, te - 1) + 1
                 remapped.append((t, r, new_ts, max(new_te, new_ts + 1)))
             frame[:] = remapped
     for i, t in enumerate(all_tokens):
