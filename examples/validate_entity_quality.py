@@ -6,15 +6,9 @@ kept/filtered breakdown by category and filter reason, plus the noise ratio.
 
 from __future__ import annotations
 
-import sys
+import _bootstrap  # noqa: F401  # sys.path bootstrap; must precede `core`
 from collections import Counter
 from pathlib import Path
-
-# Make the repo importable when run as a bare script (python
-# examples/validate_entity_quality.py).
-_project_root = Path(__file__).resolve().parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
 
 from core.analyzer import analyze
 
