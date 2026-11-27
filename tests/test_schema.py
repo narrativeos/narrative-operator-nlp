@@ -228,7 +228,7 @@ class TestNarrativeDocument:
             / "schemas"
             / "narrative.schema.json"
         )
-        with open(schema_path) as f:
+        with open(schema_path, encoding="utf-8") as f:
             schema = json.load(f)
 
         doc = NarrativeDocument(
