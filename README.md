@@ -162,6 +162,8 @@ Open `http://localhost:8000` — redirects to the interactive demo page (`/demo`
 
 Copyright (c) 2025 北京九录科技有限公司. Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
+社区版公开核心实现、协议适配器、部署配置、文档，以及 `config/` 中的通用词典与规则；标注语料、CBDB SQLite 数据与托管服务不随仓库发布。`docs/tutorial.md` 中提到的 CC BY-NC-SA 4.0 仅适用于上游 HanLP 官方模型与 RESTful 服务，不适用于本项目代码。
+
 ### Third-Party Components
 
 | Component | License | Usage |
@@ -170,6 +172,9 @@ Copyright (c) 2025 北京九录科技有限公司. Licensed under the Apache Lic
 | ELECTRA-small (Chinese MTL) | Apache 2.0 | Modern Chinese pipeline |
 | [ModernBERT](https://github.com/AnswerDotAI/ModernBERT) (Answer.AI) | Apache 2.0 | English pipeline |
 | KYOTO-EVAHAN (LZH) | CC BY 4.0 | Classical Chinese pipeline |
+| Swagger UI | Apache 2.0 | Demo / Swagger UI static assets |
+| [Classical-Chinese-NER-RE-Dataset](https://github.com/beeevita/Classical-Chinese-NER-RE-Dataset) | MIT | `config/classical/seed/*.yaml` 派生来源 |
+| [CBDB](https://cbdb.fas.harvard.edu/) | CC BY-SA 4.0 | `config/classical/databases/metadata.json` 仅元数据，SQLite 数据不入库 |
 
 ### Citation
 

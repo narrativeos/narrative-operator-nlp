@@ -4,7 +4,7 @@ authors:
 - name: "NarrativeOS (北京九录科技有限公司)"
 title: "Narrative Operator NLP — NLP operator for NarrativeOS"
 version: 0.1.0
-date-released: 2026-06-04
+date-released: 2026-11-27
 url: "https://github.com/narrativeos/narrative-operator-nlp"
 license: Apache-2.0
 # This project builds on HanLP (https://github.com/hankcs/HanLP, Apache 2.0).

@@ -13,6 +13,7 @@ __pycache__/
 .github/
 .mypy_cache/
 .python-version
+.paperclip/
 
 # IDE
 .vscode/
