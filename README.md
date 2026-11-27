@@ -118,9 +118,9 @@ cp .env.example .env
 docker compose up -d --build
 
 # 或直接使用发布到 GHCR 的镜像
-docker pull ghcr.io/narrativeos/narrative-operator-nlp:v0.1.1
+docker pull ghcr.io/narrativeos/narrative-operator-nlp:v0.1.2
 docker run -p 8000:8000 -v narrative-operator-nlp-models:/root/.hanlp \
-  --env-file .env ghcr.io/narrativeos/narrative-operator-nlp:v0.1.1 both
+  --env-file .env ghcr.io/narrativeos/narrative-operator-nlp:v0.1.2 both
 ```
 
 ### Configuration (.env)

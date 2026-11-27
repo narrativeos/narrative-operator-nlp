@@ -8,7 +8,7 @@ from setuptools import find_packages, setup
 this_dir = abspath(dirname(__file__))
 with open(join(this_dir, 'README.md'), encoding='utf-8') as file:
     long_description = file.read()
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 FASTTEXT = 'fasttext-wheel==0.9.2'
 HANLP_COMMON_REL = join('plugins', 'hanlp_common')

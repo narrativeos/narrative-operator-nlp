@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref to build (e.g. v0.1.1)'
+        description: 'Git ref to build (e.g. v0.1.2)'
         required: true
         default: 'main'
 
@@ -29,6 +29,8 @@ jobs:
       - name: Build distributions
         run: |
           python -m pip install --upgrade build
+          python -m pip install -e .
+          python -m grpc_tools.protoc -I schemas --python_out=schemas --grpc_python_out=schemas schemas/narrative.proto
           python -m build
 
       - name: Publish to PyPI

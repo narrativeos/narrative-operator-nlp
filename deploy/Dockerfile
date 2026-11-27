@@ -35,12 +35,10 @@ COPY setup.py hanlp/version.py ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir torch --index-url "${TORCH_INDEX_URL}"
 
-# Layer 2: copy app and install narrative extras
-# 先装随仓库的 hanlp_common（0.0.24，pypi 仅到 0.0.23）再装主包，
-# 否则 hanlp-common>=0.0.24 在镜像源上解析失败
+# Layer 2: copy app, install narrative extras and generate protobuf stubs
 COPY . .
-RUN pip install --no-cache-dir -e plugins/hanlp_common \
-    && pip install --no-cache-dir -e ".[narrative]"
+RUN pip install --no-cache-dir -e ".[narrative]" \
+    && python -m grpc_tools.protoc -I schemas --python_out=schemas --grpc_python_out=schemas schemas/narrative.proto
 
 # ── Environment ──────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1

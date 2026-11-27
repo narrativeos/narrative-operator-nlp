@@ -3,7 +3,7 @@ message: "If you use this software, please cite it as below."
 authors:
 - name: "NarrativeOS (北京九录科技有限公司)"
 title: "Narrative Operator NLP — NLP operator for NarrativeOS"
-version: 0.1.1
+version: 0.1.2
 date-released: 2026-11-27
 url: "https://github.com/narrativeos/narrative-operator-nlp"
 license: Apache-2.0
