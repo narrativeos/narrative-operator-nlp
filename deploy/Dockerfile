@@ -1,7 +1,7 @@
 # ───────────────────────────────────────────────────────────────
 # Narrative Operator NLP — Docker Image
 # ───────────────────────────────────────────────────────────────
-# Mirrors: apt (Aliyun), pip (Tsinghua), PyTorch (Tsinghua)
+# Mirrors: apt (Aliyun), pip (Tsinghua); PyTorch uses official CPU index
 #
 # Build:
 #   docker build -t narrative-operator-nlp -f deploy/Dockerfile .
@@ -28,11 +28,12 @@ RUN rm -f /etc/apt/sources.list.d/* \
 # ── Pip: Tsinghua mirror ────────────────────────────────────
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 # Layer 1: install heavy deps first for cache
 COPY setup.py hanlp/version.py ./
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch --index-url https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cpu
+    && pip install --no-cache-dir torch --index-url "${TORCH_INDEX_URL}"
 
 # Layer 2: copy app and install narrative extras
 # 先装随仓库的 hanlp_common（0.0.24，pypi 仅到 0.0.23）再装主包，

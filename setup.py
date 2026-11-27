@@ -8,9 +8,11 @@ from setuptools import find_packages, setup
 this_dir = abspath(dirname(__file__))
 with open(join(this_dir, 'README.md'), encoding='utf-8') as file:
     long_description = file.read()
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 FASTTEXT = 'fasttext-wheel==0.9.2'
+HANLP_COMMON_REL = join('plugins', 'hanlp_common')
+HANLP_COMMON_DIR = join(this_dir, HANLP_COMMON_REL)
 
 extras_require = {
     'amr': [
@@ -58,7 +60,9 @@ setup(
         "Topic :: Text Processing :: Linguistic"
     ],
     keywords='corpus,machine-learning,NLU,NLP',
-    packages=find_packages(exclude=['docs', 'tests*', 'plugins*']),
+    packages=find_packages(exclude=['docs', 'tests*', 'plugins*'])
+             + find_packages(where=HANLP_COMMON_DIR, exclude=['tests*']),
+    package_dir={'hanlp_common': join(HANLP_COMMON_REL, 'hanlp_common')},
     include_package_data=True,
     install_requires=[
         'termcolor',
@@ -67,7 +71,7 @@ setup(
         'transformers>=4.30,<5.0',  # HanLP 2.1.x compat: encode_plus removed in 5.x
         'sentencepiece>=0.1.91',  # Essential for tokenization_bert_japanese
         'torch>=1.6.0',
-        'hanlp-common>=0.0.24',
+        'phrasetree>=0.0.9',
         'hanlp-trie>=0.0.4',
         'hanlp-downloader',
         'pyyaml>=5.0',  # Required for config-driven entity extraction

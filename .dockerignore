@@ -14,6 +14,8 @@ __pycache__/
 .mypy_cache/
 .python-version
 .paperclip/
+.env
+.env.*
 
 # IDE
 .vscode/

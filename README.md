@@ -65,6 +65,9 @@ source .venv/bin/activate
 
 ```bash
 uv pip install -e ".[narrative]"
+
+# 或从 PyPI 安装（发布后）
+pip install "narrative-operator-nlp[narrative]"
 ```
 
 ### 3. Download Pre-trained Models
@@ -113,6 +116,11 @@ Single-container deployment bundling the FastAPI and gRPC services.
 ```bash
 cp .env.example .env
 docker compose up -d --build
+
+# 或直接使用发布到 GHCR 的镜像
+docker pull ghcr.io/narrativeos/narrative-operator-nlp:v0.1.1
+docker run -p 8000:8000 -v narrative-operator-nlp-models:/root/.hanlp \
+  --env-file .env ghcr.io/narrativeos/narrative-operator-nlp:v0.1.1 both
 ```
 
 ### Configuration (.env)
