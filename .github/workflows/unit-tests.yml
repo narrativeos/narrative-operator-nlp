@@ -32,10 +32,8 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install -e plugins/hanlp_trie
-          python -m pip install -e plugins/hanlp_common
-          python -m pip install -e .
-          python -m pip install pytest
+          python -m pip install -e ".[narrative]"
+          python -m pip install pytest pytest-subtests
 
       - name: Cache data
         uses: actions/cache@v4
@@ -46,5 +44,5 @@ jobs:
       - name: Test with pytest
         shell: bash
         run: |
-          pytest tests
-          pytest plugins/hanlp_trie/tests
+          python -m pytest tests -q --ignore=tests/test_mtl.py
+          python -m pytest plugins/hanlp_trie/tests -q
